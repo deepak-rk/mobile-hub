@@ -1,0 +1,1099 @@
+openapi: 3.1.0
+
+info:
+  title: Mobile Hub API
+  version: 0.1.0
+  description: |
+    REST API for Mobile Hub — open-source shared device lab.
+
+    **Base URL:** `http://<host>:3000/api`
+
+    **Auth:** All endpoints except `POST /auth/login` require a Bearer JWT in the
+    `Authorization` header. The JWT is issued by `POST /auth/login`.
+
+    **Roles:**
+    - `viewer`   — read-only access to all resources
+    - `operator` — viewer + trigger runs, lock/unlock devices, fetch builds
+    - `admin`    — operator + manage hosts, Appium servers, users
+
+    **Real-time channels** (not REST — documented at the bottom of this file):
+    - `WS  ws://<host>:3001/ws/stream/:deviceUdid`  — device stream frames
+    - `WS  ws://<host>:3000/ws/execution/:runId`    — stage transition events
+    - `WS  ws://<host>:3000/ws/builds/jobs/:jobId`  — download progress
+    - `SSE GET /api/execution/runs/:runId/logs/stream` — raw log tail
+
+servers:
+  - url: http://localhost:3000/api
+    description: Local development
+
+tags:
+  - name: auth
+    description: Authentication & session
+  - name: hosts
+    description: Machine host registration and heartbeat
+  - name: devices
+    description: Device inventory, locking, and streaming
+  - name: servers
+    description: Appium server lifecycle
+  - name: builds
+    description: Build artifact management
+  - name: execution
+    description: Automation run orchestration
+  - name: analytics
+    description: Aggregated test health metrics
+
+# ─────────────────────────────────────────────────────────────
+# Shared components
+# ─────────────────────────────────────────────────────────────
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  parameters:
+    deviceUdid:
+      name: udid
+      in: path
+      required: true
+      schema: { type: string }
+    machineId:
+      name: machineId
+      in: path
+      required: true
+      schema: { type: string }
+    runId:
+      name: runId
+      in: path
+      required: true
+      schema: { type: string }
+    buildId:
+      name: buildId
+      in: path
+      required: true
+      schema: { type: string }
+    jobId:
+      name: jobId
+      in: path
+      required: true
+      schema: { type: string }
+    serverId:
+      name: serverId
+      in: path
+      required: true
+      schema: { type: string }
+
+  schemas:
+
+    Error:
+      type: object
+      required: [code, message]
+      properties:
+        code:    { type: string, example: DEVICE_NOT_FOUND }
+        message: { type: string, example: "Device abc123 not found" }
+        requestId: { type: string }
+
+    User:
+      type: object
+      properties:
+        _id:       { type: string }
+        email:     { type: string, format: email }
+        name:      { type: string }
+        role:      { type: string, enum: [viewer, operator, admin] }
+        createdAt: { type: string, format: date-time }
+
+    MachineHost:
+      type: object
+      properties:
+        _id:          { type: string }
+        machineId:    { type: string }
+        hostname:     { type: string }
+        os:           { type: string, enum: [darwin, linux, win32] }
+        agentVersion: { type: string }
+        status:       { type: string, enum: [online, offline, degraded] }
+        capabilities:
+          type: object
+          properties:
+            maxDevices:     { type: integer }
+            androidSupport: { type: boolean }
+            iosSupport:     { type: boolean }
+        lastHeartbeatAt: { type: string, format: date-time }
+        createdAt:       { type: string, format: date-time }
+
+    Device:
+      type: object
+      properties:
+        _id:            { type: string }
+        udid:           { type: string }
+        machineId:      { type: string }
+        platform:       { type: string, enum: [android, ios] }
+        name:           { type: string }
+        osVersion:      { type: string }
+        model:          { type: string }
+        connectionType: { type: string, enum: [usb, network, simulator, emulator] }
+        status:         { type: string, enum: [idle, smoke, in-use, offline, unreachable] }
+        lock:
+          nullable: true
+          type: object
+          properties:
+            heldBy:     { type: string, description: userId }
+            sessionId:  { type: string }
+            acquiredAt: { type: string, format: date-time }
+            reason:     { type: string }
+        isLocallyReachable: { type: boolean }
+        lastSeenAt:         { type: string, format: date-time }
+        createdAt:          { type: string, format: date-time }
+
+    AppiumServer:
+      type: object
+      properties:
+        _id:             { type: string }
+        machineId:       { type: string }
+        port:            { type: integer }
+        pid:             { type: integer, nullable: true }
+        status:          { type: string, enum: [starting, running, stopped, error] }
+        boundDeviceUdid: { type: string, nullable: true }
+        startedAt:       { type: string, format: date-time, nullable: true }
+        stoppedAt:       { type: string, format: date-time, nullable: true }
+        logPath:         { type: string }
+
+    Build:
+      type: object
+      properties:
+        _id:                  { type: string }
+        project:              { type: string }
+        platform:             { type: string, enum: [android, ios] }
+        version:              { type: string }
+        artifactUrl:          { type: string, format: uri }
+        artifactPath:         { type: string, nullable: true }
+        sizeBytes:            { type: integer, nullable: true }
+        checksum:             { type: string, nullable: true }
+        checksumAlgorithm:    { type: string, enum: [sha256] }
+        status:               { type: string, enum: [downloading, validating, corrupt, ready] }
+        integrityValidatedAt: { type: string, format: date-time, nullable: true }
+        fetchedAt:            { type: string, format: date-time, nullable: true }
+        createdAt:            { type: string, format: date-time }
+
+    InstallJob:
+      type: object
+      properties:
+        _id:            { type: string }
+        buildId:        { type: string }
+        project:        { type: string }
+        platform:       { type: string, enum: [android, ios] }
+        version:        { type: string }
+        status:         { type: string, enum: [queued, pending, downloading, validating, complete, error] }
+        progress:       { type: integer, minimum: 0, maximum: 100 }
+        sizeBytes:      { type: integer, nullable: true }
+        downloadedBytes:{ type: integer }
+        error:          { type: string, nullable: true }
+        startedAt:      { type: string, format: date-time, nullable: true }
+        completedAt:    { type: string, format: date-time, nullable: true }
+        createdAt:      { type: string, format: date-time }
+
+    ExecutionStage:
+      type: object
+      properties:
+        name:      { type: string, enum: [pulling, restoring_cache, installing, execute] }
+        status:    { type: string, enum: [pending, running, done, error, skipped] }
+        startedAt: { type: string, format: date-time, nullable: true }
+        endedAt:   { type: string, format: date-time, nullable: true }
+        error:     { type: string, nullable: true }
+
+    ExecutionRun:
+      type: object
+      properties:
+        _id:          { type: string }
+        machineId:    { type: string }
+        deviceUdid:   { type: string }
+        buildId:      { type: string, nullable: true }
+        project:      { type: string }
+        branch:       { type: string }
+        suite:        { type: string }
+        triggeredBy:  { type: string, description: userId }
+        status:       { type: string, enum: [queued, preparing, running, passed, failed, cancelled] }
+        stages:
+          type: array
+          items: { $ref: '#/components/schemas/ExecutionStage' }
+        workspacePath: { type: string }
+        cacheKey:      { type: string, nullable: true }
+        logPath:       { type: string }
+        reportPath:    { type: string, nullable: true }
+        startedAt:     { type: string, format: date-time, nullable: true }
+        endedAt:       { type: string, format: date-time, nullable: true }
+        createdAt:     { type: string, format: date-time }
+
+    StreamSession:
+      type: object
+      properties:
+        _id:           { type: string }
+        machineId:     { type: string }
+        deviceUdid:    { type: string }
+        protocol:      { type: string, enum: [mjpeg, h264] }
+        captureStatus: { type: string, enum: [starting, active, stopped] }
+        capturePid:    { type: integer, nullable: true }
+        retryKey:      { type: string }
+        viewerCount:   { type: integer }
+        startedAt:     { type: string, format: date-time }
+        lastViewerJoinedAt: { type: string, format: date-time, nullable: true }
+
+    AnalyticsSummary:
+      type: object
+      properties:
+        totalRuns:    { type: integer }
+        passedRuns:   { type: integer }
+        failedRuns:   { type: integer }
+        cancelledRuns:{ type: integer }
+        passRate:     { type: number, minimum: 0, maximum: 1 }
+        avgDurationMs:{ type: integer }
+        periodStart:  { type: string, format: date-time }
+        periodEnd:    { type: string, format: date-time }
+        delta:
+          type: object
+          description: Change vs the equivalent previous period
+          properties:
+            passRate:     { type: number }
+            totalRuns:    { type: integer }
+            avgDurationMs:{ type: integer }
+
+    AnalyticsTrendPoint:
+      type: object
+      properties:
+        date:         { type: string, format: date }
+        totalRuns:    { type: integer }
+        passedRuns:   { type: integer }
+        failedRuns:   { type: integer }
+        cancelledRuns:{ type: integer }
+        passRate:     { type: number }
+
+    FlakinessSuite:
+      type: object
+      properties:
+        suite:      { type: string }
+        runs:       { type: integer }
+        passRate:   { type: number }
+        flakiness:  { type: number, description: "stddev of daily pass rates, 0–0.5" }
+
+    DeviceUtilisation:
+      type: object
+      properties:
+        deviceUdid: { type: string }
+        runs:       { type: integer }
+        passRate:   { type: number }
+
+  responses:
+    Unauthorized:
+      description: Missing or invalid JWT
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Forbidden:
+      description: Authenticated but insufficient role
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+
+security:
+  - bearerAuth: []
+
+# ─────────────────────────────────────────────────────────────
+# Paths
+# ─────────────────────────────────────────────────────────────
+
+paths:
+
+  # ── Auth ────────────────────────────────────────────────────
+
+  /auth/login:
+    post:
+      tags: [auth]
+      summary: Log in and receive a JWT
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email:    { type: string, format: email }
+                password: { type: string }
+      responses:
+        '200':
+          description: Login successful
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  token: { type: string, description: JWT bearer token }
+                  user:  { $ref: '#/components/schemas/User' }
+        '401':
+          description: Invalid credentials
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /auth/me:
+    get:
+      tags: [auth]
+      summary: Get the currently authenticated user
+      responses:
+        '200':
+          description: Current user
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/User' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  # ── Hosts ────────────────────────────────────────────────────
+
+  /hosts:
+    get:
+      tags: [hosts]
+      summary: List all machine hosts
+      responses:
+        '200':
+          description: Host list
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/MachineHost' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /hosts/heartbeat:
+    post:
+      tags: [hosts]
+      summary: Agent heartbeat — register or update host status
+      description: |
+        Called by the host agent every N seconds. If the host does not exist,
+        it is created (registered). If it exists, `lastHeartbeatAt` and
+        `status` are updated. Upsert semantics on `machineId`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [machineId, hostname, os, agentVersion, capabilities]
+              properties:
+                machineId:    { type: string }
+                hostname:     { type: string }
+                os:           { type: string, enum: [darwin, linux, win32] }
+                agentVersion: { type: string }
+                capabilities:
+                  type: object
+                  properties:
+                    maxDevices:     { type: integer }
+                    androidSupport: { type: boolean }
+                    iosSupport:     { type: boolean }
+      responses:
+        '200':
+          description: Host upserted
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MachineHost' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /hosts/{machineId}:
+    get:
+      tags: [hosts]
+      summary: Get a single host by machineId
+      parameters:
+        - { $ref: '#/components/parameters/machineId' }
+      responses:
+        '200':
+          description: Host detail
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MachineHost' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  # ── Devices ──────────────────────────────────────────────────
+
+  /devices:
+    get:
+      tags: [devices]
+      summary: List all devices
+      parameters:
+        - name: platform
+          in: query
+          schema: { type: string, enum: [android, ios] }
+        - name: status
+          in: query
+          schema: { type: string, enum: [idle, smoke, in-use, offline, unreachable] }
+        - name: machineId
+          in: query
+          schema: { type: string }
+      responses:
+        '200':
+          description: Device list
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Device' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /devices/sync:
+    post:
+      tags: [devices]
+      summary: Agent device sync — upsert discovered devices for a host
+      description: |
+        Called by the host agent after each discovery poll. Upserts all
+        discovered devices for the given `machineId` and marks previously-seen
+        devices that are no longer present as `offline`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [machineId, devices]
+              properties:
+                machineId: { type: string }
+                devices:
+                  type: array
+                  items:
+                    type: object
+                    required: [udid, platform, name, osVersion, model, connectionType]
+                    properties:
+                      udid:           { type: string }
+                      platform:       { type: string, enum: [android, ios] }
+                      name:           { type: string }
+                      osVersion:      { type: string }
+                      model:          { type: string }
+                      connectionType: { type: string, enum: [usb, network, simulator, emulator] }
+      responses:
+        '200':
+          description: Sync result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  upserted: { type: integer }
+                  markedOffline: { type: integer }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /devices/{udid}:
+    get:
+      tags: [devices]
+      summary: Get a single device
+      parameters:
+        - { $ref: '#/components/parameters/deviceUdid' }
+      responses:
+        '200':
+          description: Device detail
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Device' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /devices/{udid}/lock:
+    post:
+      tags: [devices]
+      summary: Acquire a device lock (operator+)
+      description: |
+        Atomic acquire — uses `findOneAndUpdate` with `lock: null` precondition.
+        Returns 409 if the device is already locked.
+      parameters:
+        - { $ref: '#/components/parameters/deviceUdid' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason: { type: string, description: Optional human-readable reason }
+      responses:
+        '200':
+          description: Lock acquired
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Device' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Device already locked
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /devices/{udid}/unlock:
+    post:
+      tags: [devices]
+      summary: Release a device lock (operator+)
+      description: Operators can release their own lock; admins can release any lock.
+      parameters:
+        - { $ref: '#/components/parameters/deviceUdid' }
+      responses:
+        '200':
+          description: Lock released
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Device' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /devices/{udid}/stream/status:
+    get:
+      tags: [devices]
+      summary: Get the active StreamSession for a device (if any)
+      parameters:
+        - { $ref: '#/components/parameters/deviceUdid' }
+        - name: protocol
+          in: query
+          schema: { type: string, enum: [mjpeg, h264], default: mjpeg }
+      responses:
+        '200':
+          description: Active stream session or null
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - { $ref: '#/components/schemas/StreamSession' }
+                  - { type: 'null' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /devices/{udid}/stream/start:
+    post:
+      tags: [devices]
+      summary: Ensure a StreamSession is active — idempotent (operator+)
+      parameters:
+        - { $ref: '#/components/parameters/deviceUdid' }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                protocol: { type: string, enum: [mjpeg, h264], default: mjpeg }
+      responses:
+        '200':
+          description: Stream session (existing or newly started)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StreamSession' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429':
+          description: iOS simulator stream cap reached (max 8 per host)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /devices/{udid}/stream/stop:
+    post:
+      tags: [devices]
+      summary: Force-stop the capture process for a device (operator+)
+      parameters:
+        - { $ref: '#/components/parameters/deviceUdid' }
+      responses:
+        '200':
+          description: Stream stopped
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  # ── Appium Servers ────────────────────────────────────────────
+
+  /servers:
+    get:
+      tags: [servers]
+      summary: List all Appium servers across all hosts
+      parameters:
+        - name: machineId
+          in: query
+          schema: { type: string }
+        - name: status
+          in: query
+          schema: { type: string, enum: [starting, running, stopped, error] }
+      responses:
+        '200':
+          description: Server list
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/AppiumServer' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+    post:
+      tags: [servers]
+      summary: Start an Appium server on a host (operator+)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [machineId, port]
+              properties:
+                machineId:       { type: string }
+                port:            { type: integer }
+                boundDeviceUdid: { type: string }
+      responses:
+        '201':
+          description: Server starting
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AppiumServer' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409':
+          description: Port already in use on that host
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /servers/{serverId}:
+    delete:
+      tags: [servers]
+      summary: Stop an Appium server (operator+)
+      parameters:
+        - { $ref: '#/components/parameters/serverId' }
+      responses:
+        '200':
+          description: Server stopped
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  # ── Builds ────────────────────────────────────────────────────
+
+  /builds:
+    get:
+      tags: [builds]
+      summary: List builds
+      parameters:
+        - name: project
+          in: query
+          schema: { type: string }
+        - name: platform
+          in: query
+          schema: { type: string, enum: [android, ios] }
+        - name: status
+          in: query
+          schema: { type: string, enum: [downloading, validating, corrupt, ready] }
+      responses:
+        '200':
+          description: Build list
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Build' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /builds/fetch:
+    post:
+      tags: [builds]
+      summary: Trigger a build fetch (operator+)
+      description: |
+        Idempotent — if a fetch for this (project, version, platform) is already
+        in progress, returns the existing InstallJob without starting a new one.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [project, version, platform]
+              properties:
+                project:     { type: string }
+                version:     { type: string }
+                platform:    { type: string, enum: [android, ios] }
+                artifactUrl: { type: string, format: uri, description: "Override URL; uses org config provider if omitted" }
+      responses:
+        '202':
+          description: Fetch queued or already in progress
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  build:      { $ref: '#/components/schemas/Build' }
+                  installJob: { $ref: '#/components/schemas/InstallJob' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /builds/{buildId}:
+    get:
+      tags: [builds]
+      summary: Get a build with its latest InstallJob
+      parameters:
+        - { $ref: '#/components/parameters/buildId' }
+      responses:
+        '200':
+          description: Build + latest job
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  build:      { $ref: '#/components/schemas/Build' }
+                  installJob: { $ref: '#/components/schemas/InstallJob' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /builds/{buildId}/download:
+    get:
+      tags: [builds]
+      summary: Stream the artifact file (operator+)
+      description: Only serves builds with `status = ready`.
+      parameters:
+        - { $ref: '#/components/parameters/buildId' }
+      responses:
+        '200':
+          description: Binary artifact stream
+          content:
+            application/octet-stream:
+              schema: { type: string, format: binary }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Build not ready
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /builds/jobs/{jobId}:
+    get:
+      tags: [builds]
+      summary: Get an InstallJob's current state
+      parameters:
+        - { $ref: '#/components/parameters/jobId' }
+      responses:
+        '200':
+          description: InstallJob
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/InstallJob' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  # ── Execution ─────────────────────────────────────────────────
+
+  /execution/runs:
+    get:
+      tags: [execution]
+      summary: List execution runs
+      parameters:
+        - name: status
+          in: query
+          schema: { type: string, enum: [queued, preparing, running, passed, failed, cancelled] }
+        - name: project
+          in: query
+          schema: { type: string }
+        - name: deviceUdid
+          in: query
+          schema: { type: string }
+        - name: limit
+          in: query
+          schema: { type: integer, default: 20, maximum: 100 }
+        - name: offset
+          in: query
+          schema: { type: integer, default: 0 }
+      responses:
+        '200':
+          description: Run list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  runs:  { type: array, items: { $ref: '#/components/schemas/ExecutionRun' } }
+                  total: { type: integer }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+    post:
+      tags: [execution]
+      summary: Trigger a new execution run (operator+)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [deviceUdid, project, branch, suite]
+              properties:
+                deviceUdid:  { type: string }
+                buildId:     { type: string, description: "Optional; omit if org manages builds externally" }
+                project:     { type: string }
+                branch:      { type: string }
+                suite:       { type: string }
+                envOverrides:
+                  type: object
+                  additionalProperties: { type: string }
+                  description: Per-run env var overrides (merged over org/project config values)
+      responses:
+        '201':
+          description: Run created (status = queued)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ExecutionRun' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422':
+          description: Validation error (device offline, build not ready, etc.)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /execution/runs/{runId}:
+    get:
+      tags: [execution]
+      summary: Get a run with full stage detail
+      parameters:
+        - { $ref: '#/components/parameters/runId' }
+      responses:
+        '200':
+          description: ExecutionRun
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ExecutionRun' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /execution/runs/{runId}/cancel:
+    post:
+      tags: [execution]
+      summary: Cancel a queued or running run (operator+)
+      parameters:
+        - { $ref: '#/components/parameters/runId' }
+      responses:
+        '200':
+          description: Run cancelled
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ExecutionRun' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Run already in terminal state
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /execution/runs/{runId}/logs/stream:
+    get:
+      tags: [execution]
+      summary: SSE log tail — raw log lines from the running test process
+      description: |
+        Returns a `text/event-stream` (SSE) response. Each event is a log line.
+        The stream closes automatically when the run reaches a terminal state.
+
+        **Event types:**
+        ```
+        event: log
+        data: {"line": "INFO Starting wdio...", "ts": "2026-08-21T10:00:01Z"}
+
+        event: done
+        data: {"status": "passed"}
+        ```
+
+        This is SSE (server-to-client only), not WebSocket. The browser
+        `EventSource` API reconnects automatically on drop.
+      parameters:
+        - { $ref: '#/components/parameters/runId' }
+      responses:
+        '200':
+          description: SSE stream
+          content:
+            text/event-stream:
+              schema: { type: string }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /execution/runs/{runId}/report:
+    get:
+      tags: [execution]
+      summary: Redirect to the Allure report index page
+      parameters:
+        - { $ref: '#/components/parameters/runId' }
+      responses:
+        '302':
+          description: Redirect to /execution/runs/:runId/report/index.html
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Report not yet generated
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /execution/runs/{runId}/report/{path}:
+    get:
+      tags: [execution]
+      summary: Serve Allure report static assets
+      parameters:
+        - { $ref: '#/components/parameters/runId' }
+        - name: path
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Static file
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  # ── Analytics ─────────────────────────────────────────────────
+
+  /analytics/summary:
+    get:
+      tags: [analytics]
+      summary: KPI summary for the current period vs previous period
+      parameters:
+        - { $ref: '#/components/parameters/analyticsFilters' }
+      responses:
+        '200':
+          description: Summary KPIs
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AnalyticsSummary' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /analytics/trend/pass-rate:
+    get:
+      tags: [analytics]
+      summary: Pass rate per day or week
+      parameters:
+        - { $ref: '#/components/parameters/analyticsFilters' }
+      responses:
+        '200':
+          description: Time-series data points
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/AnalyticsTrendPoint' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /analytics/trend/volume:
+    get:
+      tags: [analytics]
+      summary: Run volume per day or week, segmented by status
+      parameters:
+        - { $ref: '#/components/parameters/analyticsFilters' }
+      responses:
+        '200':
+          description: Volume time-series
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/AnalyticsTrendPoint' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /analytics/flakiness:
+    get:
+      tags: [analytics]
+      summary: Flakiness scores by suite (min 3 data points to appear)
+      parameters:
+        - { $ref: '#/components/parameters/analyticsFilters' }
+      responses:
+        '200':
+          description: Flakiness table
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/FlakinessSuite' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /analytics/devices:
+    get:
+      tags: [analytics]
+      summary: Device utilisation — run count and pass rate per device
+      parameters:
+        - { $ref: '#/components/parameters/analyticsFilters' }
+      responses:
+        '200':
+          description: Device utilisation list
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/DeviceUtilisation' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /analytics/failures/recent:
+    get:
+      tags: [analytics]
+      summary: Most recent failed runs (reads ExecutionRun directly — always fresh)
+      parameters:
+        - name: project
+          in: query
+          schema: { type: string }
+        - name: limit
+          in: query
+          schema: { type: integer, default: 20, maximum: 50 }
+      responses:
+        '200':
+          description: Recent failures
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/ExecutionRun' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+# ─────────────────────────────────────────────────────────────
+# Shared analytics filter parameter (referenced above)
+# ─────────────────────────────────────────────────────────────
+# Note: OpenAPI 3.1 requires parameters to be declared inline or
+# under components/parameters. The analyticsFilters ref below is
+# a shorthand — expand inline per endpoint during implementation.
+# ─────────────────────────────────────────────────────────────
+
+# ─────────────────────────────────────────────────────────────
+# Real-time channels (WebSocket + SSE)
+# Not expressible as standard OpenAPI paths — documented here.
+# ─────────────────────────────────────────────────────────────
+
+# WS  ws://<host>:3001/ws/stream/:deviceUdid?protocol=mjpeg|h264&token=<jwt>
+#
+#   Port: STREAM_WS_PORT (default 3001) — separate from REST to bypass
+#   HTTP/1.1 6-connection-per-origin limit on grid views with 3+ devices.
+#
+#   On connect → server sends:
+#     { type: "joined", sessionId, retryKey, protocol, viewerCount }
+#   While active (H264 only) → binary frames pushed as ArrayBuffer
+#   On disconnect → server removes viewer from StreamSession.viewerIds
+#   On retryKey change after reconnect → client must flush MSE buffer
+#
+# WS  ws://<host>:3000/ws/execution/:runId?token=<jwt>
+#
+#   Port: API_PORT (3000) — same as REST.
+#   Stage transition events (not raw log lines — those go via SSE):
+#     { type: "stage",  stage, status, startedAt?, endedAt?, error? }
+#     { type: "status", status, endedAt? }
+#
+# WS  ws://<host>:3000/ws/builds/jobs/:jobId?token=<jwt>
+#
+#   Download progress for an InstallJob:
+#     { type: "progress", jobId, progress, downloadedBytes }
+#     { type: "complete", jobId, buildId }
+#     { type: "error",    jobId, error }
+#
+# SSE  GET /api/execution/runs/:runId/logs/stream
+#
+#   See path entry above. EventSource-compatible; auto-reconnects.
+#   event: log  → { line, ts }
+#   event: done → { status }
