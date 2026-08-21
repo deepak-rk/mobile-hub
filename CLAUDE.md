@@ -1,6 +1,6 @@
 # Mobile Hub — Project Guide
 
-Open-source mobile device testing & automation platform for the community. Think: shared device lab + Appium-driven execution + live device streaming + results dashboard — an open-source sibling of proprietary tools like Leap Mobile Inspector, rebuilt without their known gaps (see "Lessons carried in" below).
+Open-source mobile device testing & automation platform for the community. Think: shared device lab + Appium-driven execution + live device streaming + results dashboard — rebuilt from the ground up, without the known gaps of prior proprietary tools (see "Lessons carried in" below).
 
 **Status:** pre-implementation. Architecture is being planned before code is written. If you're picking this up mid-session and `frontend/` or `backend/` don't have real source yet, don't assume they do — check first.
 
@@ -43,7 +43,7 @@ Mobile Hub adapts to each organisation's conventions rather than forcing its own
 
 ## Lessons carried in from the reference architecture
 
-These are gaps observed in the proprietary reference (Leap Mobile Inspector) that Mobile Hub should design around from day one, not patch later:
+These are gaps observed in prior proprietary tools in this domain that Mobile Hub should design around from day one, not patch later:
 - Streaming capacity: 1 device stream ≠ 1 viewer capacity for some protocols. Decide multi-viewer fan-out (shared capture + N viewers) up front, don't assume 1:1.
 - Multi-host / multi-machine isolation must be a schema-level concern from the first model, not a migration.
 - Zip/artifact download integrity needs validation before "done", not after a support ticket.

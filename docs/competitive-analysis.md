@@ -51,6 +51,10 @@ These are solved problems. Mobile Hub must match them, not differentiate on them
 
 ---
 
+> **Cross-reference:** Technical implementation decisions derived from this research are detailed in [architecture-blueprint.md](architecture-blueprint.md) and the module specs under [modules/](modules/).
+
+---
+
 ## 4. Critical gaps in the open-source landscape
 
 These are validated by GitHub issues, community forums, and developer blogs — not assumptions.
@@ -60,6 +64,13 @@ These are validated by GitHub issues, community forums, and developer blogs — 
 The two libraries powering every major OSS device lab (minicap, minitouch) have not been updated for Android 10+. The OpenSTF project officially supports only Android 9. DeviceFarmer has incomplete, patchy Android 14/15 support driven by volunteer patches.
 
 **Mobile Hub implication:** Do not use minicap/minitouch. Use **scrcpy** (actively maintained by Genymobile, ships Android 14/15 support) as the capture layer for Android. This is a foundational technical decision that avoids inheriting 6 years of accumulated debt.
+
+Confirmed streaming implementation (from reference architecture study):
+- **MJPEG**: `adb exec-out screencap -p` looped at ~10 fps → `multipart/x-mixed-replace` HTTP stream → browser `<img src>`
+- **H264**: `adb screenrecord --output-format=h264 -` (stdout pipe) → WebSocket binary frames → browser MediaSource API (MSE)
+- **Separate WS port** (API_PORT+1): HTTP/1.1 limits 6 concurrent connections per origin — streaming must run on a dedicated port or grid views break at 3+ devices. No OSS tool documents this constraint.
+
+See [modules/streaming.md](modules/streaming.md) for full streaming spec.
 
 ### 4b. iOS at scale
 
@@ -80,7 +91,11 @@ The 12-container STF deployment is the single most-cited reason teams give up on
 
 OpenSTF/DeviceFarmer assumes 1 user per device session. appium-device-farm has no broadcast model. No OSS tool provides a shared capture / N-viewer architecture.
 
-**Mobile Hub implication:** The `StreamSession` model (§3A of the architecture blueprint) addresses a gap that is completely unaddressed in open source and barely addressed in proprietary tools (HeadSpin has session sharing; it is not a common feature).
+**Mobile Hub implication:** The `StreamSession` model (§4 of the architecture blueprint) addresses a gap that is completely unaddressed in open source and barely addressed in proprietary tools (HeadSpin has session sharing; it is not a common feature).
+
+Additional constraint confirmed from reference: without a separate WebSocket port, browsers cap concurrent device streams at 6 (HTTP/1.1 connection limit per origin). Streaming at scale requires a dedicated secondary port — no OSS tool documents or handles this.
+
+iOS-specific limit: max **8 concurrent simulator streams per Mac host** before xcrun simctl drops frames silently. Physical Android and iOS are not subject to this cap.
 
 ### 4e. Auth/RBAC
 
@@ -93,6 +108,15 @@ OpenSTF has a rudimentary auth stub. appium-device-farm has zero auth. GADS has 
 "The biggest gap in most open-source stacks is the reporting layer." No OSS device lab tool ships meaningful test analytics: no flakiness detection, no trend dashboards, no failure clustering. Teams get a log file.
 
 **Mobile Hub implication:** The `AnalyticsService` + analytics dashboard is not a "nice-to-have" — it is what closes the gap between Mobile Hub and a usable professional tool. Prioritize the analytics module earlier than V2 if contributor bandwidth allows.
+
+Confirmed analytics implementation approach:
+- **Flakiness score** = `stddev(daily pass rates over 14-day rolling window)` — no competitor exposes this formula as a first-class metric; most treat flakiness as a qualitative label.
+- **URL-synced filters** (date range, platform, project) make dashboard states shareable — a small but impactful UX gap vs. OSS alternatives.
+- **Pre-aggregated MongoDB** (`AnalyticsAggregate`, hourly schedule) — query latency stays flat regardless of run volume.
+- **recharts** as chart library: lightweight, composable, no heavyweight dashboard framework needed.
+- **Allure** for per-run test reports: the de-facto OSS standard, no reason to build a custom reporter.
+
+See [modules/analytics.md](modules/analytics.md) for full analytics spec.
 
 ### 4g. Artifact integrity
 
@@ -154,13 +178,21 @@ These findings inform specific implementation choices not previously explicit in
 
 1. **Capture layer for Android: scrcpy, not minicap/minitouch.** minicap/minitouch are dead (Android 9 ceiling). scrcpy is actively maintained by Genymobile, supports Android 14/15 via ADB, and has production usage evidence at scale.
 
-2. **iOS streaming architecture: 1 WDA server per Mac host, max N devices per host limited by USB bandwidth and WDA constraints.** Do not promise more than this in V1. iOS parity with Android is a V3 concern.
+2. **iOS streaming architecture: 1 WDA server per Mac host, max N devices per host limited by USB bandwidth and WDA constraints.** Do not promise more than this in V1. iOS parity with Android is a V3 concern. Hard cap: 8 concurrent simulator streams per host.
 
-3. **Deployment target: single `docker compose up`.** This is a hard constraint from the market evidence. Every OSS tool that failed community adoption did so because of operational complexity. This must be evaluated as a first-class quality gate before V1 ships.
+3. **Deployment target: single `docker compose up`.** This is a hard constraint from the market evidence. Every OSS tool that failed community adoption did so because of operational complexity. This must be evaluated as a first-class quality gate before V1 ships. See [deployment.md](deployment.md).
 
 4. **Analytics module timeline: consider pulling forward to V1 or early V2.** The analytics gap is the most consistent complaint about OSS tools from enterprise evaluators. A basic pass/fail trend dashboard significantly improves the "is this production-ready?" perception.
 
 5. **Appium 2.x plugin conflicts are real.** The backend's Appium server management must account for plugin compatibility — don't assume a monolithic Appium server can run multiple conflicting plugins simultaneously. Isolate per-device Appium instances if needed.
+
+6. **Execution log streaming: SSE, not WebSocket.** Log tail is unidirectional (server → client only). SSE (`text/event-stream`) is simpler, works over HTTP/1.1, and reconnects automatically. Bidirectional WebSocket is unnecessary overhead for log streaming. The existing `/ws/execution/:runId` WebSocket handles structured stage-transition events only.
+
+7. **Separate WebSocket port for device streams.** HTTP/1.1 browsers allow 6 concurrent connections per origin. Streaming WebSockets on the same port as the REST API breaks any grid view with 3+ devices. The stream WS server must bind on a separate configurable port (default: API_PORT+1).
+
+8. **Build download concurrency guard.** Concurrent download requests for the same build can corrupt the artifact. The `BuildsService.fetchBuild()` must use an atomic `findOneAndUpdate` with status precondition before starting any download — if already `'downloading'`, return the existing job, not a new one.
+
+9. **Atomic device lock acquisition.** Device locks must be `findOneAndUpdate` with `lock: null` precondition — never read-then-write. The reference hit race conditions where two runs acquired the same device during high-throughput test days.
 
 ---
 

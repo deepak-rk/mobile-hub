@@ -2,7 +2,7 @@
 
 Status: **planning, no code written yet**. This is the source of truth for architecture decisions — `CLAUDE.md` files point here rather than duplicating this content. Update this doc as decisions evolve; don't let it drift from what's actually built.
 
-Reference input: a screenshot of the architecture blueprint for a proprietary tool ("Leap Mobile Inspector") in the same domain — Appium multi-server manager, device inventory, live streaming, execution pipeline, analytics dashboard. Mobile Hub reuses the shape of that architecture where it's sound, and deliberately redesigns the parts that were known late-stage pain points (see §8).
+Reference input: a prior proprietary tool in the same domain — Appium multi-server manager, device inventory, live streaming, execution pipeline, analytics dashboard. Mobile Hub reuses the shape of that architecture where it's sound, and deliberately redesigns the parts that were known late-stage pain points (see §8).
 
 ## 1. Vision & scope
 
@@ -312,7 +312,7 @@ We will define the exact adapter interface when we start the builds module. Keep
 
 ## 12. Module reference — key decisions from real implementation
 
-This section captures concrete decisions validated by studying the reference architecture (Leap Mobile Inspector) module by module. These are not assumptions — they reflect what was actually built, what worked, and what broke. Where the reference had a known issue, Mobile Hub's approach is called out explicitly.
+This section captures concrete decisions validated by studying a prior proprietary implementation in the same domain, module by module. These are not assumptions — they reflect what was actually built, what worked, and what broke. Where the reference had a known issue, Mobile Hub's approach is called out explicitly.
 
 ---
 
@@ -377,7 +377,7 @@ The reference used Python (`python3 -c "import hashlib..."`) to compute SHA-256 
 Reference had `rejectUnauthorized: false` hardcoded for Nexus HTTPS connections (self-signed cert on internal Nexus servers). Mobile Hub must **not** default to this. The `NexusBuildProvider` config block accepts an optional `tlsSkipVerify: boolean` (default false) — orgs with self-signed certs set it explicitly in `mobilehub.org.yaml`, making the choice visible and auditable rather than silent.
 
 #### Entity / org slug → org config
-The reference used `entity` slugs (e.g., `ENBD`, `EI`, `LIV`) embedded in build paths and Nexus repo names. Mobile Hub replaces this entirely with the `OrgConfig.orgId` + `ProjectConfig.projectId` system (§11). No hardcoded slugs.
+The reference used hardcoded org slugs embedded in build paths and Nexus repo names. Mobile Hub replaces this entirely with the `OrgConfig.orgId` + `ProjectConfig.projectId` system (§11). No hardcoded slugs.
 
 #### Known issues fixed in Mobile Hub
 - Reference bug: concurrent download race — two requests for the same build could both start a download, both write to the same artifact path, corrupt the file, then both mark it complete. Mobile Hub fix: `BuildsService.fetchBuild()` uses an atomic `findOneAndUpdate` with `status: {$in: ['ready']}` check before starting — if a download is already `'downloading'`, return the existing `InstallJob` instead of starting a second one.
