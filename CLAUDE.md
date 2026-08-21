@@ -24,6 +24,16 @@ State assumptions explicitly before implementing anything non-trivial. If a requ
 
 Ship the minimum code that solves the stated problem. No speculative abstractions, no config knobs for hypothetical future needs, no "while I'm here" refactors bundled into unrelated changes. Three similar lines beats a premature helper.
 
+## Config-driven, organisation-aware
+
+Mobile Hub adapts to each organisation's conventions rather than forcing its own. Key principle: **the platform is configurable, not prescriptive.**
+
+- `mobilehub.org.yaml` (org-wide defaults) + `mobilehub.project.yaml` (per-project overrides) are the human-editable surface. The platform merges and validates them at runtime via `ConfigService`.
+- Feature modules (builds, execution, analytics, streaming) can be toggled per org — some orgs bring their own build pipeline and disable the built-in one.
+- Build sources (Nexus, S3, direct URL, custom webhook) are adapters behind a `BuildProvider` interface — adding a new provider doesn't touch the rest of the system.
+- Automation repo structure (framework, config file path, env file, test dir) is declared in config — the platform doesn't assume a fixed layout.
+- Full design is in `docs/architecture-blueprint.md §11`.
+
 ## Do this, not that
 
 - **Do** keep frontend and backend independently runnable and independently deployable. **Not** a single monolith process.

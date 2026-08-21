@@ -224,6 +224,85 @@ WebSocket:
 - Standalone WDA lifecycle management
 - Multi-viewer collaboration affordances (cursors/annotations) if there's real demand
 
+## 11. Org & project configuration
+
+Different organisations structure their builds, automation repos, and test frameworks completely differently. Mobile Hub adapts to them — it doesn't force a single convention.
+
+### Config hierarchy
+
+Two YAML files, resolved at runtime with project values overriding org defaults:
+
+```
+mobilehub.org.yaml      # org-wide defaults (committed to org's config repo)
+mobilehub.project.yaml  # per-project overrides (lives alongside the project)
+```
+
+The platform merges them at execution time — project wins over org, org wins over built-in defaults. Both files are optional; a project with neither gets sensible defaults.
+
+### Feature flags
+
+Each major module can be toggled per org — some organisations bring their own build pipeline and don't need Mobile Hub's build fetching at all:
+
+```yaml
+# mobilehub.org.yaml
+features:
+  builds: true       # disable if org manages builds outside Mobile Hub
+  analytics: true
+  execution: true
+  streaming: true
+```
+
+### Build provider
+
+Different orgs store builds differently. A `provider` key selects an adapter; the rest of the block is provider-specific config:
+
+```yaml
+builds:
+  provider: nexus        # nexus | s3 | direct-url | custom
+  nexus:
+    baseUrl: https://nexus.acme.com
+    repo: mobile-releases
+```
+
+A `custom` provider points to a script/webhook the platform calls — escape hatch for anything not natively supported. Project-level config can override the provider entirely for that project.
+
+### Automation framework & repo
+
+Different orgs use different runners, repo layouts, and env/config file conventions:
+
+```yaml
+automation:
+  framework: wdio          # wdio | appium-raw | espresso | xcuitest
+  repoUrl: https://github.com/acme/mobile-automation
+  branch: main
+  structure:
+    configFile: wdio.conf.js    # path within the repo
+    envFile: .env
+    testDir: tests/
+  env:                          # values injected at run time, stored encrypted
+    - key: APP_ENV
+      value: staging
+```
+
+Mobile Hub clones/pulls the repo, injects env values, and invokes the runner. The `structure` block tells it where to find the config — it doesn't assume a fixed layout.
+
+### Data models (additions)
+
+```ts
+OrgConfig   { orgId, features, builds, automation, createdAt, updatedAt }
+ProjectConfig { projectId, orgId, features?, builds?, automation?, createdAt, updatedAt }
+```
+
+`ProjectConfig` is a partial override — only the keys present override the org; absent keys fall back to `OrgConfig`. Both are stored in MongoDB and also representable as YAML files (the YAML is the human-editable form; the DB record is the resolved, validated runtime form).
+
+### Backend additions
+
+- `ConfigService` — loads and merges org + project config, validates against a schema (Zod), caches resolved config per project
+- `BuildProviderRegistry` — maps `provider` strings to adapter classes (`NexusBuildProvider`, `S3BuildProvider`, `DirectUrlBuildProvider`, `CustomBuildProvider`)
+- Each `BuildProvider` implements: `fetchBuild(project, version) → artifactPath` + `listBuilds(project) → Build[]`
+
+We will define the exact adapter interface when we start the builds module. Keep the adapter boundary narrow and stable — the rest of the system only calls the interface, never the adapter directly.
+
 ## 10. Open questions
 
 - Host agent packaging: bundled inside `backend/` initially, or split into its own `agent/` package once it needs to ship/update independently of the central server? Revisit once V1 is running on more than one contributor's machine.
