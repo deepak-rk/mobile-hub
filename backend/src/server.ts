@@ -1,5 +1,6 @@
 import { buildApp } from './app';
 import { connectDB } from './db/connection';
+import { ensureIndexes } from './db/ensure-indexes';
 import { env } from './config/env';
 import { loadEffectiveConfig } from './config/config.service';
 import { markStaleHostsOffline, HOST_STALE_CHECK_INTERVAL_MS } from './modules/hosts/hosts.service';
@@ -22,6 +23,15 @@ async function start(): Promise<void> {
     app.log.info(`Connected to MongoDB`);
   } catch (err) {
     app.log.error(err, 'Failed to connect to MongoDB');
+    process.exit(1);
+  }
+
+  // Fail fast on a broken index rather than serving traffic without the
+  // uniqueness guarantees the app assumes (see db/ensure-indexes.ts).
+  try {
+    await ensureIndexes();
+  } catch (err) {
+    app.log.error(err instanceof Error ? err.message : err, 'Index build failed');
     process.exit(1);
   }
 
