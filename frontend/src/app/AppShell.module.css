@@ -1,0 +1,96 @@
+.shell {
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-canvas);
+}
+
+/* Top nav only — no persistent sidebar (guidelines §10). */
+.header {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: var(--space-6);
+  height: 52px;
+  padding: 0 var(--space-6);
+  background: color-mix(in srgb, var(--bg-canvas) 82%, transparent);
+  backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.logo {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  border-radius: var(--radius-control);
+}
+
+.nav {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  flex: 1;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.nav::-webkit-scrollbar {
+  display: none;
+}
+
+.navLink {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: 30px;
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-control);
+  font-size: var(--text-base);
+  font-weight: var(--weight-ui);
+  color: var(--text-secondary);
+  white-space: nowrap;
+  transition:
+    color var(--duration-fast) var(--ease-out),
+    background var(--duration-fast) var(--ease-out);
+}
+
+.navLink:hover {
+  color: var(--text-primary);
+  background: var(--bg-hover);
+}
+
+.active {
+  color: var(--text-primary);
+  background: var(--accent-muted);
+}
+
+.navIcon {
+  flex: none;
+  opacity: 0.85;
+}
+
+.right {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.main {
+  flex: 1;
+}
+
+@media (max-width: 720px) {
+  .header {
+    gap: var(--space-3);
+    padding: 0 var(--space-4);
+  }
+  .navLabel {
+    display: none;
+  }
+  .navLink {
+    padding: 0 var(--space-2);
+  }
+}

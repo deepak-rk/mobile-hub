@@ -1,0 +1,141 @@
+/**
+ * Design tokens — the single source of truth for color, type, spacing, radius
+ * and motion. See docs/ui-guidelines.md. Components consume these variables
+ * only; no hard-coded hex belongs in a component file.
+ *
+ * Dark is the default/primary experience. Light is applied via
+ * `data-theme="light"` on <html>.
+ */
+
+:root {
+  /* Canvas & surfaces */
+  --bg-canvas: #08090a;
+  --bg-panel: #0f1011;
+  --bg-elevated: #161618;
+  --bg-hover: #1c1c1f;
+  --bg-active: #222225;
+
+  /* Borders */
+  --border-subtle: rgba(255, 255, 255, 0.06);
+  --border-default: rgba(255, 255, 255, 0.09);
+  --border-strong: rgba(255, 255, 255, 0.14);
+
+  /* Text */
+  --text-primary: #f7f8f8;
+  --text-secondary: #a1a1aa;
+  --text-tertiary: #71717a;
+  --text-disabled: #52525b;
+
+  /* Accent — the one brand color. CTAs, active nav, live indicators, progress. */
+  --accent: #5e6ad2;
+  --accent-hover: #6e79e0;
+  --accent-muted: rgba(94, 106, 210, 0.15);
+  --accent-contrast: #ffffff;
+
+  /* Semantic status */
+  --status-idle: #22c55e;
+  --status-smoke: #eab308;
+  --status-in-use: #f97316;
+  --status-offline: #71717a;
+  --status-running: #3b82f6;
+  --status-passed: #22c55e;
+  --status-failed: #ef4444;
+  --status-cancelled: #a1a1aa;
+
+  /* Elevation — dark leans on luminance + borders, not heavy shadow */
+  --shadow-panel: none;
+
+  /* Typography */
+  --font-sans: 'Inter var', Inter, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --weight-body: 400;
+  --weight-ui: 510;
+  --weight-heading: 600;
+  --text-xs: 12px;
+  --text-sm: 13px;
+  --text-base: 14px;
+  --text-md: 15px;
+  --text-lg: 17px;
+  --text-xl: 20px;
+  --text-2xl: 24px;
+
+  /* Spacing (4px base) */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+  --space-16: 64px;
+
+  /* Radius */
+  --radius-control: 6px;
+  --radius-card: 8px;
+  --radius-modal: 12px;
+  --radius-pill: 9999px;
+
+  /* Motion */
+  --duration-fast: 120ms;
+  --duration-base: 160ms;
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+[data-theme='light'] {
+  --bg-canvas: #fafafa;
+  --bg-panel: #ffffff;
+  --bg-elevated: #ffffff;
+  --bg-hover: #f4f4f5;
+  --bg-active: #e4e4e7;
+
+  --border-subtle: rgba(0, 0, 0, 0.06);
+  --border-default: rgba(0, 0, 0, 0.09);
+  --border-strong: rgba(0, 0, 0, 0.14);
+
+  --text-primary: #09090b;
+  --text-secondary: #52525b;
+  --text-tertiary: #71717a;
+  --text-disabled: #a1a1aa;
+
+  --accent: #4f46e5;
+  --accent-hover: #4338ca;
+  --accent-muted: rgba(79, 70, 229, 0.1);
+
+  /* Light needs a whisper of shadow where dark uses luminance steps */
+  --shadow-panel: 0 1px 2px rgba(0, 0, 0, 0.04);
+
+  /* Green/amber need to darken slightly to hold 4.5:1 on white */
+  --status-idle: #16a34a;
+  --status-passed: #16a34a;
+  --status-smoke: #ca8a04;
+  --status-offline: #71717a;
+  --status-cancelled: #71717a;
+}
+
+/* Respect the OS preference when the user hasn't chosen explicitly.
+   Only the light overrides need restating — dark is already :root. */
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme='dark']):not([data-theme='light']) {
+    --bg-canvas: #fafafa;
+    --bg-panel: #ffffff;
+    --bg-elevated: #ffffff;
+    --bg-hover: #f4f4f5;
+    --bg-active: #e4e4e7;
+    --border-subtle: rgba(0, 0, 0, 0.06);
+    --border-default: rgba(0, 0, 0, 0.09);
+    --border-strong: rgba(0, 0, 0, 0.14);
+    --text-primary: #09090b;
+    --text-secondary: #52525b;
+    --text-tertiary: #71717a;
+    --text-disabled: #a1a1aa;
+    --accent: #4f46e5;
+    --accent-hover: #4338ca;
+    --accent-muted: rgba(79, 70, 229, 0.1);
+    --shadow-panel: 0 1px 2px rgba(0, 0, 0, 0.04);
+    --status-idle: #16a34a;
+    --status-passed: #16a34a;
+    --status-smoke: #ca8a04;
+  }
+}

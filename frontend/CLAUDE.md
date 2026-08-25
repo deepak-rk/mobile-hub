@@ -2,7 +2,22 @@
 
 React app: device grid, live device viewer(s), execution/build pipeline UI, analytics dashboard. See root `../CLAUDE.md` for cross-cutting rules — this file is frontend-only conventions and gotchas.
 
-**Status:** pre-implementation. No source exists yet in this directory as of the last planning session. Once scaffolded (Vite + React + TypeScript, matching the reference stack), fill in the "Dev loop" section below with real, verified commands — don't leave placeholders once they're wrong.
+**Status:** implemented and rendering real backend data. All five sections exist, typecheck/lint/build pass, and the app has been verified in a real browser against a live backend in both themes. See `docs/TODO.md` (repo root) for the live checklist before assuming what works.
+
+## Visual design — read this first
+
+**`docs/ui-guidelines.md` is the visual source of truth.** Aesthetic target: Linear density + Vercel restraint + Stripe data clarity. Before touching anything visual, read it — do not invent a parallel design system.
+
+The foundation is built and in use across every page:
+
+- `src/styles/tokens.css` — all color/type/spacing/radius/motion tokens, dark (default) + light via `data-theme`. **Components consume tokens only; never hard-code a hex in a component.**
+- `src/lib/icons.ts` — the single Lucide mapping. Import icons from here, never reference a Lucide name directly in a component.
+- `src/lib/status.ts` + `components/ui/StatusBadge.tsx` — the only place a status becomes pixels. Always color **+ icon + text**; never color alone.
+- `components/ui/layout.tsx` — `Page`, `PageHeader`, `Card`, `Grid`, `List`, `Meta`, `Summary`, `ProgressBar` (4px), `DescriptionList`.
+- `components/ui/states.tsx` — `QueryBoundary` renders loading (skeletons, never a full-page spinner) / error / empty. Every list page routes through it.
+- `components/ui/Button.tsx`, `BrandLogo.tsx`, `lib/theme.ts` (theme toggle, persisted).
+
+Still to build from the guidelines' component list: `Toast`, `Dialog`/slide-over, `Tabs`/filter bar, themed TanStack Table, Recharts trend charts, URL-synced filters.
 
 ## Core principles
 
@@ -47,17 +62,17 @@ src/
 
 Avoid one giant `components/` or `utils/` dumping ground once features multiply.
 
-## Dev loop (fill in once scaffolded)
+## Dev loop (verified 2026-08-25)
 
 ```
-# npm run dev        — TODO: confirm port
-# npm run build
-# npm run lint
-# npm run typecheck
-# npm test
+npm run dev         # vite — http://localhost:5173, proxies /api and /ws to :3000
+npm run build        # tsc && vite build
+npm run lint          # eslint src --ext .ts,.tsx
+npm run typecheck     # tsc --noEmit
+npm test               # vitest run — currently FAILS: no test files exist yet (see docs/TODO.md)
 ```
 
-Do not guess these — run them and record the real output/port once the app exists. A wrong command in this file is worse than no command.
+`npm run dev` proxies `/api` to the backend on :3000, so run the backend too or every list shows its error state. Because the proxy handles the prefix, `VITE_API_URL` should be left unset locally — see the `services/api.ts` note about the prefix always being appended.
 
 ## Architecture rules
 

@@ -1,0 +1,124 @@
+.sections {
+  display: grid;
+  gap: var(--space-8);
+}
+
+.section {
+  display: grid;
+  gap: var(--space-4);
+}
+
+.sectionHead {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.sectionTitle {
+  font-size: var(--text-lg);
+  letter-spacing: -0.02em;
+}
+
+.platform {
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+  padding: 2px var(--space-2);
+  border-radius: var(--radius-control);
+  background: var(--bg-hover);
+}
+
+.computed {
+  margin-left: auto;
+  font-size: var(--text-xs);
+  color: var(--text-disabled);
+}
+
+.kpis {
+  display: grid;
+  gap: var(--space-3);
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+}
+
+.kpiLabel {
+  font-size: var(--text-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-tertiary);
+  margin-bottom: var(--space-2);
+}
+
+.kpiValue {
+  font-size: var(--text-2xl);
+  font-weight: var(--weight-heading);
+  letter-spacing: -0.03em;
+  color: var(--text-primary);
+}
+
+.breakdowns {
+  display: grid;
+  gap: var(--space-3);
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+}
+
+.breakdownTitle {
+  font-size: var(--text-base);
+  font-weight: var(--weight-ui);
+  color: var(--text-primary);
+  margin-bottom: var(--space-4);
+}
+
+.rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: var(--space-3);
+}
+
+.row {
+  display: grid;
+  grid-template-columns: minmax(80px, 1fr) minmax(60px, 1.2fr) auto;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.rowName {
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rowBar {
+  min-width: 0;
+}
+
+.rowValue {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-ui);
+  color: var(--text-primary);
+  white-space: nowrap;
+}
+
+.rowRuns {
+  font-size: 10px;
+  font-weight: var(--weight-body);
+  color: var(--text-disabled);
+}
+
+.none {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--text-tertiary);
+}
+
+.footnote {
+  margin: var(--space-8) 0 0;
+  font-size: var(--text-xs);
+  color: var(--text-disabled);
+}

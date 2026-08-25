@@ -1,0 +1,71 @@
+/* ---- Skeleton ---- */
+.skeleton {
+  background: linear-gradient(
+    90deg,
+    var(--bg-elevated) 0%,
+    var(--bg-hover) 50%,
+    var(--bg-elevated) 100%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.4s linear infinite;
+  border-radius: var(--radius-control);
+}
+
+@keyframes shimmer {
+  from {
+    background-position: 200% 0;
+  }
+  to {
+    background-position: -200% 0;
+  }
+}
+
+.skeletonCard {
+  height: 92px;
+  border-radius: var(--radius-card);
+}
+
+/* ---- Empty & error ---- */
+.state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-3);
+  padding: var(--space-12) var(--space-6);
+  border: 1px dashed var(--border-default);
+  border-radius: var(--radius-card);
+  background: var(--bg-panel);
+  text-align: center;
+}
+
+.stateIcon {
+  color: var(--text-tertiary);
+}
+
+.errorIcon {
+  color: var(--status-failed);
+}
+
+.stateTitle {
+  font-size: var(--text-md);
+  font-weight: var(--weight-ui);
+  color: var(--text-primary);
+}
+
+.stateBody {
+  font-size: var(--text-base);
+  color: var(--text-secondary);
+  max-width: 44ch;
+  line-height: 1.6;
+}
+
+.stateCode {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+}
+
+.stateAction {
+  margin-top: var(--space-2);
+}

@@ -1,0 +1,163 @@
+.page {
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: var(--space-8) var(--space-6) var(--space-16);
+}
+
+.header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-4);
+  margin-bottom: var(--space-6);
+}
+
+.titleGroup {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.title {
+  font-size: var(--text-2xl);
+  letter-spacing: -0.03em;
+}
+
+.subtitle {
+  font-size: var(--text-base);
+  color: var(--text-secondary);
+}
+
+.actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+/* ---- Card ---- */
+.card {
+  background: var(--bg-panel);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-panel);
+  transition:
+    border-color var(--duration-fast) var(--ease-out),
+    background var(--duration-fast) var(--ease-out);
+}
+
+.cardInteractive:hover {
+  border-color: var(--border-strong);
+  background: var(--bg-elevated);
+}
+
+.cardBody {
+  padding: var(--space-4);
+}
+
+/* ---- Grid ---- */
+.grid {
+  display: grid;
+  gap: var(--space-3);
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+}
+
+.list {
+  display: grid;
+  gap: var(--space-3);
+}
+
+/* ---- Meta text ---- */
+.meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+}
+
+.metaSep {
+  color: var(--text-disabled);
+}
+
+.mono {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+}
+
+/* ---- Summary footer (device grid) ---- */
+.summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+  margin-top: var(--space-5);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--border-subtle);
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+}
+
+.summaryValue {
+  color: var(--text-primary);
+  font-weight: var(--weight-ui);
+}
+
+/* ---- Progress bar (guidelines §8: 4px, accent fill) ---- */
+.progressTrack {
+  height: 4px;
+  width: 100%;
+  border-radius: var(--radius-pill);
+  background: var(--border-subtle);
+  overflow: hidden;
+}
+
+.progressFill {
+  height: 100%;
+  border-radius: var(--radius-pill);
+  background: var(--accent);
+  transition: width var(--duration-base) var(--ease-out);
+}
+
+.progressComplete {
+  background: var(--status-passed);
+}
+
+.progressLabel {
+  margin-top: var(--space-2);
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+}
+
+/* ---- Definition list for detail panels ---- */
+.dl {
+  display: grid;
+  grid-template-columns: minmax(120px, max-content) 1fr;
+  gap: var(--space-2) var(--space-4);
+  margin: 0;
+  font-size: var(--text-base);
+}
+
+.dt {
+  color: var(--text-tertiary);
+}
+
+.dd {
+  margin: 0;
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 640px) {
+  .page {
+    padding: var(--space-5) var(--space-4) var(--space-12);
+  }
+  .dl {
+    grid-template-columns: 1fr;
+    gap: var(--space-1) 0;
+  }
+  .dt {
+    margin-top: var(--space-2);
+  }
+}

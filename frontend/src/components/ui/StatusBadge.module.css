@@ -1,0 +1,45 @@
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 3px var(--space-2) 3px 7px;
+  border-radius: var(--radius-pill);
+  border: 1px solid color-mix(in srgb, var(--status-color) 28%, transparent);
+  background: color-mix(in srgb, var(--status-color) 12%, transparent);
+  color: var(--status-color);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-ui);
+  line-height: 1.4;
+  white-space: nowrap;
+}
+
+.icon {
+  flex: none;
+}
+
+/* Continuous states (running, downloading) breathe gently so "in progress"
+   reads at a glance without animation becoming noise. */
+.active .icon {
+  animation: pulse 1.8s var(--ease-out) infinite;
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
+}
+
+.label {
+  color: inherit;
+}
+
+/* A quieter variant for dense tables where a full pill is too loud. */
+.bare {
+  border: none;
+  background: none;
+  padding: 0;
+}
