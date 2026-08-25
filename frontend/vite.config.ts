@@ -15,9 +15,10 @@ export default defineConfig({
       '/api': {
         target: 'http://localhost:3000',
         changeOrigin: true,
-      },
-      '/ws': {
-        target: 'ws://localhost:3000',
+        // The execution log stream is a WebSocket served under /api
+        // (GET /api/execution/:id/stream), so this proxy must upgrade too —
+        // without `ws` the socket silently fails to connect in dev while
+        // every plain HTTP call keeps working.
         ws: true,
       },
     },

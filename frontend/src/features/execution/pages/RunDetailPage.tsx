@@ -6,6 +6,8 @@ import { StatusBadge } from '@/components/ui/StatusBadge';
 import { icons, iconSize } from '@/lib/icons';
 import { formatDuration, formatRelative } from '@/lib/format';
 import { isInFlight, useCancelRun, useExecutionRun } from '../api/execution.api';
+import { useRunStream } from '../api/useRunStream';
+import { LogViewer } from '../components/LogViewer';
 import { useAuth } from '@/features/auth/useAuth';
 import type { RunStage } from '../types';
 import styles from './RunDetailPage.module.css';
@@ -34,8 +36,13 @@ function stageColor(status: RunStage['status']): string {
 
 export function RunDetailPage() {
   const { runId } = useParams<{ runId: string }>();
-  const { data: run, isPending, error, refetch } = useExecutionRun(runId);
   const { can } = useAuth();
+  // Always attempt the stream: the hook itself reports 'unauthenticated' when
+  // there's no token, which the viewer shows as "sign in to stream logs".
+  // Gating on the user here instead would render an idle "waiting for
+  // output..." that wrongly implies output might still arrive.
+  const { state: streamState, logLines } = useRunStream(runId);
+  const { data: run, isPending, error, refetch } = useExecutionRun(runId, streamState === 'live');
   const cancel = useCancelRun(runId ?? '');
 
   // Cancel is only meaningful while the run is non-terminal, and only for
@@ -104,13 +111,7 @@ export function RunDetailPage() {
                   })}
                 </ol>
 
-                {/* The backend also pushes these transitions over
-                    GET /api/execution/:id/stream. Polling is used here because
-                    it is simple and correct; swapping in the WS stream is a
-                    contained change behind useExecutionRun. */}
-                <p className={styles.note}>
-                  {run && isInFlight(run.status) ? 'Live — refreshing every second.' : 'Run finished.'}
-                </p>
+                <LogViewer lines={logLines} streamState={streamState} />
               </CardBody>
             </Card>
 
