@@ -21,5 +21,11 @@
   "env": {
     "node": true,
     "es2022": true
-  }
+  },
+  "overrides": [
+    {
+      "files": ["src/agent/**/*.ts"],
+      "rules": { "no-console": "off" }
+    }
+  ]
 }

@@ -2,7 +2,7 @@
 
 Node.js API + services: device inventory, Appium server orchestration, execution pipeline, log/artifact streaming, analytics aggregation. See root `../CLAUDE.md` for cross-cutting rules — this file is backend-only conventions and gotchas.
 
-**Status:** implementation in progress — `hosts`, `devices`, `auth` are built and smoke-tested; `builds`/`execution`/`streaming`/`analytics` are models only. See `docs/TODO.md` (repo root) for the live, verified checklist. Dev loop below is real and verified.
+**Status:** feature-complete — `auth`, `hosts`, `devices`, `config`, `builds`, `execution`, `streaming` and `analytics` are all built and verified against a running server, plus a standalone device agent (`src/agent/`). See `docs/TODO.md` (repo root) for the live checklist and the remaining gaps. Dev loop below is real and verified.
 
 ## Core principles
 
@@ -43,14 +43,24 @@ Keep domain code together (controller/service/repository per module) rather than
 ## Dev loop (verified 2026-08-22)
 
 ```
-npm run dev         # tsx watch src/server.ts — API on :3000 (API_PORT), WS on :3001 (STREAM_WS_PORT)
-npm run build        # tsc
-npm run lint          # eslint src --ext .ts
-npm run typecheck     # tsc --noEmit
-npm test               # vitest run — no test files exist yet, so this currently passes trivially
+npm run dev         # tsx watch src/server.ts — API on :3000 (API_PORT)
+npm run agent        # the host-side device agent (see below); AGENT_DISCOVERY=synthetic to run with no devices
+npm run build         # tsc
+npm run lint           # eslint src --ext .ts
+npm run typecheck      # tsc --noEmit
+npm test                # vitest run — 39 tests, no database required
 ```
 
-Requires `MONGODB_URI` reachable and `JWT_SECRET` (32+ chars) in `backend/.env` — see `backend/.env.example`. No local Mongo/mongod needed for `typecheck`/`lint`/`build`; `dev` and `test` (once tests exist) need a real Mongo instance (a plain `docker run -d -p 27017:27017 mongo:7` is enough for local dev).
+`dev` requires `MONGODB_URI` reachable and `JWT_SECRET` (32+ chars) in `backend/.env` — see `backend/.env.example`. `typecheck`/`lint`/`build`/`test` need neither Mongo nor a device: the tests stub the database and use the synthetic capture/discovery sources. For `dev`, a plain `docker run -d -p 27017:27017 mongo:7` is enough.
+
+## The device agent (`src/agent/`)
+
+A **standalone CLI that runs on each host machine in the lab**, not inside the server — separate entry point (`npm run agent`), separate env vars, and in a real deployment a separate box. It discovers attached devices and reports them to the hub over the public API; the hub owns all reconciliation.
+
+- Keep it dumb and stateless. `POST /api/devices/sync` already marks anything no longer reported as offline and releases its locks, so the agent's only job is to report the truth about its host. That is what makes a restart or a missed poll self-heal.
+- **Never let a failed poll kill the loop** — a hub restart or network blip must not require someone to walk over to the host machine.
+- `console` is the agent's real interface (no pino, no request context), so `no-console` is disabled for `src/agent/**` in `.eslintrc.json`. That exemption is for the agent only; server code still logs through pino.
+- Discovery is pluggable (`DeviceDiscovery`), same as `CaptureSource` and `BuildProvider`. `AGENT_DISCOVERY=synthetic` reports fixture devices so the agent is runnable with no hardware attached — opt-in only, so a real host with broken adb fails visibly instead of quietly reporting fake devices.
 
 ## Architecture rules
 

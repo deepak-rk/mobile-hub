@@ -45,6 +45,7 @@ Status legend: ⬜ not started · 🔨 built (compiles/typechecks) · ✅ tested
 ### hosts — ✅ tested (2026-08-22, re-verified same day after scheduler fix)
 - [x] `host.model.ts`, `hosts.service.ts` (upsertHeartbeat, listHosts, getHost, markStaleHostsOffline), `hosts.routes.ts` (`POST /heartbeat`, `GET /`, `GET /:machineId`)
 - [x] Typechecks/lints clean as of 2026-08-22 (re-verified after this session's fastify version bump)
+- [x] **A stale host now takes its devices offline with it (2026-08-26)** — previously the host flipped to `offline` while its devices stayed `idle`, i.e. reading as available: someone could lock one or trigger a run against a machine that wasn't there. Now the sweep also marks those devices offline and releases their locks, and logs how many. Found by running the real agent and killing it; see `docs/LESSONS.md`.
 - [x] **`markStaleHostsOffline` is now actually scheduled** — `server.ts` runs it on a `setInterval` (`HOST_STALE_CHECK_INTERVAL_MS = 10s`, offline cutoff still 30s of silence), cleared on shutdown. Verified: heartbeated a host, waited without re-heartbeating, polled `GET /api/hosts/:machineId` until `status` flipped from `online` to `offline` — happened as expected, no further heartbeat needed to trigger it.
 - [ ] No endpoint to deregister/delete a host
 - [ ] Zero `.test.ts` unit tests (smoke-tested via curl only)
@@ -102,6 +103,19 @@ Status legend: ⬜ not started · 🔨 built (compiles/typechecks) · ✅ tested
 - [ ] Weekly aggregates (`window: 'weekly'`) — the model supports them, only `daily` is computed
 - [ ] A run rejected before it started (e.g. the `DeviceLockedError` 409 path) is saved as `failed` with a null `startedAt` — it counts in totals but is excluded from `avgDurationMs`. Correct as-is, but worth revisiting whether such runs should count against pass rate at all.
 - [ ] No `.test.ts` unit tests (verified via curl against real data only)
+
+### agent (`backend/src/agent/`) — ✅ tested (2026-08-26, new)
+- [x] `device-discovery.ts` — `DeviceDiscovery` adapter interface, same pattern as `CaptureSource`/`BuildProvider`
+- [x] `sources/adb-discovery.ts` — parses `adb devices -l`, filters to genuinely usable devices (rejects `offline`/`unauthorized`/`no permissions`/`recovery`/`sideload`/`bootloader`, any of which would hand a broken device to a run), reads model and OS version per device, and infers connection type from the serial (emulator prefix / `host:port` / usb)
+- [x] `sources/synthetic-discovery.ts` — fixture devices so the agent is runnable with no hardware. Opt-in via `AGENT_DISCOVERY=synthetic`, so a real host with broken adb fails visibly rather than reporting fake devices.
+- [x] `hub-client.ts` + `agent.ts` — heartbeat then sync, on a timer. Deliberately stateless: the hub owns reconciliation, so a restart or missed poll self-heals. A failed poll never kills the loop (a hub restart must not require walking to the host machine), and repeated failures log on the 1st and every 10th so an overnight outage doesn't produce a gigabyte of identical lines.
+- [x] `main.ts` + `npm run agent` — separate entry point and env (`HUB_URL`, `MACHINE_ID`, `AGENT_POLL_INTERVAL_MS`, `AGENT_MAX_DEVICES`, `AGENT_DISCOVERY`), because in a real deployment this runs on a different box from the server.
+- [x] Refuses to start when discovery is unavailable, with a message naming the fix — a silently no-op agent would just make the lab look empty.
+- [x] **15 unit tests** over adb output parsing (multi-device, non-ready states, CRLF), connection-type inference, and the loop (reports devices, heartbeats even with zero devices, surfaces hub failures, keeps polling after one).
+- [x] **Verified live against a real running hub**: with real `adb` (correctly discovered 0 devices, no hardware attached) and with synthetic discovery (registered 3 devices, visible via `GET /api/devices`).
+- [ ] Android only — no `xcrun simctl` adapter, so `iosSupport` is reported as `false`
+- [ ] **`POST /api/hosts/heartbeat` and `/api/devices/sync` are unauthenticated.** Anyone who can reach the API can register phantom hosts/devices or, by claiming an existing `machineId` and reporting no devices, mark a real lab's devices offline and release their locks — a trivial denial of service. Needs a per-agent credential; the agent has no auth plumbing yet because there is nothing to authenticate against. **Highest-priority security gap.**
+- [ ] Not run against real hardware (no device attached to this machine), so the property-reading path in the adb adapter is unexercised
 
 ### cross-cutting backend gaps
 - [x] **Fixed 2026-08-23 — `connectDB()` hardcoded `dbName: 'mobilehub'`**, silently overriding the database named in `MONGODB_URI`. Any deployment or test pointing at a different database was quietly reading/writing the wrong one (it made the E2E suite's isolation completely ineffective — see `docs/LESSONS.md`). The URI is now the sole source of truth.
@@ -188,7 +202,6 @@ As of 2026-08-25 **every backend module is built and verified**, the frontend ha
 
 1. **Run the streaming module against real hardware.** The `adb` capture adapter has never touched a physical device — no Android device is attached to this machine, so every streaming verification used the synthetic source. The fan-out (the part that carries the risk) is well covered; the adb invocation itself is unexercised.
 2. **H264 streaming** — only MJPEG exists. The protocol is already part of the session key and the adapter interface, so it slots in without redesign, and it's the difference between a usable and a pleasant live view.
-3. **A device agent.** Nothing currently discovers devices or sends heartbeats: hosts and devices only exist because something POSTs to `/api/hosts/heartbeat` and `/api/devices/sync`. Without an agent, mobile-hub can't be used against a real lab at all — arguably the single biggest gap left in the product.
 4. Remaining design-system components: `Toast`, `Dialog`/slide-over, filter bar with URL-synced filters, themed TanStack Table, Recharts trends (needs multi-day data first).
 5. Real `.test.ts` coverage for `hosts`/`devices`/`builds`/`execution`/`analytics` — verified via curl and E2E, but only `config`, `db`, `streaming` and the frontend's `lib/` have in-repo `npm test` coverage.
 6. Decide the automation-repo-source config (git URL, branch convention) — unblocks real `pulling`/`restoring_cache` stages in `execution` and the `install-job`/host-agent architecture in `builds`. Both are stubbed around this same missing decision.

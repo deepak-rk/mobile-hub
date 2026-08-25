@@ -6,6 +6,12 @@ Newest first. See root `CLAUDE.md` § Self-review for when to add an entry.
 
 ---
 
+## 2026-08-26
+
+**A host going offline left its devices reading as available.** `markStaleHostsOffline` flipped the *host* to offline when its agent stopped heartbeating, but nothing touched that host's devices — so they sat at `idle`, and the UI offered them for locking and for running tests against a machine that wasn't there. The bug was invisible until an actual agent was run and then killed; every existing test covered the mirror case (a host that *keeps* reporting but drops one device) and none covered the host itself disappearing. **Rule now:** when a parent resource becomes unreachable, reconcile everything that was only reachable *through* it — the same release-the-derived-state rule already learned for device locks, applied one level up. And when a rule like that is written down, check whether it holds at every level of the hierarchy, not just the level where it was first noticed.
+
+**Building the agent is what surfaced it.** Nothing about the API contract or the existing tests hinted at the gap; it took standing up the real host-side loop, watching it register devices, then killing it and looking at what the API still claimed. **Rule now:** a component that only ever exists as "something POSTs to this endpoint" is under-tested by construction — the missing piece is usually where the interesting failure modes live. Build the real client before assuming the server contract is complete.
+
 ## 2026-08-25 (later)
 
 **Registering a socket's `close` handler *after* an `await` loses the event, and leaked a viewer forever.** The stream route did `const { detach } = await streamingService.addViewer(...)` and only then `socket.on('close', detach)`. A socket that closed during that await — a fast navigate-away, a reload, React re-running an effect — fired `close` before any listener existed, so the viewer was never removed. The capture then had a phantom viewer, never reached idle teardown, and its process would have run forever. **Rule now:** when attaching a listener for an event that can fire during an in-flight `await`, register it *before* the await and reconcile afterwards (record the early close, then release immediately once the attach resolves). This generalises past sockets: any "set up resource, then register its cleanup" sequence with an await in the middle has the same hole.

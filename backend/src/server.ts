@@ -45,9 +45,15 @@ async function start(): Promise<void> {
   app.log.info(`Mobile Hub backend listening at ${address}`);
 
   const staleHostInterval = setInterval(() => {
-    markStaleHostsOffline().catch((err: unknown) => {
-      app.log.error(err, 'Failed to mark stale hosts offline');
-    });
+    markStaleHostsOffline()
+      .then(({ hosts, devices }) => {
+        if (hosts > 0) {
+          app.log.warn(`${hosts} host(s) stopped heartbeating; took ${devices} device(s) offline with them`);
+        }
+      })
+      .catch((err: unknown) => {
+        app.log.error(err, 'Failed to mark stale hosts offline');
+      });
   }, HOST_STALE_CHECK_INTERVAL_MS);
 
   // Reaps captures whose last viewer left more than the grace period ago.
