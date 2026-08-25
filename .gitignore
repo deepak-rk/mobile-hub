@@ -16,6 +16,10 @@ out/
 .env.*.local
 *.env
 
+# Per-deployment org/project config (see *.yaml.example for templates)
+mobilehub.org.yaml
+mobilehub.project.yaml
+
 # Logs
 logs/
 *.log
@@ -41,3 +45,6 @@ coverage/
 .cache/
 tmp/
 temp/
+
+# Claude Code local settings (machine-specific permissions; settings.json is shared)
+.claude/settings.local.json

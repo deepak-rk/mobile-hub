@@ -1,0 +1,50 @@
+services:
+  mongodb:
+    image: mongo:7
+    restart: unless-stopped
+    volumes:
+      - mongo_data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "${API_PORT:-3000}:3000"
+      - "${STREAM_WS_PORT:-3001}:3001"
+    environment:
+      NODE_ENV: production
+      MONGODB_URI: mongodb://mongodb:27017/mobilehub
+      JWT_SECRET: ${JWT_SECRET}
+      API_PORT: "3000"
+      STREAM_WS_PORT: "3001"
+      MACHINE_ID: ${MACHINE_ID:-}
+      EXECUTIONS_DIR: /home/node/mobile-hub-executions
+    volumes:
+      - executions:/home/node/mobile-hub-executions
+    depends_on:
+      mongodb:
+        condition: service_healthy
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        VITE_API_URL: ${VITE_API_URL:-http://localhost:3000}
+        VITE_STREAM_WS_URL: ${VITE_STREAM_WS_URL:-ws://localhost:3001}
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+
+volumes:
+  mongo_data:
+  executions:

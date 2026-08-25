@@ -1,0 +1,11 @@
+# Per-project overrides. Copy to mobilehub.project.yaml and edit — only
+# declare what this project needs to differ from mobilehub.org.yaml.
+
+build:
+  provider: s3
+  s3:
+    bucket: checkout-app-builds
+    region: eu-west-1
+
+automation:
+  testDir: e2e

@@ -1,0 +1,186 @@
+# Mobile Hub — Build Checklist
+
+Live tracker for module-level status. Source of truth for "what actually works right now" — see root `CLAUDE.md` § Progress tracking for the update rules.
+
+Status legend: ⬜ not started · 🔨 built (compiles/typechecks) · ✅ tested (actually run — server booted, endpoint hit, or equivalent) · 🔴 broken (known to currently fail)
+
+---
+
+## Backend (`backend/src/modules/`)
+
+### auth — ✅ tested (2026-08-22, re-verified same day after refactor onto `fastify-auth-kit`)
+- [x] `user.model.ts` — email/name/passwordHash/role (`viewer`/`operator`/`admin`) — unchanged, mobile-hub-owned
+- [x] **Refactored onto [`fastify-auth-kit`](https://github.com/deepak-rk/fastify-auth-kit)** (extracted personal package, installed via `npm install github:deepak-rk/fastify-auth-kit`): `auth.service.ts` now just implements the package's `AuthUserStore<IUser, UserRole>` interface (argon2 hashing, first-user-is-admin policy, `DuplicateUserError` on E11000 — all mobile-hub's own business logic, the package has no opinion on any of it). `auth.routes.ts` and `common/middleware/auth.ts` are **deleted** — `POST /register`, `POST /login`, `GET /me`, `app.authenticate`, `app.requireRole` all now come from the package, wired up in `app.ts`.
+- [x] JWT payload is now just `{sub, role}` (package's `JwtPayload` shape) — dropped the redundant `email` field that used to also be embedded in the token; `/me` still returns email via a DB lookup.
+- [x] Smoke-tested full flow again post-refactor: register → login → `/me` with/without token → duplicate email 409 → devices lock/unlock (which read `req.user.sub`/`req.user.role`) → `GET /api/config` (admin-only) — all still correct.
+- [x] JWT expiry: `expiresIn: '24h'`, configured via the package's `AuthRoutesOptions`.
+- [ ] The backend is CommonJS; `fastify-auth-kit` is ESM-only, so the package is loaded via dynamic `await import('fastify-auth-kit')` in `app.ts`/`auth.service.ts` rather than a static import — see `docs/LESSONS.md`. Works correctly but is a real bit of accumulated complexity; a full ESM migration of the backend (which backend/CLAUDE.md's "Intended stack" already nominally prefers) would remove the need for this. Not done this pass — out of scope for "consume the package," flagged as a real follow-up.
+- [ ] `/register` and `/login` share the global 200/min rate limit only — backend/CLAUDE.md calls for stricter limits on sensitive endpoints specifically (brute-force protection)
+- [ ] No password reset / email verification flow (fine for v1, note for later)
+- [ ] No refresh-token flow — a token just stops working after 24h, user re-logs-in. Acceptable for v1, revisit if session length becomes a complaint.
+- [ ] Zero `.test.ts` unit tests for this module specifically (it has been smoke-tested via curl, which is real coverage, but nothing runs in `npm test`) — the decorator/route *logic itself* now has real test coverage in `fastify-auth-kit`'s own repo, just not mobile-hub's specific `AuthUserStore` wiring
+
+### devices — ✅ tested (2026-08-22, re-verified same day after lock fixes)
+- [x] `device.model.ts` — unique per `(machineId, udid)`, `lock` subdocument, status enum
+- [x] `devices.service.ts` — listDevices, getDevice, syncDevices (upsert + mark-offline), acquireLock (atomic), releaseLock (owner-or-admin)
+- [x] `devices.routes.ts` — `POST /sync`, `GET /`, `GET /:udid`, `POST /:udid/lock`, `POST /:udid/unlock`
+- [x] lock/unlock now require `app.authenticate`; `lock.heldBy` is the real JWT `sub`, `isAdmin` from `req.user.role`
+- [x] Smoke-tested full flow: sync → list → lock (401 unauthenticated, succeeds authenticated) → unlock
+- [x] **Orphaned-lock gap fixed**: `syncDevices` now clears `lock` (sets `null`) whenever it marks a device `offline`. Verified: locked a device, re-synced its host without it, confirmed `lock:null` + `status:offline`.
+- [x] **Companion bug fixed**: `syncDevices` previously force-set `status:'idle'` on every rediscovered device on every sync call, even one currently locked — a routine re-sync while in-use silently wiped the "in use" status while leaving the lock subdocument intact (inconsistent state). Now sync never touches `status` for an already-known device except to flip `offline → idle` on reconnect. Verified: locked a device, re-synced the same host reporting it again, confirmed `status` stayed `in-use` and `lock` was untouched.
+- [ ] No session/heartbeat TTL on a lock itself — if a client crashes mid-session without calling `/unlock`, the lock is held until the device goes offline (now auto-released, see above) or an admin force-unlocks it via `POST /:udid/unlock`. No timeout-based auto-release while the device stays online.
+- [ ] Zero `.test.ts` unit tests (smoke-tested via curl only)
+
+### config — ✅ tested (2026-08-22, new this session, then refactored onto `layered-config-ts` same day)
+- [x] `config/org-config.schema.ts` — zod schema for raw `mobilehub.org.yaml` / `mobilehub.project.yaml` contents (`.strict()` at every level — an unknown/typo'd key fails validation instead of being silently ignored), `PLATFORM_DEFAULTS` (fully-populated fallback), `EffectiveConfig` type. Mobile-hub-owned, unchanged by the refactor.
+- [x] **Refactored onto [`layered-config-ts`](https://github.com/deepak-rk/layered-config-ts)** (extracted personal package): `config/merge-config.ts` is **deleted** — the package owns the generic merge/parse/validate engine now. `config.service.ts` is a thin wrapper: `loadEffectiveConfig(orgPath, projectPath)` calls the package's `loadLayeredConfig({schema, defaults, layers, parse: parseYaml})` with mobile-hub's schema/defaults/paths.
+- [x] `server.ts` loads config **before** `buildApp()` and exits fast (`process.exit(1)`) with a clear message on invalid config — same fail-fast pattern as `env.ts`. `loadEffectiveConfig` is now `async` (the package is ESM-only, loaded via dynamic `import()` — see `docs/LESSONS.md`).
+- [x] `app.config` decorator + `GET /api/config` (admin-only, via `requireRole('admin')`) for operational visibility
+- [x] `mobilehub.org.yaml.example` / `mobilehub.project.yaml.example` at repo root; real (uncommitted) files are gitignored, same treatment as `.env`
+- [x] `config/config.service.test.ts` trimmed to 3 mobile-hub-specific integration tests (schema/defaults/paths wired correctly) — generic merge/parse/validation behavior is now covered by `layered-config-ts`'s own test suite (16 tests), not duplicated here
+- [x] Smoke-tested end-to-end **after the refactor**: booted with no yaml files present (falls back to `PLATFORM_DEFAULTS`) → booted with a real `mobilehub.org.yaml` present (`GET /api/config` reflects it) → all still correct
+- [x] **Found and fixed 3 real bugs in `layered-config-ts` itself** while integrating it here — the package's own test suite (written by the same author, same sitting) hadn't caught any of them: `dist/` was gitignored with no `prepare` script (git installs got no compiled output), the generic constraint `T extends Record<string,unknown>` rejected any real named interface type, and `schema: ZodType<Partial<T>>` used shallow `Partial` when the package's actual behavior needs deep partial-ness. All three fixed, regression-tested, and released as `layered-config-ts@0.1.2`. Full writeup in `docs/LESSONS.md`.
+- [ ] No `PROJECT_CONFIG_PATH` per-request override (e.g. multi-project single backend instance) — current model is one effective config per backend process, set at boot. Revisit if/when multi-tenant-per-instance is needed.
+
+### hosts — ✅ tested (2026-08-22, re-verified same day after scheduler fix)
+- [x] `host.model.ts`, `hosts.service.ts` (upsertHeartbeat, listHosts, getHost, markStaleHostsOffline), `hosts.routes.ts` (`POST /heartbeat`, `GET /`, `GET /:machineId`)
+- [x] Typechecks/lints clean as of 2026-08-22 (re-verified after this session's fastify version bump)
+- [x] **`markStaleHostsOffline` is now actually scheduled** — `server.ts` runs it on a `setInterval` (`HOST_STALE_CHECK_INTERVAL_MS = 10s`, offline cutoff still 30s of silence), cleared on shutdown. Verified: heartbeated a host, waited without re-heartbeating, polled `GET /api/hosts/:machineId` until `status` flipped from `online` to `offline` — happened as expected, no further heartbeat needed to trigger it.
+- [ ] No endpoint to deregister/delete a host
+- [ ] Zero `.test.ts` unit tests (smoke-tested via curl only)
+
+### builds — ✅ tested (2026-08-22, new this session) — fetch/validate only, install-job flow deliberately out of scope (see below)
+- [x] `build.model.ts` (status: downloading/validating/corrupt/ready, checksum fields) — pre-existing
+- [x] `build-provider.ts` — `BuildProvider` interface (root CLAUDE.md §11): `fetch(ctx, destPath) → { sourceUrl, sizeBytes }`
+- [x] `providers/url-build-provider.ts` — direct-URL adapter using Node's built-in global `fetch` + stream pipeline (no new HTTP dependency needed), 60s timeout via `AbortSignal.timeout`
+- [x] `providers/unimplemented-build-provider.ts` + `get-build-provider.ts` — `nexus`/`s3`/`webhook` are registered adapter slots that reject with a clear "not implemented yet" error at fetch time, rather than a missing-registry crash. Real implementations can be dropped in later without touching `builds.service.ts`.
+- [x] `builds.service.ts` — `triggerBuildFetch`: downloads via the config-selected provider into `env.BUILDS_DIR/<buildId>`, rejects a 0-byte artifact, computes sha256 via streamed hash (not loaded fully into memory), verifies on-disk size matches what the provider reported, only then flips `status → 'ready'`. Any failure anywhere in that path → `status: 'corrupt'` + the partial file is deleted. This is the integrity gate root CLAUDE.md calls for ("Lessons carried in": silent truncation was a real prior failure mode).
+- [x] `builds.routes.ts` — `GET /`, `GET /:id`, `POST /` (trigger fetch). Trigger requires `requireRole('operator','admin')` + a stricter per-route rate limit (10/min) — the "sensitive endpoint" treatment backend/CLAUDE.md calls for that `auth`/`devices` don't have yet.
+- [x] Smoke-tested end-to-end against a real local HTTP server serving a fake artifact: unauthenticated trigger → 401; missing `artifactUrl` while `provider: 'url'` → 400; real trigger → downloads, checksums, lands on disk at the exact byte size, `status: 'ready'`; `GET /:id`, `GET /?project=`, and 404-on-unknown-id all correct. Cross-checked the on-disk file's size and sha256 independently against what the API reported — matched.
+- [ ] **Scope note**: `install-job.model.ts` and the "install a ready build onto a specific device" flow were deliberately **not** built this pass. That flow implies a host-agent architecture (backend → host pull, or host → backend push) that root `CLAUDE.md`/`docs/architecture-blueprint.md` don't pin down yet, and building it without that decision would mean guessing. `install-job` stays model-only until that's a real decision, not an oversight.
+- [ ] `nexus`/`s3`/`webhook` providers are stubs — only `url` actually fetches anything
+- [ ] No `.test.ts` unit tests yet (smoke-tested via curl + a local fake artifact server only)
+- [ ] No cleanup policy for `BUILDS_DIR` — every triggered fetch keeps its file on disk forever, no retention/GC
+
+### execution — ✅ tested (2026-08-22, new this session)
+- [x] `execution-run.model.ts` (stage array: pulling/restoring_cache/installing/execute; run status queued→…→passed/failed/cancelled) — pre-existing
+- [x] `execution.service.ts` — `triggerExecutionRun`: creates the run doc, acquires the device lock (reuses `devices.service`'s `acquireLock`, atomic — same lock mobile-hub already had), kicks off orchestration in the background (doesn't block the HTTP response — a real run can take minutes), returns immediately with `status: 'queued'`.
+- [x] **Scope note**: `pulling` and `restoring_cache` stages are stubbed `skipped` — root CLAUDE.md / `docs/architecture-blueprint.md` don't yet specify where an automation repo's source lives (git URL, per-project convention, etc.), so there's nothing real to implement there without guessing. Caller instead supplies an optional `setup` command (→ `installing` stage) and a required `run` command (→ `execute` stage), each `{command, args}` — no shell interpolation, spawned directly via `child_process.spawn`. Same scoping treatment as `builds`' install-job note.
+- [x] Real stage/status tracking against Mongo, stdout+stderr captured to a per-run log file (`EXECUTIONS_DIR/<runId>/run.log`), pass/fail derived from the actual child process exit code.
+- [x] **Guaranteed device-lock release** in a `finally` block — success, failure, *and* cancellation all release the lock (`isAdmin: true`, since this is system cleanup, not a user unlock). Matches backend/CLAUDE.md's explicit process-cleanup gotcha.
+- [x] **`recoverOrphanedRuns()`** runs once at server startup (before `app.listen`): finds any run left `queued`/`preparing`/`running` by a crash, marks it `failed` (and its stuck stage `error`, reason `"Backend restarted mid-run"`), releases its device lock. The other half of the same cleanup gotcha — verified by simulating a crash directly in MongoDB (flip a run to `running` + re-lock its device, restart, confirm both get cleaned up) after discovering `taskkill`-by-listening-PID doesn't actually kill the real worker under `tsx watch` on Windows (see `docs/LESSONS.md`).
+- [x] `execution.routes.ts` — `GET /`, `GET /:id`, `POST /` (trigger, `requireRole('operator','admin')` + 20/min rate limit), `POST /:id/cancel` (SIGTERM to the live child process, marks `cancelled` not `failed`), `GET /:id/stream` (WebSocket — live stage/status/log events via an in-memory `EventEmitter` pub/sub, auth via `?token=` query param verified with `app.jwt.verify` since a browser WS upgrade can't easily carry an `Authorization` header).
+- [x] Smoke-tested extensively with real spawned processes (not mocked): a passing run (setup+execute both succeed) → device lock correctly held then released; a failing run (nonzero exit) → `status: 'failed'`, stage error records the exit code, lock still released; triggering against an already-locked device → 409 `DEVICE_LOCKED`; cancelling a slow run mid-flight → `status: 'cancelled'`, process actually killed, lock released; WS client connected mid-run received live `stage`/`status`/`log` events in the correct order; WS connection with a missing/invalid token closed immediately (code 4001) with zero events leaked; orphan recovery on restart confirmed via simulated crash (see above).
+- [x] Push over poll, per backend/CLAUDE.md's explicit preference for this pipeline — `GET /:id/stream` exists, polling `GET /:id` still works too for simple clients.
+- [ ] In-memory pub/sub means WS events don't survive a backend restart and don't work across multiple backend instances (single-process assumption, consistent with the rest of the codebase so far — revisit if/when multi-instance is ever needed).
+- [ ] No `.test.ts` unit tests yet (smoke-tested via curl + a real WS client + direct MongoDB state manipulation for the orphan-recovery path, but nothing runs under `npm test`)
+- [ ] No log tail/streaming endpoint for *historical* (completed) runs beyond re-reading `logPath` directly off disk — fine for now, no route exposes it yet
+
+### streaming — ⬜ not started
+- [x] `stream-session.model.ts` **already encodes the shared-capture/fan-out decision** — one doc per `(machineId, deviceUdid, protocol)` with `viewerIds`/`viewerCount`, not one-per-viewer. Matches the root CLAUDE.md "decide multi-viewer fan-out up front" requirement — good, don't redesign this, just build against it.
+- [ ] Capture-process spawn/registry (`adb screenrecord` / `xcrun simctl`) keyed by device UID
+- [ ] WS routes for viewer join/leave, incrementing/decrementing `viewerCount`
+- [ ] `streaming.service.ts`
+
+### analytics — ✅ tested (2026-08-23, new)
+- [x] `analytics-aggregate.model.ts` (daily/weekly rollups, byDevice/bySuite breakdowns, unique per window+date+project+platform) — pre-existing
+- [x] `analytics.service.ts` — `computeDailyAggregates(date?)`: rolls terminal `ExecutionRun`s (passed/failed/cancelled, bucketed by `endedAt` UTC day) into per-`(project, platform)` daily aggregates plus an `'all'`-platform rollup per project. Idempotent upsert on the unique index, so re-running is safe. Platform is joined via the `Device` model; a run whose device no longer exists buckets into the `'all'` rollup only (documented in-code). Also `queryAggregates(filters)` for the read side.
+- [x] `analytics.routes.ts` — `GET /` (zod-validated project/platform/window/from/to filters), `POST /recompute` (`requireRole('operator','admin')`). Registered at `/api/analytics`.
+- [x] Hourly `setInterval` in `server.ts` calling `computeDailyAggregates`, cleared on shutdown (`ANALYTICS_RECOMPUTE_INTERVAL_MS`) — the "a periodic function isn't done until something calls it" lesson from `markStaleHostsOffline`, applied up front this time.
+- [x] Smoke-tested against real data: ground truth `GET /api/execution` = 6 runs (3 passed / 2 failed / 1 cancelled) → `POST /api/analytics/recompute` produced `total:6 passed:3 failed:2 cancelled:1 passRate:0.50`, an exact match, plus the identical `'all'` rollup; unauthenticated recompute → 401.
+- [ ] Suite `flakiness` is hardcoded `0` — needs a real definition (same suite passing and failing across runs in a window) before it means anything
+- [ ] Weekly aggregates (`window: 'weekly'`) — the model supports them, only `daily` is computed
+- [ ] A run rejected before it started (e.g. the `DeviceLockedError` 409 path) is saved as `failed` with a null `startedAt` — it counts in totals but is excluded from `avgDurationMs`. Correct as-is, but worth revisiting whether such runs should count against pass rate at all.
+- [ ] No `.test.ts` unit tests (verified via curl against real data only)
+
+### cross-cutting backend gaps
+- [x] **Fixed 2026-08-23 — `connectDB()` hardcoded `dbName: 'mobilehub'`**, silently overriding the database named in `MONGODB_URI`. Any deployment or test pointing at a different database was quietly reading/writing the wrong one (it made the E2E suite's isolation completely ineffective — see `docs/LESSONS.md`). The URI is now the sole source of truth.
+- [ ] **Mongoose index-build failures are silently swallowed.** If a unique index fails to build (e.g. pre-existing duplicates at deploy time), the app keeps running without that guarantee and logs nothing. `auth.service.ts` depends on Mongo's E11000 to return 409 on duplicate registration — with no index, duplicate accounts are created silently and the API returns 201. Should attach an error handler to the model `index` events (or call `Model.init()` explicitly at startup and fail fast, matching how `env.ts`/`ConfigService` already fail fast on bad config). Found the hard way — full chain in `docs/LESSONS.md`.
+- [ ] `@fastify/swagger` + `@fastify/swagger-ui` are installed dependencies but **never registered in `app.ts`** — `docs/api-spec.yaml` exists (hand-authored) but nothing serves it or a generated equivalent
+- [ ] `@fastify/static` is installed, unused so far (likely intended for artifact/log file serving once `builds`/`execution` exist)
+- [ ] No typed domain error classes (`ValidationError`/`NotFoundError`/`ConflictError`/...) yet — every route does inline `zod.safeParse` + manual status codes. Fine so far; will get repetitive once `builds`/`execution` add more routes — worth introducing before then, not after.
+- [ ] `hosts`, `devices`, `builds` are smoke-tested (curl against a real running server) but have no `.test.ts` files — only `config` has real `npm test` coverage so far. Worth backfilling once the module surface stabilizes, especially `devices` given the lock/sync edge cases just fixed.
+- [ ] **Backend is CommonJS while two dependencies (`layered-config-ts`, `fastify-auth-kit`) are ESM-only** — bridged via dynamic `import()` at the integration points (`app.ts`, `auth.service.ts`, `config.service.ts`). Works and is verified, but backend/CLAUDE.md's own "Intended stack" already nominally prefers ESM ("unless a compatibility need forces CommonJS") — a real ESM migration would remove this workaround entirely. Deliberately not done this pass (would have been an unscoped, invasive refactor riding along with "consume two packages") — worth a deliberate future decision, not a silent drive-by.
+- [ ] `npm audit`: 6 vulnerabilities (4 moderate, 1 high, 1 critical) as of 2026-08-22, after bumping `@fastify/*` plugins to Fastify-v5-compatible majors — not yet investigated, run `npm audit` for detail
+
+### extracted packages (sibling repos, not in this repo)
+Per the user's "build a reusable personal toolkit" direction (2026-08-22) — pieces extracted out of mobile-hub, generalized, and pulled back in as real dependencies rather than duplicated:
+- [x] [`layered-config-ts`](https://github.com/deepak-rk/layered-config-ts) v0.1.2 — generic layered YAML/JSON config loader (zod-validated, deep-merged, fail-fast). mobile-hub's `config` module is its first real consumer; three bugs found and fixed during that integration (see `config` module notes above and `docs/LESSONS.md`).
+- [x] [`fastify-auth-kit`](https://github.com/deepak-rk/fastify-auth-kit) v0.1.0 — generic Fastify JWT + RBAC package, built against an injectable `AuthUserStore` interface (no hardcoded DB or hashing library). mobile-hub's `auth` module is its first real consumer.
+- [ ] Both packages are installed via `github:` URL (not the npm registry) — fine for one consumer, revisit if a third project ever needs version pinning/semver ranges across multiple consumers.
+- [ ] Neither package has been integrated into a *second* project yet — "proven generic" is still a one-consumer claim until that happens.
+
+---
+
+## Frontend (`frontend/src/`)
+
+### ✅ Unblocked and rendering real data (2026-08-23)
+The long-standing "frontend doesn't typecheck" blocker is **resolved**. All three checks pass, and the app was verified rendering against a live backend in a real headless Chromium — not just compiled:
+- [x] `npm run typecheck --workspace=frontend` — clean
+- [x] `npm run lint --workspace=frontend` — clean
+- [x] `npm run build --workspace=frontend` — succeeds (152 modules, ~306 kB / 100 kB gzipped)
+- [x] **Browser-verified**: all 5 routes (`/devices`, `/builds`, `/execution`, `/analytics`, `/servers`) render with correct headings, `/devices` displays real device records fetched from the running backend through the Vite proxy, and there are **zero console errors**.
+- [x] **Fixed a real deployment bug found during this**: `services/api.ts` set `baseURL` to `VITE_API_URL ?? '/api'`, meaning the `/api` prefix was *replaced* rather than kept whenever `VITE_API_URL` was set — exactly what `docker-compose.yml` passes as a build arg. Dev worked (no var set), but every containerized request would have 404'd. Now the prefix is always appended (`${VITE_API_URL ?? ''}/api`). Invisible to typecheck; only surfaced once feature code actually called the client.
+
+### What exists
+- [x] `app/AppShell.tsx` + `.module.css` — header/nav shell, `<Outlet/>` for routed content
+- [x] `app/providers.tsx` — `QueryClientProvider` with sane defaults (30s staleTime, 1 retry)
+- [x] `components/ui/PageState.tsx` — shared loading/error/empty state component
+- [x] `features/{devices,builds,execution,servers}` — each with a typed `api/` layer (TanStack Query hooks over the shared axios client) + `types.ts` + pages. List pages hit real backend routes; detail pages read route params and fetch single resources.
+- [x] `features/analytics/` — now consumes the live `/api/analytics`: KPI strip (total runs, pass rate, failed, avg duration) plus per-suite and per-device pass-rate breakdowns.
+- [x] `services/api.ts` — axios instance, JWT-from-localStorage interceptor (`mh_token`), normalized `{code, message}` errors
+
+### Design system — ✅ built and verified (2026-08-25)
+
+`docs/ui-guidelines.md` is the visual source of truth (Linear density + Vercel restraint + Stripe data clarity). The foundation it prescribes is built and applied to every page:
+
+- [x] `styles/tokens.css` — full token set (color/type/spacing/radius/motion), **dark by default** + light via `data-theme`, plus an OS-preference fallback. Light-mode greens/ambers are darkened to hold 4.5:1 on white. No component hard-codes a hex.
+- [x] `lib/icons.ts` — single Lucide mapping (domain concept → icon) so icon names never scatter; `lib/status.ts` + `components/ui/StatusBadge.tsx` — one place a status becomes pixels, always **color + icon + text**, never color alone. Continuous states (running/downloading) pulse.
+- [x] Primitives: `Button` (4 variants × 2 sizes), `Card`, `Grid`/`List`, `Page`/`PageHeader`, `Meta`, `Summary`, `DescriptionList`, 4px `ProgressBar`, `Skeleton`/`SkeletonList`, `EmptyState`, `ErrorState`, and `QueryBoundary` (routes every list through loading→error→empty→data). `BrandLogo` (hexagon + device mark, `currentColor`, no gradient).
+- [x] App shell: sticky translucent top nav (no sidebar), icon+label nav, persisted theme toggle, one global `:focus-visible` ring, reduced-motion honored, themed scrollbars.
+- [x] All 8 pages rebuilt on the system; skeletons replace "Loading…" everywhere.
+- [x] **Verified in a real headless browser** against a live backend with realistic seeded data (2 hosts, 5 devices, 3 builds, 5 runs incl. a live one, real analytics): all 5 routes in **both themes**, zero console errors, and screenshots reviewed by eye rather than assumed.
+- [x] Two issues found *by looking* and fixed: the device card dumped a raw `execution:<runId>` lock reason into the badge (crowding the name down to `iPad ...`) — now a short link to the run; and analytics pass-rate bars used progress semantics (accent at 50%, green at 100%), reading as "half loaded" rather than "half passing" — now toned red/amber/green by rate.
+- [x] Fixed nested `<a>` (invalid HTML, broken clicks) introduced while making the card link-aware — caught by the browser's own console warning, not by typecheck or lint.
+- [ ] Not yet built from the guidelines' component list: `Toast`, `Dialog`/slide-over, `Tabs`/filter bar, themed TanStack Table, Recharts trend charts, URL-synced filters. Guidelines advise one screen per pass — these are the next passes, not a gap in this one.
+- [ ] Fonts: tokens reference `Inter var` / `JetBrains Mono` but neither is bundled or linked, so the UI currently renders in the system-ui fallback. Either self-host them or drop them from the token stack — right now the stated type choice isn't the one shipping.
+- [ ] Trend charts need multi-day aggregate data before they mean anything (the page says so explicitly rather than plotting a single point).
+
+### Frontend gaps
+- [x] **Design pass done (2026-08-25)** — see the "Design system" subsection below.
+- [ ] `auth` — no login screen. The interceptor reads `mh_token` from localStorage but nothing ever writes it, so every request is currently unauthenticated: authenticated actions (device lock/unlock, build/run triggers) can't work from the UI at all. Biggest functional gap.
+- [ ] No mutations anywhere — everything is read-only (no lock/unlock, no trigger build, no trigger/cancel run). `TriggerRunPage` exists but doesn't submit.
+- [ ] No live WS consumption — the backend pushes execution stage/status/log events over `GET /api/execution/:id/stream`, and `RunDetailPage` doesn't use it
+- [ ] `devices` streaming/viewer is a stub — backend `streaming` module doesn't exist yet either
+- [ ] **Zero frontend tests, and `npm test` is currently broken because of it.** `npm run test --workspace=frontend` exits 1 with "No test files found" — which also breaks the **root** `npm test` (it chains backend && frontend), so the repo has no single green test command. Two things needed: at least one real test, and `src/test-utils/setup.ts`, which `vite.config.ts` already references in `setupFiles` but **does not exist** (latent — vitest only loads it once there's a test to run, so it'll bite the moment the first test is added).
+
+---
+
+## Infra
+
+| Item | Status | Notes |
+|---|---|---|
+| `docker-compose.yml`, `backend/Dockerfile`, `frontend/Dockerfile` | 🔨 | Present, not built/run this session. This session's smoke test used a standalone `mongo:7` container instead of the compose stack. |
+
+---
+
+## Related work outside this repo
+
+- **E2E test repo — ✅ live (2026-08-23)**: [`deepak-rk/playwright-project_js`](https://github.com/deepak-rk/playwright-project_js) (package name `mobile-hub-e2e`) is now the dedicated mobile-hub E2E project. **24 Playwright API tests, all passing against a real backend** (19.5s, serial by design): auth, hosts, devices (including the sync-while-locked and host-drops-locked-device regression cases this repo fixed), config (admin-only), builds (real fetch/checksum via a local fixture artifact server), execution (pass/fail/cancel/409, plus the live WS event stream with token auth). `global-setup.ts` wipes a dedicated test DB (with a name-based guardrail against dropping real data) and mints the single first-user admin. CI workflow boots mobile-hub + a Mongo service container. Old tutorial scratch preserved on `legacy/original-scratch`. To run it locally: see that repo's README (backend must be started separately against `mobilehub_e2e`). UI tests still pending — blocked on this repo's frontend (see below).
+- **Extracted packages**: see the "extracted packages" section above — `layered-config-ts` and `fastify-auth-kit` live in their own repos, not here.
+
+## Suggested next steps (in priority order)
+
+As of 2026-08-23 the backend is feature-complete except `streaming`: `auth`, `hosts`, `devices`, `config`, `builds`, `execution`, and `analytics` are all built and verified against a real running server. The frontend typecheck blocker is cleared and the app renders real data in a browser. The E2E suite (24 tests) is live in its own repo. **Nothing is blocked on a missing prerequisite any more** — what follows is ordered by value, not dependency.
+
+1. **Frontend `auth` + mutations** — the single biggest functional gap. There's no login screen, so nothing ever writes the `mh_token` the API client reads: every authenticated action (device lock/unlock, trigger build, trigger/cancel run) is unreachable from the UI. The app is effectively read-only against a backend that supports far more.
+2. **Design pass — make the UI genuinely elegant.** Current pages are minimal scaffolding, explicitly not a design effort (see "Frontend gaps"). Wants design tokens, a real component layer, skeletons, dark mode, responsive, a11y. `TanStack Table` and `Recharts` are already dependencies and unused.
+3. **Fix `npm test`** — it currently fails repo-wide because the frontend workspace has zero test files (and a `setupFiles` path that doesn't exist). No single green test command for the repo right now.
+4. **UI-layer E2E tests** — now genuinely unblocked: the pages exist, render, and a headless Chromium drives them fine. Add a `tests/ui/` project to the E2E repo (it's already scaffolded for exactly this).
+5. `streaming` module — the last unbuilt backend module, and the only one still needing real design work (capture-process spawn/registry, fan-out).
+6. Real `.test.ts` coverage for `hosts`/`devices`/`builds`/`execution`/`analytics` — all verified via curl/E2E, but only `config` has `npm test` coverage in-repo.
+7. Decide the automation-repo-source config (git URL, branch convention) — unblocks real `pulling`/`restoring_cache` stages in `execution` and the `install-job`/host-agent architecture in `builds`. Both are stubbed around this same missing decision.
+8. Consider the ESM migration noted under "cross-cutting backend gaps" — would remove the dynamic-`import()` workaround needed for the two extracted packages.
+9. **Push mobile-hub to GitHub** — the remote currently has only the early docs commits; the entire implementation is uncommitted local work. Also a hard prerequisite for the E2E repo's CI, which checks out mobile-hub from GitHub.
+
+See also `docs/LESSONS.md` (mistakes made + rules learned) and `docs/SELF_REVIEW.md` (the checklist to run at every major completion).

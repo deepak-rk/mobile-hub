@@ -2,7 +2,7 @@
 
 Open-source mobile device testing & automation platform for the community. Think: shared device lab + Appium-driven execution + live device streaming + results dashboard — rebuilt from the ground up, without the known gaps of prior proprietary tools (see "Lessons carried in" below).
 
-**Status:** pre-implementation. Architecture is being planned before code is written. If you're picking this up mid-session and `frontend/` or `backend/` don't have real source yet, don't assume they do — check first.
+**Status:** implementation in progress. `frontend/` and `backend/` have real, growing source trees. Don't assume what's built or working from memory — check `docs/TODO.md` first, it's the live checklist (see "Progress tracking" below).
 
 ## Repo layout
 
@@ -10,11 +10,26 @@ Open-source mobile device testing & automation platform for the community. Think
 mobile-hub/
   frontend/     React app — see frontend/CLAUDE.md
   backend/      Node.js API + services — see backend/CLAUDE.md
-  docs/         architecture blueprint, roadmap, ADRs
-  CLAUDE.md     you are here — cross-cutting rules only
+  docs/         architecture blueprint, roadmap, ADRs, TODO.md, LESSONS.md, SELF_REVIEW.md
+  CLAUDE.md     you are here — cross-cutting rules only, the only markdown file at repo root
 ```
 
-This file covers rules that apply across the whole repo. Stack-specific commands, conventions, and gotchas live in the sub-package CLAUDE.md files — don't duplicate them here, and don't let this file grow past ~150 lines. When a rule only matters in one package, it belongs in that package's file.
+This file covers rules that apply across the whole repo. Stack-specific commands, conventions, and gotchas live in the sub-package CLAUDE.md files — don't duplicate them here, and don't let this file grow past ~150 lines. When a rule only matters in one package, it belongs in that package's file. **Only `CLAUDE.md` lives at repo root** — every other markdown doc (checklist, lessons, self-review, ADRs, specs) belongs under `docs/`, referenced from here, not scattered at top level.
+
+## Progress tracking
+
+`docs/TODO.md` is the live build checklist — one row per module/feature, with a status (not started / built / tested) and a one-line note. It is the source of truth for "what actually works right now," not this file and not memory of past sessions.
+
+- **Update it whenever you finish a unit of work**: after scaffolding a module, after a typecheck/lint pass, after a smoke test — move the row to the right status and note what was actually verified (not just written).
+- "Tested" means you ran it — typecheck/lint passing is "built," not "tested." Booting the server and hitting the endpoint (or an equivalent real check) is what earns "tested."
+- If you discover a checklist row is stale (marked tested but no longer works, or vice versa), fix the row as part of your change — don't leave it misleading the next session.
+
+## Self-review
+
+At every major completion (finishing a module, closing out a significant chunk of work, or before ending a session), run through `docs/SELF_REVIEW.md` — a short checklist covering drift from stated architecture/rules, whether "tested" claims are actually earned, whether anything discovered this session is worth promoting into a `CLAUDE.md` rule, and whether any mistake needs an entry in `docs/LESSONS.md`.
+
+- `docs/LESSONS.md` is the running log of real mistakes made in this repo and the rule that came out of each one — retrospective and specific, not a general best-practices list (that's "Lessons carried in" below).
+- Don't skip the self-review because the change felt small — the checklist itself is fast; it's what it catches that matters.
 
 ## Think before coding
 

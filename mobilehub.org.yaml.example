@@ -1,0 +1,26 @@
+# Org-wide defaults. Copy to mobilehub.org.yaml and edit — every field is
+# optional; anything omitted falls back to the platform default (see
+# backend/src/config/org-config.schema.ts PLATFORM_DEFAULTS).
+
+features:
+  builds: true
+  execution: true
+  analytics: true
+  streaming: true
+
+build:
+  provider: url # url | nexus | s3 | webhook
+  nexus:
+    baseUrl: https://nexus.example.com
+    repository: mobile-builds
+  # s3:
+  #   bucket: my-org-builds
+  #   region: us-east-1
+  # webhook:
+  #   endpoint: https://ci.example.com/hooks/mobile-hub-build
+
+automation:
+  framework: appium
+  configPath: wdio.conf.js
+  envFile: .env
+  testDir: test
