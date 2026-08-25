@@ -199,12 +199,14 @@ The long-standing "frontend doesn't typecheck" blocker is **resolved**. All thre
 
 ## Suggested next steps (in priority order)
 
-As of 2026-08-25 **every backend module is built and verified**, the frontend has auth, mutations, live run logs and a live device view, and root `npm test` / `typecheck` / `lint` / `build` are green. The E2E suite is 46 tests (24 API + 22 UI). mobile-hub is pushed to GitHub, so the E2E repo's CI can run.
+As of 2026-08-26 **every backend module is built and verified**, including a host-side device agent and authenticated agent endpoints. The frontend has auth, mutations, live run logs and a live device view. Root `npm test` / `typecheck` / `lint` / `build` are green (51 backend unit tests, 12 frontend). The E2E suite is 51 tests (29 API + 22 UI) and runs against a token-enforcing hub. Both adb adapters are validated against a real booted emulator.
 
 1. **H264 streaming** — only MJPEG exists. The protocol is already part of the session key and the adapter interface, so it slots in without redesign, and it's the difference between a usable and a pleasant live view.
+2. **Per-agent identity for `AGENT_TOKEN`** — today it's one shared secret for every agent, so a single compromised host means rotating all of them. No revocation, no per-host attribution.
+3. **An iOS discovery + capture adapter** (`xcrun simctl`) — the interfaces and the per-host simulator cap already exist, but nothing populates them, so the platform is Android-only in practice.
 4. Remaining design-system components: `Toast`, `Dialog`/slide-over, filter bar with URL-synced filters, themed TanStack Table, Recharts trends (needs multi-day data first).
-5. Real `.test.ts` coverage for `hosts`/`devices`/`builds`/`execution`/`analytics` — verified via curl and E2E, but only `config`, `db`, `streaming` and the frontend's `lib/` have in-repo `npm test` coverage.
-6. Decide the automation-repo-source config (git URL, branch convention) — unblocks real `pulling`/`restoring_cache` stages in `execution` and the `install-job`/host-agent architecture in `builds`. Both are stubbed around this same missing decision.
-7. Consider the ESM migration noted under "cross-cutting backend gaps" — would remove the dynamic-`import()` workaround needed for the two extracted packages.
+5. Real `.test.ts` coverage for `devices`/`builds`/`execution`/`analytics` — verified via curl and E2E, but only `config`, `db`, `hosts`, `agent`, `agent-auth` and `streaming` have in-repo `npm test` coverage.
+6. Decide the automation-repo-source config (git URL, branch convention) — unblocks the real `pulling`/`restoring_cache` stages in `execution`. Related: now that a device agent exists, decide push-vs-pull for `install-job` in `builds`.
+7. Consider the ESM migration noted under "cross-cutting backend gaps" — would remove the dynamic-`import()` workaround needed for the extracted packages.
 
 See also `docs/LESSONS.md` (mistakes made + rules learned) and `docs/SELF_REVIEW.md` (the checklist to run at every major completion).
