@@ -2,7 +2,7 @@
 
 Node.js API + services: device inventory, Appium server orchestration, execution pipeline, log/artifact streaming, analytics aggregation. See root `../CLAUDE.md` for cross-cutting rules — this file is backend-only conventions and gotchas.
 
-**Status:** pre-implementation. No source exists yet in this directory as of the last planning session. Once scaffolded, fill in "Dev loop" with real, verified commands.
+**Status:** implementation in progress — `hosts`, `devices`, `auth` are built and smoke-tested; `builds`/`execution`/`streaming`/`analytics` are models only. See `docs/TODO.md` (repo root) for the live, verified checklist. Dev loop below is real and verified.
 
 ## Core principles
 
@@ -40,17 +40,17 @@ src/
 
 Keep domain code together (controller/service/repository per module) rather than grouping by technical layer across the whole app.
 
-## Dev loop (fill in once scaffolded)
+## Dev loop (verified 2026-08-22)
 
 ```
-# npm run dev        — TODO: confirm port
-# npm run build
-# npm run lint
-# npm run typecheck
-# npm test
+npm run dev         # tsx watch src/server.ts — API on :3000 (API_PORT), WS on :3001 (STREAM_WS_PORT)
+npm run build        # tsc
+npm run lint          # eslint src --ext .ts
+npm run typecheck     # tsc --noEmit
+npm test               # vitest run — no test files exist yet, so this currently passes trivially
 ```
 
-Do not guess these — run them and record the real output/port once the app exists.
+Requires `MONGODB_URI` reachable and `JWT_SECRET` (32+ chars) in `backend/.env` — see `backend/.env.example`. No local Mongo/mongod needed for `typecheck`/`lint`/`build`; `dev` and `test` (once tests exist) need a real Mongo instance (a plain `docker run -d -p 27017:27017 mongo:7` is enough for local dev).
 
 ## Architecture rules
 
