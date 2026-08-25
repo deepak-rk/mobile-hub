@@ -7,6 +7,7 @@ import { markStaleHostsOffline, HOST_STALE_CHECK_INTERVAL_MS } from './modules/h
 import { recoverOrphanedRuns } from './modules/execution/execution.service';
 import { computeDailyAggregates, ANALYTICS_RECOMPUTE_INTERVAL_MS } from './modules/analytics/analytics.service';
 import { streamingService } from './modules/streaming/streaming.service';
+import { agentTokenIsConfigured } from './modules/agent-auth/agent-auth';
 
 async function start(): Promise<void> {
   let config;
@@ -17,7 +18,28 @@ async function start(): Promise<void> {
     process.exit(1);
   }
 
+  // Fail closed in production: unauthenticated agent endpoints let anyone
+  // register phantom devices, or claim a real machineId and report zero
+  // devices to take that lab offline and release its locks.
+  if (!agentTokenIsConfigured()) {
+    if (env.NODE_ENV === 'production') {
+      console.error(
+        '❌ AGENT_TOKEN is required in production: without it, POST /api/hosts/heartbeat and ' +
+          '/api/devices/sync are open to anyone who can reach this server. Generate one with ' +
+          '`openssl rand -hex 32` and set it on the hub and every agent.',
+      );
+      process.exit(1);
+    }
+  }
+
   const app = await buildApp(config);
+
+  if (!agentTokenIsConfigured()) {
+    app.log.warn(
+      'AGENT_TOKEN is not set — POST /api/hosts/heartbeat and /api/devices/sync are UNAUTHENTICATED. ' +
+        'Acceptable for local development only; the server refuses to start like this in production.',
+    );
+  }
 
   try {
     await connectDB();

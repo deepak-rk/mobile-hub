@@ -1,6 +1,7 @@
 import { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 import { listHosts, getHost, upsertHeartbeat } from './hosts.service';
+import { requireAgentToken } from '../agent-auth/agent-auth';
 
 const heartbeatBody = z.object({
   machineId: z.string().min(1),
@@ -19,7 +20,7 @@ export const hostsRoutes: FastifyPluginAsync = async (app) => {
     return listHosts();
   });
 
-  app.post('/heartbeat', async (req, reply) => {
+  app.post('/heartbeat', { preHandler: requireAgentToken }, async (req, reply) => {
     const body = heartbeatBody.safeParse(req.body);
     if (!body.success) {
       return reply.status(400).send({ code: 'VALIDATION_ERROR', message: body.error.message });

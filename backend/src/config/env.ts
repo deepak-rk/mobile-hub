@@ -17,6 +17,9 @@ const envSchema = z.object({
   // Global request cap per IP. The default suits a small lab; a busy one
   // (many hosts heartbeating every 10s, several browsers polling, an E2E
   // suite hammering the API) needs it raised, so it must not be hardcoded.
+  // Shared secret the device agents present. Required in production (enforced
+  // in server.ts); optional in development, where startup warns instead.
+  AGENT_TOKEN: z.string().min(16, 'AGENT_TOKEN must be at least 16 characters').optional(),
   RATE_LIMIT_MAX: z.coerce.number().int().positive().default(200),
   RATE_LIMIT_WINDOW: z.string().default('1 minute'),
   ORG_CONFIG_PATH: z.string().default(path.join(process.cwd(), '..', 'mobilehub.org.yaml')),

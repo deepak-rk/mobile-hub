@@ -20,6 +20,8 @@ const envSchema = z.object({
   AGENT_POLL_INTERVAL_MS: z.coerce.number().int().positive().default(10_000),
   AGENT_MAX_DEVICES: z.coerce.number().int().nonnegative().default(8),
   AGENT_DISCOVERY: z.string().optional(),
+  // Must match the hub's AGENT_TOKEN. Optional only against a dev hub that has none.
+  AGENT_TOKEN: z.string().optional(),
 });
 
 const parsed = envSchema.safeParse(process.env);
@@ -54,7 +56,7 @@ async function main(): Promise<void> {
     },
     pollIntervalMs: env.AGENT_POLL_INTERVAL_MS,
     discovery,
-    hub: new HubClient(env.HUB_URL),
+    hub: new HubClient(env.HUB_URL, env.AGENT_TOKEN),
   });
 
   const shutdown = (signal: string) => {

@@ -22,6 +22,9 @@ services:
       NODE_ENV: production
       MONGODB_URI: mongodb://mongodb:27017/mobilehub
       JWT_SECRET: ${JWT_SECRET}
+      # Required because NODE_ENV is production here; the server refuses to
+      # start without it rather than exposing the agent endpoints.
+      AGENT_TOKEN: ${AGENT_TOKEN}
       API_PORT: "3000"
       STREAM_WS_PORT: "3001"
       MACHINE_ID: ${MACHINE_ID:-}

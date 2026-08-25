@@ -60,9 +60,13 @@ describe('markStaleHostsOffline', () => {
     const { hostUpdate, deviceUpdate } = stub([{ machineId: 'host-1' }, { machineId: 'host-2' }]);
 
     const result = await markStaleHostsOffline();
+    const bothHosts = { $in: ['host-1', 'host-2'] };
 
     expect(result.hosts).toBe(2);
-    expect(hostUpdate.mock.calls[0][0]).toEqual({ machineId: { $in: ['host-1', 'host-2'] } });
-    expect(deviceUpdate.mock.calls[0][0].machineId).toEqual({ $in: ['host-1', 'host-2'] });
+    expect(hostUpdate).toHaveBeenCalledWith({ machineId: bothHosts }, { status: 'offline' });
+    expect(deviceUpdate).toHaveBeenCalledWith(
+      { machineId: bothHosts, status: { $ne: 'offline' } },
+      { status: 'offline', isLocallyReachable: false, lock: null },
+    );
   });
 });

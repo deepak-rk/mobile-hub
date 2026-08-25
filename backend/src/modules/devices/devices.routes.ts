@@ -1,6 +1,7 @@
 import { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 import { acquireLock, getDevice, listDevices, releaseLock, syncDevices } from './devices.service';
+import { requireAgentToken } from '../agent-auth/agent-auth';
 
 const syncBody = z.object({
   machineId: z.string().min(1),
@@ -22,7 +23,7 @@ export const devicesRoutes: FastifyPluginAsync = async (app) => {
     return listDevices({ platform, status, machineId });
   });
 
-  app.post('/sync', async (req, reply) => {
+  app.post('/sync', { preHandler: requireAgentToken }, async (req, reply) => {
     const body = syncBody.safeParse(req.body);
     if (!body.success) {
       return reply.status(400).send({ code: 'VALIDATION_ERROR', message: body.error.message });
