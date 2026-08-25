@@ -38,3 +38,14 @@ export function useUnlockDevice(udid: string) {
     },
   });
 }
+
+/** Force-stops any live capture for this device (operator/admin only). */
+export function useStopDeviceStream(udid: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async () => (await api.post<{ stopped: number }>(`/devices/${udid}/stream/stop`)).data,
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['devices'] });
+    },
+  });
+}

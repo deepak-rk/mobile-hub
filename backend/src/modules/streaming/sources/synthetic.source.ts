@@ -1,5 +1,6 @@
 import { EventEmitter } from 'events';
 import { CaptureContext, CaptureHandle, CaptureSource, StreamProtocol } from '../capture-source';
+import { syntheticFrame } from './synthetic-frame';
 
 /**
  * Emits generated frames on a timer instead of talking to a device.
@@ -16,16 +17,13 @@ class SyntheticHandle extends EventEmitter implements CaptureHandle {
   private timer: ReturnType<typeof setInterval> | null = null;
   private frameNo = 0;
 
-  constructor(
-    private readonly ctx: CaptureContext,
-    intervalMs: number,
-  ) {
+  constructor(_ctx: CaptureContext, intervalMs: number) {
     super();
     this.timer = setInterval(() => {
       this.frameNo += 1;
-      // A recognisable, tiny payload — enough to assert delivery and ordering
-      // without pretending to be a real image.
-      this.emit('frame', Buffer.from(`synthetic:${this.ctx.deviceUdid}:${this.frameNo}`));
+      // A real, decodable PNG whose colour cycles per frame, so a browser
+      // shows an actual moving picture rather than a broken-image icon.
+      this.emit('frame', syntheticFrame(this.frameNo));
     }, intervalMs);
   }
 

@@ -39,7 +39,7 @@ export async function buildApp(config: EffectiveConfig): Promise<FastifyInstance
   // Security plugins
   void app.register(helmet, { contentSecurityPolicy: false });
   void app.register(cors, { origin: env.NODE_ENV === 'development' ? true : false });
-  void app.register(rateLimit, { max: 200, timeWindow: '1 minute' });
+  void app.register(rateLimit, { max: env.RATE_LIMIT_MAX, timeWindow: env.RATE_LIMIT_WINDOW });
 
   app.decorate('config', config);
 

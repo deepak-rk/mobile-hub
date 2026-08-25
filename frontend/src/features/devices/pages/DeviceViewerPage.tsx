@@ -7,6 +7,7 @@ import { icons, iconSize } from '@/lib/icons';
 import { formatRelative, shortId } from '@/lib/format';
 import { useDevice } from '../api/devices.api';
 import { LockControls } from '../components/LockControls';
+import { DeviceStream, StreamStopButton } from '../components/DeviceStream';
 import { useAuth } from '@/features/auth/useAuth';
 import styles from './DeviceViewerPage.module.css';
 
@@ -21,11 +22,14 @@ export function DeviceViewerPage() {
         title={device?.name ?? 'Device'}
         subtitle={udid}
         actions={
-          <Link to="/devices">
-            <Button size="sm" variant="ghost">
-              Back to devices
-            </Button>
-          </Link>
+          <>
+            {device ? <StreamStopButton device={device} /> : null}
+            <Link to="/devices">
+              <Button size="sm" variant="ghost">
+                Back to devices
+              </Button>
+            </Link>
+          </>
         }
       />
 
@@ -34,17 +38,7 @@ export function DeviceViewerPage() {
           <div className={styles.split}>
             <Card>
               <CardBody>
-                {/* The live stream surface. The backend streaming module isn't
-                    built yet, so this states that plainly rather than showing a
-                    fake player — guidelines §1: never hide real-time state. */}
-                <div className={styles.stage}>
-                  <icons.stream size={32} aria-hidden="true" />
-                  <div className={styles.stageTitle}>Live view unavailable</div>
-                  <p className={styles.stageBody}>
-                    Device streaming is not implemented in the backend yet. When it lands, the MJPEG/H.264
-                    feed and its connection banner appear here.
-                  </p>
-                </div>
+                <DeviceStream device={device} />
               </CardBody>
             </Card>
 

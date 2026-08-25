@@ -90,6 +90,30 @@ describe('viewer fan-out', () => {
   });
 });
 
+describe('early detach', () => {
+  it('detaching before any frame arrives leaves no phantom viewer', async () => {
+    // Mirrors a socket that closes while addViewer is still awaiting the
+    // database — a fast navigate-away, a reload, or a re-run effect. A viewer
+    // stranded here would never detach, so the capture would never reach idle
+    // teardown and its process would run forever. (Found via the E2E suite;
+    // the route now records an early close and reconciles once attach resolves.)
+    const v = await service.addViewer({ ...base, viewerId: 'v1', onFrame: () => {} });
+    await v.detach();
+
+    expect(service.viewerCount(base.machineId, base.deviceUdid, base.protocol)).toBe(0);
+    const swept = await service.sweepIdle(Date.now() + IDLE_TEARDOWN_MS + 1);
+    expect(swept).toBe(1);
+    expect(service.activeCaptureCount).toBe(0);
+  });
+
+  it('detaching twice is harmless', async () => {
+    const v = await service.addViewer({ ...base, viewerId: 'v1', onFrame: () => {} });
+    await v.detach();
+    await expect(v.detach()).resolves.toBeUndefined();
+    expect(service.viewerCount(base.machineId, base.deviceUdid, base.protocol)).toBe(0);
+  });
+});
+
 describe('idle teardown', () => {
   it('keeps a viewer-less capture alive through the grace period', async () => {
     const v = await service.addViewer({ ...base, viewerId: 'v1', onFrame: () => {} });

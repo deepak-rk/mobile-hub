@@ -74,6 +74,17 @@ export const streamingRoutes: FastifyPluginAsync = async (app) => {
       // One viewer id per socket, so two tabs from the same user each count.
       const viewerId = `${viewer.sub}:${Math.random().toString(36).slice(2, 10)}`;
 
+      // Attaching a viewer awaits the database, and a socket can close during
+      // that await — a fast navigate-away, a reload, or React re-running an
+      // effect. Registering the close handler only afterwards would lose that
+      // event entirely, leaving a phantom viewer that never detaches and a
+      // capture that therefore never reaches idle teardown. So record the
+      // close now and reconcile once the attach resolves.
+      let closedEarly = false;
+      socket.on('close', () => {
+        closedEarly = true;
+      });
+
       try {
         const { session, detach } = await streamingService.addViewer({
           machineId: device.machineId,
@@ -86,6 +97,12 @@ export const streamingRoutes: FastifyPluginAsync = async (app) => {
             if (socket.readyState === socket.OPEN) socket.send(frame);
           },
         });
+
+        if (closedEarly) {
+          // It went away while we were attaching; release it immediately.
+          await detach();
+          return;
+        }
 
         socket.send(
           JSON.stringify({
