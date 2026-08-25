@@ -1,8 +1,9 @@
-import { NavLink, Outlet } from 'react-router-dom';
+import { Link, NavLink, Outlet, useLocation } from 'react-router-dom';
 import { BrandLogo } from '@/components/ui/BrandLogo';
 import { Button } from '@/components/ui/Button';
 import { icons, iconSize } from '@/lib/icons';
 import { useTheme } from '@/lib/theme';
+import { useAuth } from '@/features/auth/useAuth';
 import styles from './AppShell.module.css';
 
 const navItems = [
@@ -12,6 +13,35 @@ const navItems = [
   { to: '/analytics', label: 'Analytics', icon: icons.analytics },
   { to: '/servers', label: 'Hosts', icon: icons.host },
 ];
+
+function UserMenu() {
+  const { user, isLoading, logout } = useAuth();
+  const location = useLocation();
+
+  if (isLoading) return <span className={styles.userSkeleton} aria-hidden="true" />;
+
+  if (!user) {
+    return (
+      <Link to="/login" state={{ from: location.pathname }}>
+        <Button size="sm" variant="secondary">
+          Sign in
+        </Button>
+      </Link>
+    );
+  }
+
+  return (
+    <div className={styles.user}>
+      <span className={styles.userInfo}>
+        <span className={styles.userName}>{user.name}</span>
+        <span className={styles.userRole}>{user.role}</span>
+      </span>
+      <Button size="sm" variant="ghost" onClick={logout}>
+        Sign out
+      </Button>
+    </div>
+  );
+}
 
 export function AppShell() {
   const { theme, toggle } = useTheme();
@@ -48,6 +78,7 @@ export function AppShell() {
           >
             <ThemeIcon size={iconSize.control} aria-hidden="true" />
           </Button>
+          <UserMenu />
         </div>
       </header>
 

@@ -143,16 +143,19 @@ The long-standing "frontend doesn't typecheck" blocker is **resolved**. All thre
 - [x] Two issues found *by looking* and fixed: the device card dumped a raw `execution:<runId>` lock reason into the badge (crowding the name down to `iPad ...`) — now a short link to the run; and analytics pass-rate bars used progress semantics (accent at 50%, green at 100%), reading as "half loaded" rather than "half passing" — now toned red/amber/green by rate.
 - [x] Fixed nested `<a>` (invalid HTML, broken clicks) introduced while making the card link-aware — caught by the browser's own console warning, not by typecheck or lint.
 - [ ] Not yet built from the guidelines' component list: `Toast`, `Dialog`/slide-over, `Tabs`/filter bar, themed TanStack Table, Recharts trend charts, URL-synced filters. Guidelines advise one screen per pass — these are the next passes, not a gap in this one.
-- [ ] Fonts: tokens reference `Inter var` / `JetBrains Mono` but neither is bundled or linked, so the UI currently renders in the system-ui fallback. Either self-host them or drop them from the token stack — right now the stated type choice isn't the one shipping.
+- [x] **Fonts now actually ship (2026-08-25)** — Inter + JetBrains Mono are linked from Google Fonts with `display=swap`, so the typefaces the guidelines specify are the ones rendering. Chosen over self-hosting because it adds no dependency and no build step, and the system-ui fallback in `tokens.css` means a blocked/offline CDN degrades to a readable UI rather than a broken one. Self-host (e.g. `@fontsource`) if this ever needs to be air-gapped or avoid third-party requests.
+- [x] Real favicon (`public/brand-mark.svg`) matching the brand mark, replacing the default Vite logo; `color-scheme` meta so the first paint doesn't flash white in dark mode.
 - [ ] Trend charts need multi-day aggregate data before they mean anything (the page says so explicitly rather than plotting a single point).
 
 ### Frontend gaps
 - [x] **Design pass done (2026-08-25)** — see the "Design system" subsection below.
-- [ ] `auth` — no login screen. The interceptor reads `mh_token` from localStorage but nothing ever writes it, so every request is currently unauthenticated: authenticated actions (device lock/unlock, build/run triggers) can't work from the UI at all. Biggest functional gap.
-- [ ] No mutations anywhere — everything is read-only (no lock/unlock, no trigger build, no trigger/cancel run). `TriggerRunPage` exists but doesn't submit.
+- [x] **`auth` built and verified (2026-08-25)** — login/register page, `AuthProvider` (stored token is only trusted once `/me` confirms it, otherwise cleared), header user menu with role badge, sign-out, and a `can(...roles)` helper. Reads stay public and only *actions* are gated, so the app is useful signed-out and unlocks in place on sign-in.
+- [x] **Mutations built and verified (2026-08-25)** — device lock/unlock (owner or admin force-release), run cancel (only while non-terminal, operator/admin only), and a real trigger-run form that offers only genuinely available devices (locked/offline excluded, since the backend would 409 them). Actions are hidden by role rather than disabled, so nothing on screen can only 401.
+- [x] **Full flow driven in a real browser, 9/9 steps, zero console errors**: signed-out read → register (first user becomes admin) → role badge in header → lock a device → confirm the locked device disappears from the trigger form → trigger a run through the form → land on its detail page → release the lock → sign out.
 - [ ] No live WS consumption — the backend pushes execution stage/status/log events over `GET /api/execution/:id/stream`, and `RunDetailPage` doesn't use it
 - [ ] `devices` streaming/viewer is a stub — backend `streaming` module doesn't exist yet either
-- [ ] **Zero frontend tests, and `npm test` is currently broken because of it.** `npm run test --workspace=frontend` exits 1 with "No test files found" — which also breaks the **root** `npm test` (it chains backend && frontend), so the repo has no single green test command. Two things needed: at least one real test, and `src/test-utils/setup.ts`, which `vite.config.ts` already references in `setupFiles` but **does not exist** (latent — vitest only loads it once there's a test to run, so it'll bite the moment the first test is added).
+- [x] **`npm test` fixed repo-wide (2026-08-25)** — created the missing `src/test-utils/setup.ts` that `vite.config.ts` already referenced, plus 12 tests covering `lib/format` (missing-vs-zero, unit scaling, negative durations from clock skew) and `lib/status` (every status carries label + token + icon, only continuous states pulse, unknown statuses degrade instead of crashing). Root `npm test` is green for the first time.
+- [ ] No component/interaction tests yet — only pure logic. The real interaction coverage currently lives in the sibling E2E repo, which is reasonable, but a couple of RTL tests for `QueryBoundary` and `LockControls` role-gating would be cheap and valuable.
 
 ---
 
@@ -171,16 +174,15 @@ The long-standing "frontend doesn't typecheck" blocker is **resolved**. All thre
 
 ## Suggested next steps (in priority order)
 
-As of 2026-08-23 the backend is feature-complete except `streaming`: `auth`, `hosts`, `devices`, `config`, `builds`, `execution`, and `analytics` are all built and verified against a real running server. The frontend typecheck blocker is cleared and the app renders real data in a browser. The E2E suite (24 tests) is live in its own repo. **Nothing is blocked on a missing prerequisite any more** — what follows is ordered by value, not dependency.
+As of 2026-08-25 the frontend has auth and mutations, the design system is in place, and root `npm test` / `typecheck` / `lint` / `build` are all green. mobile-hub is pushed to GitHub, which also unblocks the E2E repo's CI. The backend is feature-complete except `streaming`.
 
-1. **Frontend `auth` + mutations** — the single biggest functional gap. There's no login screen, so nothing ever writes the `mh_token` the API client reads: every authenticated action (device lock/unlock, trigger build, trigger/cancel run) is unreachable from the UI. The app is effectively read-only against a backend that supports far more.
-2. **Design pass — make the UI genuinely elegant.** Current pages are minimal scaffolding, explicitly not a design effort (see "Frontend gaps"). Wants design tokens, a real component layer, skeletons, dark mode, responsive, a11y. `TanStack Table` and `Recharts` are already dependencies and unused.
-3. **Fix `npm test`** — it currently fails repo-wide because the frontend workspace has zero test files (and a `setupFiles` path that doesn't exist). No single green test command for the repo right now.
-4. **UI-layer E2E tests** — now genuinely unblocked: the pages exist, render, and a headless Chromium drives them fine. Add a `tests/ui/` project to the E2E repo (it's already scaffolded for exactly this).
-5. `streaming` module — the last unbuilt backend module, and the only one still needing real design work (capture-process spawn/registry, fan-out).
-6. Real `.test.ts` coverage for `hosts`/`devices`/`builds`/`execution`/`analytics` — all verified via curl/E2E, but only `config` has `npm test` coverage in-repo.
+1. **UI-layer E2E tests** — an ad-hoc Playwright script drove the full 9-step auth/lock/trigger flow successfully, proving this works; it should become a permanent `tests/ui/` project in the E2E repo (already scaffolded for exactly this) rather than a throwaway script.
+2. **Live WS log streaming on the run detail page** — the backend already pushes stage/status/log events over `GET /api/execution/:id/stream`, and auth now exists to authenticate the socket, so the page can stop polling. Also the natural home for the `StreamStatusBanner` the guidelines require.
+3. `streaming` module — the last unbuilt backend module, and the only one still needing real design work (capture-process spawn/registry, fan-out).
+4. **Surface Mongoose index-build failures** (see "cross-cutting backend gaps") — silent failure there means duplicate accounts with no alert.
+5. Remaining design-system components: `Toast`, `Dialog`/slide-over, filter bar with URL-synced filters, themed TanStack Table, Recharts trends (needs multi-day data first).
+6. Real `.test.ts` coverage for `hosts`/`devices`/`builds`/`execution`/`analytics` — verified via curl/E2E, but only `config` and the frontend's `lib/` have `npm test` coverage in-repo.
 7. Decide the automation-repo-source config (git URL, branch convention) — unblocks real `pulling`/`restoring_cache` stages in `execution` and the `install-job`/host-agent architecture in `builds`. Both are stubbed around this same missing decision.
 8. Consider the ESM migration noted under "cross-cutting backend gaps" — would remove the dynamic-`import()` workaround needed for the two extracted packages.
-9. **Push mobile-hub to GitHub** — the remote currently has only the early docs commits; the entire implementation is uncommitted local work. Also a hard prerequisite for the E2E repo's CI, which checks out mobile-hub from GitHub.
 
 See also `docs/LESSONS.md` (mistakes made + rules learned) and `docs/SELF_REVIEW.md` (the checklist to run at every major completion).

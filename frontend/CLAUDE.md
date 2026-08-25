@@ -15,7 +15,8 @@ The foundation is built and in use across every page:
 - `src/lib/status.ts` + `components/ui/StatusBadge.tsx` — the only place a status becomes pixels. Always color **+ icon + text**; never color alone.
 - `components/ui/layout.tsx` — `Page`, `PageHeader`, `Card`, `Grid`, `List`, `Meta`, `Summary`, `ProgressBar` (4px), `DescriptionList`.
 - `components/ui/states.tsx` — `QueryBoundary` renders loading (skeletons, never a full-page spinner) / error / empty. Every list page routes through it.
-- `components/ui/Button.tsx`, `BrandLogo.tsx`, `lib/theme.ts` (theme toggle, persisted).
+- `components/ui/Button.tsx`, `Field.tsx` (labelled input with aria-describedby errors), `BrandLogo.tsx`, `lib/theme.ts` (theme toggle, persisted).
+- `features/auth/` — `AuthProvider` + `useAuth()`. Reads are public; only actions are role-gated. **Hide an action the caller can't perform rather than disabling it** — never render a control whose only outcome is a 401/403.
 
 Still to build from the guidelines' component list: `Toast`, `Dialog`/slide-over, `Tabs`/filter bar, themed TanStack Table, Recharts trend charts, URL-synced filters.
 
@@ -69,7 +70,7 @@ npm run dev         # vite — http://localhost:5173, proxies /api and /ws to :3
 npm run build        # tsc && vite build
 npm run lint          # eslint src --ext .ts,.tsx
 npm run typecheck     # tsc --noEmit
-npm test               # vitest run — currently FAILS: no test files exist yet (see docs/TODO.md)
+npm test               # vitest run — 12 tests over lib/format and lib/status
 ```
 
 `npm run dev` proxies `/api` to the backend on :3000, so run the backend too or every list shows its error state. Because the proxy handles the prefix, `VITE_API_URL` should be left unset locally — see the `services/api.ts` note about the prefix always being appended.

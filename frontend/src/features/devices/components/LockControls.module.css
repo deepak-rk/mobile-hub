@@ -1,0 +1,31 @@
+.wrap {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.signedOut,
+.note {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--text-tertiary);
+}
+
+.link {
+  color: var(--accent);
+}
+.link:hover {
+  text-decoration: underline;
+}
+
+.error {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--status-failed);
+}

@@ -1,5 +1,6 @@
 import { createBrowserRouter, RouterProvider, Navigate } from 'react-router-dom';
 import { AppShell } from './AppShell';
+import { LoginPage } from '@/features/auth/LoginPage';
 import { DevicesPage } from '@/features/devices/pages/DevicesPage';
 import { DeviceViewerPage } from '@/features/devices/pages/DeviceViewerPage';
 import { BuildsPage } from '@/features/builds/pages/BuildsPage';
@@ -9,7 +10,11 @@ import { RunDetailPage } from '@/features/execution/pages/RunDetailPage';
 import { AnalyticsPage } from '@/features/analytics/pages/AnalyticsPage';
 import { ServersPage } from '@/features/servers/pages/ServersPage';
 
+// Reads are public (the backend leaves list routes unauthenticated), so the
+// app shell is reachable signed-out and only *actions* are gated. Signing in
+// unlocks them in place rather than gating the whole product behind a wall.
 const router = createBrowserRouter([
+  { path: '/login', element: <LoginPage /> },
   {
     path: '/',
     element: <AppShell />,

@@ -94,3 +94,51 @@
     padding: 0 var(--space-2);
   }
 }
+
+.user {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.userInfo {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding-right: var(--space-1);
+}
+
+.userName {
+  font-size: var(--text-sm);
+  font-weight: var(--weight-ui);
+  color: var(--text-primary);
+  max-width: 14ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.userRole {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--accent);
+  padding: 2px var(--space-2);
+  border-radius: var(--radius-pill);
+  background: var(--accent-muted);
+}
+
+/* Reserves the menu's width while /me resolves, so the header doesn't jump. */
+.userSkeleton {
+  display: inline-block;
+  width: 76px;
+  height: 28px;
+  border-radius: var(--radius-control);
+  background: var(--bg-hover);
+}
+
+@media (max-width: 720px) {
+  .userInfo {
+    display: none;
+  }
+}

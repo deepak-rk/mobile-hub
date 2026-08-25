@@ -67,10 +67,8 @@
   color: var(--status-idle);
 }
 
-.note {
-  margin: var(--space-3) 0 0;
-  font-size: var(--text-xs);
-  color: var(--text-disabled);
+.lockActions {
+  margin-top: var(--space-4);
 }
 
 @media (max-width: 900px) {

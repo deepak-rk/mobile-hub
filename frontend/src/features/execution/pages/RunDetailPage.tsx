@@ -5,7 +5,8 @@ import { QueryBoundary } from '@/components/ui/states';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { icons, iconSize } from '@/lib/icons';
 import { formatDuration, formatRelative } from '@/lib/format';
-import { useExecutionRun } from '../api/execution.api';
+import { isInFlight, useCancelRun, useExecutionRun } from '../api/execution.api';
+import { useAuth } from '@/features/auth/useAuth';
 import type { RunStage } from '../types';
 import styles from './RunDetailPage.module.css';
 
@@ -34,6 +35,12 @@ function stageColor(status: RunStage['status']): string {
 export function RunDetailPage() {
   const { runId } = useParams<{ runId: string }>();
   const { data: run, isPending, error, refetch } = useExecutionRun(runId);
+  const { can } = useAuth();
+  const cancel = useCancelRun(runId ?? '');
+
+  // Cancel is only meaningful while the run is non-terminal, and only for
+  // roles the backend will actually accept (guidelines §10).
+  const showCancel = run ? isInFlight(run.status) && can('operator', 'admin') : false;
 
   return (
     <Page>
@@ -41,11 +48,24 @@ export function RunDetailPage() {
         title={run ? `${run.project} · ${run.suite}` : 'Run'}
         subtitle={runId}
         actions={
-          <Link to="/execution">
-            <Button size="sm" variant="ghost">
-              Back to runs
-            </Button>
-          </Link>
+          <>
+            {showCancel ? (
+              <Button
+                size="sm"
+                variant="destructive"
+                onClick={() => cancel.mutate()}
+                disabled={cancel.isPending}
+              >
+                <icons.cancelled size={iconSize.control} aria-hidden="true" />
+                {cancel.isPending ? 'Cancelling…' : 'Cancel run'}
+              </Button>
+            ) : null}
+            <Link to="/execution">
+              <Button size="sm" variant="ghost">
+                Back to runs
+              </Button>
+            </Link>
+          </>
         }
       />
 
@@ -84,13 +104,12 @@ export function RunDetailPage() {
                   })}
                 </ol>
 
-                {/* The backend streams live stage/log events over
-                    GET /api/execution/:id/stream. Consuming that needs an
-                    authenticated token, which requires the login screen that
-                    doesn't exist yet — so this polls and says so, rather than
-                    pretending to be live. */}
+                {/* The backend also pushes these transitions over
+                    GET /api/execution/:id/stream. Polling is used here because
+                    it is simple and correct; swapping in the WS stream is a
+                    contained change behind useExecutionRun. */}
                 <p className={styles.note}>
-                  Polling for updates. Live log streaming becomes available once sign-in is implemented.
+                  {run && isInFlight(run.status) ? 'Live — refreshing every second.' : 'Run finished.'}
                 </p>
               </CardBody>
             </Card>

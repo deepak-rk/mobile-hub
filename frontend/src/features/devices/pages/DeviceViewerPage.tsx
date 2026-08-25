@@ -4,13 +4,16 @@ import { Button } from '@/components/ui/Button';
 import { QueryBoundary } from '@/components/ui/states';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { icons, iconSize } from '@/lib/icons';
-import { formatRelative } from '@/lib/format';
+import { formatRelative, shortId } from '@/lib/format';
 import { useDevice } from '../api/devices.api';
+import { LockControls } from '../components/LockControls';
+import { useAuth } from '@/features/auth/useAuth';
 import styles from './DeviceViewerPage.module.css';
 
 export function DeviceViewerPage() {
   const { udid } = useParams<{ udid: string }>();
   const { data: device, isPending, error, refetch } = useDevice(udid);
+  const { user } = useAuth();
 
   return (
     <Page>
@@ -74,7 +77,18 @@ export function DeviceViewerPage() {
                   {device.lock ? (
                     <DescriptionList
                       items={[
-                        { term: 'Held by', value: <Mono>{device.lock.heldBy}</Mono> },
+                        {
+                          term: 'Held by',
+                          // A raw user id tells the reader nothing; naming the
+                          // caller's own lock is the one case we can resolve
+                          // without a user-lookup endpoint.
+                          value:
+                            user && device.lock.heldBy === user.id ? (
+                              <span>You</span>
+                            ) : (
+                              <Mono>{shortId(device.lock.heldBy)}</Mono>
+                            ),
+                        },
                         { term: 'Since', value: formatRelative(device.lock.acquiredAt) },
                         { term: 'Reason', value: device.lock.reason ?? '—' },
                       ]}
@@ -85,10 +99,9 @@ export function DeviceViewerPage() {
                       Available — no one is holding this device.
                     </p>
                   )}
-                  {/* Lock/unlock needs an authenticated session; there's no
-                      login screen yet, so the action is deliberately absent
-                      rather than present-and-broken. */}
-                  <p className={styles.note}>Sign-in is required to acquire or release a lock.</p>
+                  <div className={styles.lockActions}>
+                    <LockControls device={device} />
+                  </div>
                 </div>
               </CardBody>
             </Card>

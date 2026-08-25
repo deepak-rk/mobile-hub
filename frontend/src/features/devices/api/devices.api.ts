@@ -1,4 +1,4 @@
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/services/api';
 import type { Device } from '../types';
 
@@ -14,5 +14,27 @@ export function useDevice(udid: string | undefined) {
     queryKey: ['devices', udid],
     queryFn: async () => (await api.get<Device>(`/devices/${udid}`)).data,
     enabled: Boolean(udid),
+  });
+}
+
+/** Acquire the device lock. Fails with 409 if someone already holds it. */
+export function useLockDevice(udid: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (reason?: string) => (await api.post<Device>(`/devices/${udid}/lock`, { reason })).data,
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['devices'] });
+    },
+  });
+}
+
+/** Release the lock. The backend allows the holder, or any admin. */
+export function useUnlockDevice(udid: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async () => (await api.post<Device>(`/devices/${udid}/unlock`)).data,
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['devices'] });
+    },
   });
 }

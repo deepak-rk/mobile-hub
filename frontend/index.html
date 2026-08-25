@@ -2,8 +2,26 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <link rel="icon" type="image/svg+xml" href="/brand-mark.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="Mobile Hub — shared device lab, test execution, and live device streaming." />
+    <!-- Dark is the primary experience; tell the browser so form controls and
+         the initial paint match instead of flashing white. -->
+    <meta name="color-scheme" content="dark light" />
+    <!--
+      Inter + JetBrains Mono are the typefaces docs/ui-guidelines.md specifies.
+      Loaded from Google Fonts rather than self-hosted: it adds no dependency
+      and no build step, and `display=swap` plus the system-ui fallback in
+      tokens.css means a blocked or offline CDN degrades to a readable UI
+      rather than a broken one. Self-host (e.g. @fontsource) if this ever needs
+      to run fully air-gapped or avoid third-party requests.
+    -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;510;600&family=JetBrains+Mono:wght@400;500&display=swap"
+      rel="stylesheet"
+    />
     <title>Mobile Hub</title>
   </head>
   <body>

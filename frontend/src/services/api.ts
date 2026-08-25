@@ -7,6 +7,9 @@ import axios from 'axios';
 // every request in the docker-compose build, which passes it as a build arg.
 const API_ORIGIN = import.meta.env.VITE_API_URL ?? '';
 
+/** Single source of truth for where the JWT lives (auth writes it, this client reads it). */
+export const TOKEN_STORAGE_KEY = 'mh_token';
+
 export const api = axios.create({
   baseURL: `${API_ORIGIN}/api`,
   headers: { 'Content-Type': 'application/json' },
@@ -14,7 +17,7 @@ export const api = axios.create({
 
 // Attach JWT from localStorage on every request
 api.interceptors.request.use((config) => {
-  const token = localStorage.getItem('mh_token');
+  const token = localStorage.getItem(TOKEN_STORAGE_KEY);
   if (token) config.headers.Authorization = `Bearer ${token}`;
   return config;
 });
