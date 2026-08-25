@@ -15,7 +15,7 @@ Status legend: ⬜ not started · 🔨 built (compiles/typechecks) · ✅ tested
 - [x] Smoke-tested full flow again post-refactor: register → login → `/me` with/without token → duplicate email 409 → devices lock/unlock (which read `req.user.sub`/`req.user.role`) → `GET /api/config` (admin-only) — all still correct.
 - [x] JWT expiry: `expiresIn: '24h'`, configured via the package's `AuthRoutesOptions`.
 - [ ] The backend is CommonJS; `fastify-auth-kit` is ESM-only, so the package is loaded via dynamic `await import('fastify-auth-kit')` in `app.ts`/`auth.service.ts` rather than a static import — see `docs/LESSONS.md`. Works correctly but is a real bit of accumulated complexity; a full ESM migration of the backend (which backend/CLAUDE.md's "Intended stack" already nominally prefers) would remove the need for this. Not done this pass — out of scope for "consume the package," flagged as a real follow-up.
-- [ ] `/register` and `/login` share the global 200/min rate limit only — backend/CLAUDE.md calls for stricter limits on sensitive endpoints specifically (brute-force protection)
+- [ ] `/register` and `/login` share the global rate limit only (now `RATE_LIMIT_MAX`, default 200/min) — backend/CLAUDE.md calls for stricter limits on sensitive endpoints specifically (brute-force protection)
 - [ ] No password reset / email verification flow (fine for v1, note for later)
 - [ ] No refresh-token flow — a token just stops working after 24h, user re-logs-in. Acceptable for v1, revisit if session length becomes a complaint.
 - [ ] Zero `.test.ts` unit tests for this module specifically (it has been smoke-tested via curl, which is real coverage, but nothing runs in `npm test`) — the decorator/route *logic itself* now has real test coverage in `fastify-auth-kit`'s own repo, just not mobile-hub's specific `AuthUserStore` wiring
@@ -89,7 +89,8 @@ Status legend: ⬜ not started · 🔨 built (compiles/typechecks) · ✅ tested
 - [ ] **Not verified against real hardware** — no Android device is attached to this machine, so the `adb` adapter itself is unexercised (its logic is thin; the fan-out above is what carries the risk, and that is covered). Needs one run against a real device before anyone trusts it.
 - [ ] H264 (`adb screenrecord` + MSE) not implemented — only MJPEG. The protocol is already part of the session key and the adapter interface, so it slots in without redesign.
 - [ ] No iOS/`xcrun simctl` adapter yet (the per-host simulator cap is enforced, but nothing populates it)
-- [ ] No frontend viewer — the device page still says live view is unavailable, which is now understated: the backend can serve frames, the UI just doesn't render them yet.
+- [x] **Frontend viewer built and verified (2026-08-25)** — the device page renders the MJPEG stream (frames as blob URLs, previous URL revoked each frame), with an always-visible connection banner and a "capture restarted" notice driven by a changed `retryKey`. Verified in a browser: frames render and keep updating, the viewer detaches on navigate-away, and two viewers share one capture.
+- [x] **Fixed a real viewer leak the E2E suite caught**: the route registered the socket's `close` handler after `await addViewer(...)`, so a socket closing during that await left a phantom viewer — the capture never reached idle teardown and would have run forever. See `docs/LESSONS.md`.
 
 ### analytics — ✅ tested (2026-08-23, new)
 - [x] `analytics-aggregate.model.ts` (daily/weekly rollups, byDevice/bySuite breakdowns, unique per window+date+project+platform) — pre-existing
@@ -183,12 +184,13 @@ The long-standing "frontend doesn't typecheck" blocker is **resolved**. All thre
 
 ## Suggested next steps (in priority order)
 
-As of 2026-08-25 the frontend has auth and mutations, the design system is in place, and root `npm test` / `typecheck` / `lint` / `build` are all green. mobile-hub is pushed to GitHub, which also unblocks the E2E repo's CI. The backend is feature-complete except `streaming`.
+As of 2026-08-25 **every backend module is built and verified**, the frontend has auth, mutations, live run logs and a live device view, and root `npm test` / `typecheck` / `lint` / `build` are green. The E2E suite is 46 tests (24 API + 22 UI). mobile-hub is pushed to GitHub, so the E2E repo's CI can run.
 
-1. **UI-layer E2E tests** — an ad-hoc Playwright script drove the full 9-step auth/lock/trigger flow successfully, proving this works; it should become a permanent `tests/ui/` project in the E2E repo (already scaffolded for exactly this) rather than a throwaway script.
-2. **Live WS log streaming on the run detail page** — the backend already pushes stage/status/log events over `GET /api/execution/:id/stream`, and auth now exists to authenticate the socket, so the page can stop polling. Also the natural home for the `StreamStatusBanner` the guidelines require.
+1. **Run the streaming module against real hardware.** The `adb` capture adapter has never touched a physical device — no Android device is attached to this machine, so every streaming verification used the synthetic source. The fan-out (the part that carries the risk) is well covered; the adb invocation itself is unexercised.
+2. **H264 streaming** — only MJPEG exists. The protocol is already part of the session key and the adapter interface, so it slots in without redesign, and it's the difference between a usable and a pleasant live view.
+3. **A device agent.** Nothing currently discovers devices or sends heartbeats: hosts and devices only exist because something POSTs to `/api/hosts/heartbeat` and `/api/devices/sync`. Without an agent, mobile-hub can't be used against a real lab at all — arguably the single biggest gap left in the product.
 4. Remaining design-system components: `Toast`, `Dialog`/slide-over, filter bar with URL-synced filters, themed TanStack Table, Recharts trends (needs multi-day data first).
-5. Real `.test.ts` coverage for `hosts`/`devices`/`builds`/`execution`/`analytics` — verified via curl/E2E, but only `config` and the frontend's `lib/` have `npm test` coverage in-repo.
+5. Real `.test.ts` coverage for `hosts`/`devices`/`builds`/`execution`/`analytics` — verified via curl and E2E, but only `config`, `db`, `streaming` and the frontend's `lib/` have in-repo `npm test` coverage.
 6. Decide the automation-repo-source config (git URL, branch convention) — unblocks real `pulling`/`restoring_cache` stages in `execution` and the `install-job`/host-agent architecture in `builds`. Both are stubbed around this same missing decision.
 7. Consider the ESM migration noted under "cross-cutting backend gaps" — would remove the dynamic-`import()` workaround needed for the two extracted packages.
 
