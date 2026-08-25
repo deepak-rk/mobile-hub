@@ -10,6 +10,8 @@ export interface IStreamSession extends Document {
   retryKey: string;
   viewerIds: string[];
   viewerCount: number;
+  /** iOS simulators are capped per host (xcrun drops frames past 8). */
+  isSimulator: boolean;
   startedAt: Date;
   lastViewerJoinedAt: Date | null;
 }
@@ -28,6 +30,7 @@ const streamSessionSchema = new Schema<IStreamSession>(
     retryKey: { type: String, default: () => randomUUID() },
     viewerIds: { type: [String], default: [] },
     viewerCount: { type: Number, default: 0 },
+    isSimulator: { type: Boolean, default: false },
     startedAt: { type: Date, default: Date.now },
     lastViewerJoinedAt: { type: Date, default: null },
   },

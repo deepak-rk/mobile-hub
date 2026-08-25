@@ -6,6 +6,7 @@ import { loadEffectiveConfig } from './config/config.service';
 import { markStaleHostsOffline, HOST_STALE_CHECK_INTERVAL_MS } from './modules/hosts/hosts.service';
 import { recoverOrphanedRuns } from './modules/execution/execution.service';
 import { computeDailyAggregates, ANALYTICS_RECOMPUTE_INTERVAL_MS } from './modules/analytics/analytics.service';
+import { streamingService } from './modules/streaming/streaming.service';
 
 async function start(): Promise<void> {
   let config;
@@ -49,6 +50,9 @@ async function start(): Promise<void> {
     });
   }, HOST_STALE_CHECK_INTERVAL_MS);
 
+  // Reaps captures whose last viewer left more than the grace period ago.
+  streamingService.startIdleSweeper((err) => app.log.error(err, 'Stream idle sweep failed'));
+
   const analyticsInterval = setInterval(() => {
     computeDailyAggregates().catch((err: unknown) => {
       app.log.error(err, 'Failed to recompute daily analytics aggregates');
@@ -59,6 +63,8 @@ async function start(): Promise<void> {
     app.log.info(`${signal} received — shutting down`);
     clearInterval(staleHostInterval);
     clearInterval(analyticsInterval);
+    // No capture process may outlive the server.
+    await streamingService.shutdown();
     await app.close();
     process.exit(0);
   };

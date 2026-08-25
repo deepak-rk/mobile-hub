@@ -19,6 +19,7 @@ import { devicesRoutes } from './modules/devices/devices.routes';
 import { configRoutes } from './modules/config/config.routes';
 import { buildsRoutes } from './modules/builds/builds.routes';
 import { executionRoutes } from './modules/execution/execution.routes';
+import { streamingRoutes } from './modules/streaming/streaming.routes';
 import { analyticsRoutes } from './modules/analytics/analytics.routes';
 
 export async function buildApp(config: EffectiveConfig): Promise<FastifyInstance> {
@@ -60,6 +61,8 @@ export async function buildApp(config: EffectiveConfig): Promise<FastifyInstance
   void app.register(configRoutes, { prefix: '/api/config' });
   void app.register(buildsRoutes, { prefix: '/api/builds' });
   void app.register(executionRoutes, { prefix: '/api/execution' });
+  // Streaming hangs off the device resource it belongs to.
+  void app.register(streamingRoutes, { prefix: '/api/devices' });
   void app.register(analyticsRoutes, { prefix: '/api/analytics' });
 
   return app;

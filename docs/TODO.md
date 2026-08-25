@@ -76,11 +76,20 @@ Status legend: ⬜ not started · 🔨 built (compiles/typechecks) · ✅ tested
 - [ ] No `.test.ts` unit tests yet (smoke-tested via curl + a real WS client + direct MongoDB state manipulation for the orphan-recovery path, but nothing runs under `npm test`)
 - [ ] No log tail/streaming endpoint for *historical* (completed) runs beyond re-reading `logPath` directly off disk — fine for now, no route exposes it yet
 
-### streaming — ⬜ not started
-- [x] `stream-session.model.ts` **already encodes the shared-capture/fan-out decision** — one doc per `(machineId, deviceUdid, protocol)` with `viewerIds`/`viewerCount`, not one-per-viewer. Matches the root CLAUDE.md "decide multi-viewer fan-out up front" requirement — good, don't redesign this, just build against it.
-- [ ] Capture-process spawn/registry (`adb screenrecord` / `xcrun simctl`) keyed by device UID
-- [ ] WS routes for viewer join/leave, incrementing/decrementing `viewerCount`
-- [ ] `streaming.service.ts`
+### streaming — ✅ tested (2026-08-25, new)
+- [x] `stream-session.model.ts` — one doc per `(machineId, deviceUdid, protocol)` with `viewerIds`/`viewerCount`, plus `isSimulator` for the per-host iOS cap
+- [x] `capture-source.ts` — `CaptureSource`/`CaptureHandle` adapter interface, same shape as `BuildProvider`: adding scrcpy/WDA/a cloud farm means writing an adapter, not touching the service
+- [x] `sources/adb-mjpeg.source.ts` — real Android capture via a paced `adb exec-out screencap -p` loop. Each grab is scheduled only after the previous one finishes, so a slow device throttles itself instead of piling up overlapping adb processes.
+- [x] `sources/synthetic.source.ts` — generates frames with no device attached. **This is what makes the module verifiable**: the hard, novel part is the fan-out, not the adb invocation, and the fan-out is fully testable without hardware. Opt-in via `STREAM_CAPTURE_SOURCE=synthetic` only — a misconfigured deployment fails loudly against a real device rather than quietly serving fake frames.
+- [x] `streaming.service.ts` — **one capture per (host, device, protocol) regardless of viewer count**, which is the invariant the whole module exists for (every comparable tool spawns one per viewer and collapses at three viewers on a device). Viewer registry with fan-out, viewer-count bookkeeping, idle teardown after a 10-minute grace period (so a page reload doesn't restart the capture), `retryKey` rotation on restart so a client can distinguish "stream restarted, resync" from "socket blipped", the 8-per-host iOS simulator cap, and shutdown that leaves no capture running.
+- [x] `streaming.routes.ts` — `GET /api/devices/:udid/stream/status`, `POST /api/devices/:udid/stream/stop` (operator/admin), and the viewer WebSocket `GET /api/devices/:udid/stream?protocol=&token=`. A socket never starts its own capture; it joins the existing one. Offline devices and missing/invalid tokens are refused with distinct close codes.
+- [x] Idle sweeper started in `server.ts`; `streamingService.shutdown()` on SIGTERM/SIGINT so no capture outlives the process.
+- [x] **10 unit tests** covering the fan-out invariant (N viewers → 1 capture, same frame to all, detach doesn't disturb survivors), idle teardown (survives the grace period, tears down after it, cancelled by a rejoin), and lifecycle.
+- [x] **Verified live over real WebSockets**: two viewers on one device → exactly one session with `viewerCount: 2`; closing one doesn't disturb the other; count drops to 1; an unauthenticated socket is closed 4001 with zero frames leaked; operator stop tears the capture down.
+- [ ] **Not verified against real hardware** — no Android device is attached to this machine, so the `adb` adapter itself is unexercised (its logic is thin; the fan-out above is what carries the risk, and that is covered). Needs one run against a real device before anyone trusts it.
+- [ ] H264 (`adb screenrecord` + MSE) not implemented — only MJPEG. The protocol is already part of the session key and the adapter interface, so it slots in without redesign.
+- [ ] No iOS/`xcrun simctl` adapter yet (the per-host simulator cap is enforced, but nothing populates it)
+- [ ] No frontend viewer — the device page still says live view is unavailable, which is now understated: the backend can serve frames, the UI just doesn't render them yet.
 
 ### analytics — ✅ tested (2026-08-23, new)
 - [x] `analytics-aggregate.model.ts` (daily/weekly rollups, byDevice/bySuite breakdowns, unique per window+date+project+platform) — pre-existing
@@ -178,7 +187,6 @@ As of 2026-08-25 the frontend has auth and mutations, the design system is in pl
 
 1. **UI-layer E2E tests** — an ad-hoc Playwright script drove the full 9-step auth/lock/trigger flow successfully, proving this works; it should become a permanent `tests/ui/` project in the E2E repo (already scaffolded for exactly this) rather than a throwaway script.
 2. **Live WS log streaming on the run detail page** — the backend already pushes stage/status/log events over `GET /api/execution/:id/stream`, and auth now exists to authenticate the socket, so the page can stop polling. Also the natural home for the `StreamStatusBanner` the guidelines require.
-3. `streaming` module — the last unbuilt backend module, and the only one still needing real design work (capture-process spawn/registry, fan-out).
 4. Remaining design-system components: `Toast`, `Dialog`/slide-over, filter bar with URL-synced filters, themed TanStack Table, Recharts trends (needs multi-day data first).
 5. Real `.test.ts` coverage for `hosts`/`devices`/`builds`/`execution`/`analytics` — verified via curl/E2E, but only `config` and the frontend's `lib/` have `npm test` coverage in-repo.
 6. Decide the automation-repo-source config (git URL, branch convention) — unblocks real `pulling`/`restoring_cache` stages in `execution` and the `install-job`/host-agent architecture in `builds`. Both are stubbed around this same missing decision.
