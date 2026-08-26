@@ -39,6 +39,10 @@ State assumptions explicitly before implementing anything non-trivial. If a requ
 
 Ship the minimum code that solves the stated problem. No speculative abstractions, no config knobs for hypothetical future needs, no "while I'm here" refactors bundled into unrelated changes. Three similar lines beats a premature helper.
 
+## Cost & context discipline
+
+Global policy lives in `~/.claude/CLAUDE.md` + `~/.claude/COST_OPTIMIZATION.md` and already applies here — not repeated. One thing specific to this repo: its test/E2E output is genuinely verbose (Vitest, Playwright, Mongo/server boot logs) — grep/tail it or hand a full E2E run to a subagent rather than letting the raw log sit in context, and reach for a targeted spec over the full suite while debugging one failure.
+
 ## Config-driven, organisation-aware
 
 Mobile Hub adapts to each organisation's conventions rather than forcing its own. Key principle: **the platform is configurable, not prescriptive.**
