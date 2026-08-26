@@ -2,15 +2,16 @@ import { Link } from 'react-router-dom';
 import {
   Card,
   CardBody,
+  EmptyState,
   Grid,
   Meta,
   MetaSep,
   Mono,
   Page,
   PageHeader,
+  QueryBoundary,
   Summary,
-} from '@/components/ui/layout';
-import { QueryBoundary, EmptyState } from '@/components/ui/states';
+} from 'react-design-kit';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { icons, iconSize } from '@/lib/icons';
 import { formatRelative, shortId } from 'ts-format-utils';

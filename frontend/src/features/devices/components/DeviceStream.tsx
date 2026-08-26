@@ -1,5 +1,5 @@
 import { Link, useLocation } from 'react-router-dom';
-import { Button } from '@/components/ui/Button';
+import { Button } from 'react-design-kit';
 import { icons, iconSize } from '@/lib/icons';
 import { useAuth } from '@/features/auth/useAuth';
 import { useDeviceStream, type StreamState } from '../api/useDeviceStream';

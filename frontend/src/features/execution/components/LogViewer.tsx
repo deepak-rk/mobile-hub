@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { Button } from '@/components/ui/Button';
+import { Button } from 'react-design-kit';
 import { icons, iconSize } from '@/lib/icons';
 import type { StreamState } from '../api/useRunStream';
 import styles from './LogViewer.module.css';

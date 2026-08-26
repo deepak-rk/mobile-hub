@@ -1,7 +1,17 @@
 import { Link } from 'react-router-dom';
-import { Card, CardBody, List, Meta, MetaSep, Mono, Page, PageHeader } from '@/components/ui/layout';
-import { Button } from '@/components/ui/Button';
-import { QueryBoundary, EmptyState } from '@/components/ui/states';
+import {
+  Button,
+  Card,
+  CardBody,
+  EmptyState,
+  List,
+  Meta,
+  MetaSep,
+  Mono,
+  Page,
+  PageHeader,
+  QueryBoundary,
+} from 'react-design-kit';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { icons, iconSize } from '@/lib/icons';
 import { formatDurationBetween, formatRelative } from 'ts-format-utils';

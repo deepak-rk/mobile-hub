@@ -1,8 +1,7 @@
 import { Link, NavLink, Outlet, useLocation } from 'react-router-dom';
 import { BrandLogo } from '@/components/ui/BrandLogo';
-import { Button } from '@/components/ui/Button';
+import { Button, useTheme } from 'react-design-kit';
 import { icons, iconSize } from '@/lib/icons';
-import { useTheme } from '@/lib/theme';
 import { useAuth } from '@/features/auth/useAuth';
 import styles from './AppShell.module.css';
 
@@ -44,7 +43,10 @@ function UserMenu() {
 }
 
 export function AppShell() {
-  const { theme, toggle } = useTheme();
+  // The storage key is passed explicitly rather than taking the kit's generic
+  // default: `mh_theme` is what mobile-hub has always written, so anyone with
+  // a saved preference keeps it.
+  const { theme, toggle } = useTheme({ storageKey: 'mh_theme', defaultTheme: 'dark' });
   const ThemeIcon = theme === 'dark' ? icons.themeLight : icons.themeDark;
 
   return (

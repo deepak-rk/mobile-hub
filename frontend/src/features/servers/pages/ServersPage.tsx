@@ -1,5 +1,16 @@
-import { Card, CardBody, Grid, Meta, MetaSep, Mono, Page, PageHeader, Summary } from '@/components/ui/layout';
-import { QueryBoundary, EmptyState } from '@/components/ui/states';
+import {
+  Card,
+  CardBody,
+  EmptyState,
+  Grid,
+  Meta,
+  MetaSep,
+  Mono,
+  Page,
+  PageHeader,
+  QueryBoundary,
+  Summary,
+} from 'react-design-kit';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { icons, iconSize } from '@/lib/icons';
 import { formatRelative } from 'ts-format-utils';

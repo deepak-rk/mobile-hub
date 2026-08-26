@@ -1,9 +1,7 @@
 import { FormEvent, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
-import { Card, CardBody, Page, PageHeader } from '@/components/ui/layout';
-import { Button } from '@/components/ui/Button';
-import { Field } from '@/components/ui/Field';
-import { EmptyState, type ApiError } from '@/components/ui/states';
+import { Button, Card, CardBody, EmptyState, Field, Page, PageHeader } from 'react-design-kit';
+import type { ApiError } from '@/services/api';
 import { icons, iconSize } from '@/lib/icons';
 import { useAuth } from '@/features/auth/useAuth';
 import { useDevices } from '@/features/devices/api/devices.api';

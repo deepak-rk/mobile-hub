@@ -1,5 +1,13 @@
-import { Card, CardBody, Mono, Page, PageHeader, ProgressBar } from '@/components/ui/layout';
-import { QueryBoundary, EmptyState } from '@/components/ui/states';
+import {
+  Card,
+  CardBody,
+  EmptyState,
+  Mono,
+  Page,
+  PageHeader,
+  ProgressBar,
+  QueryBoundary,
+} from 'react-design-kit';
 import { icons } from '@/lib/icons';
 import { formatPercent, formatRelative } from 'ts-format-utils';
 import { useAnalytics } from '../api/analytics.api';

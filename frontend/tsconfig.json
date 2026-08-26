@@ -13,6 +13,13 @@
     "resolveJsonModule": true,
     "isolatedModules": true,
     "noEmit": true,
+    // Errors *inside* .d.ts files only — our own source is still fully checked.
+    // Needed because a `file:`-linked package (used when developing one of the
+    // extracted packages locally) is a symlink, so its own devDependency copy
+    // of @types/react stays visible alongside the hoisted one and TypeScript
+    // reports every React global as a duplicate identifier. Both copies are
+    // the same version; the clash is resolution, not a real type conflict.
+    "skipLibCheck": true,
     "baseUrl": ".",
     "paths": {
       "@/*": ["src/*"]

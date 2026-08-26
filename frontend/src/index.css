@@ -1,4 +1,6 @@
 @import './styles/tokens.css';
+@import 'react-design-kit/styles.css';
+@import './styles/design-kit-tokens.css';
 
 *,
 *::before,

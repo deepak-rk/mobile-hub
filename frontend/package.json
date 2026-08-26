@@ -20,6 +20,7 @@
     "axios": "^1.7.2",
     "lucide-react": "^0.395.0",
     "react": "^18.3.1",
+    "react-design-kit": "github:deepak-rk/react-design-kit",
     "react-dom": "^18.3.1",
     "react-hook-form": "^7.51.5",
     "react-router-dom": "^6.23.1",

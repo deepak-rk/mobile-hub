@@ -1,0 +1,100 @@
+/**
+ * Binds react-design-kit's `--rdk-*` tokens to mobile-hub's own tokens.
+ *
+ * The kit ships a complete `--rdk-*` palette of its own (it has to — it must
+ * render standalone). But mobile-hub already has `styles/tokens.css`, and
+ * `docs/ui-guidelines.md` names that the single source of truth for colour,
+ * type, spacing and motion. Two independent palettes would drift the moment
+ * anyone changed the accent in one of them.
+ *
+ * So the kit's stylesheet is imported first (every `--rdk-*` token therefore
+ * has a definition, and nothing can go unstyled if a token is missed here),
+ * and then the ones that carry meaning are re-pointed at mobile-hub's.
+ * Changing `--accent` in tokens.css now restyles the kit's components too.
+ *
+ * Theming needs no extra work: mobile-hub's tokens already respond to
+ * `data-theme` and `prefers-color-scheme`, and these aliases follow whatever
+ * those resolve to. The selectors below deliberately out-specify the kit's own
+ * `[data-theme='light']` block so the alias wins in every theme rather than
+ * only in dark.
+ *
+ * The kit names statuses by *meaning* (success/warning/danger/info/neutral)
+ * where mobile-hub names them by *domain* (passed/smoke/failed/running/
+ * cancelled) — that was a deliberate generalisation when the kit was
+ * extracted, so the mapping happens here rather than in either token file.
+ */
+
+:root,
+:root[data-theme='dark'],
+:root[data-theme='light'] {
+  /* Canvas & surfaces */
+  --rdk-bg-canvas: var(--bg-canvas);
+  --rdk-bg-panel: var(--bg-panel);
+  --rdk-bg-elevated: var(--bg-elevated);
+  --rdk-bg-hover: var(--bg-hover);
+  --rdk-bg-active: var(--bg-active);
+
+  /* Borders */
+  --rdk-border-subtle: var(--border-subtle);
+  --rdk-border-default: var(--border-default);
+  --rdk-border-strong: var(--border-strong);
+
+  /* Text */
+  --rdk-text-primary: var(--text-primary);
+  --rdk-text-secondary: var(--text-secondary);
+  --rdk-text-tertiary: var(--text-tertiary);
+  --rdk-text-disabled: var(--text-disabled);
+
+  /* Accent */
+  --rdk-accent: var(--accent);
+  --rdk-accent-hover: var(--accent-hover);
+  --rdk-accent-muted: var(--accent-muted);
+  --rdk-accent-contrast: var(--accent-contrast);
+
+  /* Status — kit's semantic names onto mobile-hub's domain names */
+  --rdk-status-success: var(--status-passed);
+  --rdk-status-warning: var(--status-smoke);
+  --rdk-status-danger: var(--status-failed);
+  --rdk-status-info: var(--status-running);
+  --rdk-status-neutral: var(--status-cancelled);
+
+  /* Elevation */
+  --rdk-shadow-panel: var(--shadow-panel);
+
+  /* Typography */
+  --rdk-font-sans: var(--font-sans);
+  --rdk-font-mono: var(--font-mono);
+  --rdk-weight-body: var(--weight-body);
+  --rdk-weight-ui: var(--weight-ui);
+  --rdk-weight-heading: var(--weight-heading);
+  --rdk-text-xs: var(--text-xs);
+  --rdk-text-sm: var(--text-sm);
+  --rdk-text-base: var(--text-base);
+  --rdk-text-md: var(--text-md);
+  --rdk-text-lg: var(--text-lg);
+  --rdk-text-xl: var(--text-xl);
+  --rdk-text-2xl: var(--text-2xl);
+
+  /* Spacing */
+  --rdk-space-1: var(--space-1);
+  --rdk-space-2: var(--space-2);
+  --rdk-space-3: var(--space-3);
+  --rdk-space-4: var(--space-4);
+  --rdk-space-5: var(--space-5);
+  --rdk-space-6: var(--space-6);
+  --rdk-space-8: var(--space-8);
+  --rdk-space-10: var(--space-10);
+  --rdk-space-12: var(--space-12);
+  --rdk-space-16: var(--space-16);
+
+  /* Radius */
+  --rdk-radius-control: var(--radius-control);
+  --rdk-radius-card: var(--radius-card);
+  --rdk-radius-modal: var(--radius-modal);
+  --rdk-radius-pill: var(--radius-pill);
+
+  /* Motion */
+  --rdk-duration-fast: var(--duration-fast);
+  --rdk-duration-base: var(--duration-base);
+  --rdk-ease-out: var(--ease-out);
+}

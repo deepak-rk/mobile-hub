@@ -10,6 +10,20 @@ const API_ORIGIN = import.meta.env.VITE_API_URL ?? '';
 /** Single source of truth for where the JWT lives (auth writes it, this client reads it). */
 export const TOKEN_STORAGE_KEY = 'mh_token';
 
+/**
+ * The `{ code, message }` shape the response interceptor below normalises every
+ * failure into — including network errors, which have no response at all.
+ *
+ * Lives here rather than with the UI components because it describes this
+ * client's contract, not how an error is rendered. (It previously sat in
+ * `components/ui/states.tsx`, which moved out to the `react-design-kit`
+ * package; the package is deliberately unopinionated about error envelopes.)
+ */
+export interface ApiError {
+  code?: string;
+  message?: string;
+}
+
 export const api = axios.create({
   baseURL: `${API_ORIGIN}/api`,
   headers: { 'Content-Type': 'application/json' },

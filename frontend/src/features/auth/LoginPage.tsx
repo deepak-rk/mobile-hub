@@ -1,9 +1,8 @@
 import { FormEvent, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { Button } from '@/components/ui/Button';
-import { Field } from '@/components/ui/Field';
+import { Button, Field } from 'react-design-kit';
+import type { ApiError } from '@/services/api';
 import { BrandLogo } from '@/components/ui/BrandLogo';
-import type { ApiError } from '@/components/ui/states';
 import { useAuth } from './useAuth';
 import styles from './LoginPage.module.css';
 

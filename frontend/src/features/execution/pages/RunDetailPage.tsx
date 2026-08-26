@@ -1,7 +1,5 @@
 import { Link, useParams } from 'react-router-dom';
-import { Card, CardBody, DescriptionList, Mono, Page, PageHeader } from '@/components/ui/layout';
-import { Button } from '@/components/ui/Button';
-import { QueryBoundary } from '@/components/ui/states';
+import { Button, Card, CardBody, DescriptionList, Mono, Page, PageHeader, QueryBoundary } from 'react-design-kit';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { icons, iconSize } from '@/lib/icons';
 import { formatDurationBetween, formatRelative } from 'ts-format-utils';

@@ -1,6 +1,6 @@
 import { Link, useLocation } from 'react-router-dom';
-import { Button } from '@/components/ui/Button';
-import type { ApiError } from '@/components/ui/states';
+import { Button } from 'react-design-kit';
+import type { ApiError } from '@/services/api';
 import { icons, iconSize } from '@/lib/icons';
 import { useAuth } from '@/features/auth/useAuth';
 import { useLockDevice, useUnlockDevice } from '../api/devices.api';
