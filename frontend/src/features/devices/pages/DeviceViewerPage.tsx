@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/Button';
 import { QueryBoundary } from '@/components/ui/states';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { icons, iconSize } from '@/lib/icons';
-import { formatRelative, shortId } from '@/lib/format';
+import { formatRelative, shortId } from 'ts-format-utils';
 import { useDevice } from '../api/devices.api';
 import { LockControls } from '../components/LockControls';
 import { DeviceStream, StreamStopButton } from '../components/DeviceStream';

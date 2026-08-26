@@ -13,7 +13,7 @@ import {
 import { QueryBoundary, EmptyState } from '@/components/ui/states';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { icons, iconSize } from '@/lib/icons';
-import { formatRelative, shortId } from '@/lib/format';
+import { formatRelative, shortId } from 'ts-format-utils';
 import { useDevices } from '../api/devices.api';
 import type { Device } from '../types';
 import styles from './DevicesPage.module.css';

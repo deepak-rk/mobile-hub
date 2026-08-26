@@ -1,7 +1,7 @@
 import { Card, CardBody, Mono, Page, PageHeader, ProgressBar } from '@/components/ui/layout';
 import { QueryBoundary, EmptyState } from '@/components/ui/states';
 import { icons } from '@/lib/icons';
-import { formatPercent, formatRelative } from '@/lib/format';
+import { formatPercent, formatRelative } from 'ts-format-utils';
 import { useAnalytics } from '../api/analytics.api';
 import type { AnalyticsAggregate } from '../types';
 import styles from './AnalyticsPage.module.css';

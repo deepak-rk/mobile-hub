@@ -2,7 +2,7 @@ import { Card, CardBody, Grid, Meta, MetaSep, Mono, Page, PageHeader, Summary } 
 import { QueryBoundary, EmptyState } from '@/components/ui/states';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { icons, iconSize } from '@/lib/icons';
-import { formatRelative } from '@/lib/format';
+import { formatRelative } from 'ts-format-utils';
 import { useHosts } from '../api/hosts.api';
 import styles from './ServersPage.module.css';
 

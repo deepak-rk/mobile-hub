@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/Button';
 import { QueryBoundary } from '@/components/ui/states';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { icons, iconSize } from '@/lib/icons';
-import { formatDuration, formatRelative } from '@/lib/format';
+import { formatDurationBetween, formatRelative } from 'ts-format-utils';
 import { isInFlight, useCancelRun, useExecutionRun } from '../api/execution.api';
 import { useRunStream } from '../api/useRunStream';
 import { LogViewer } from '../components/LogViewer';
@@ -102,7 +102,7 @@ export function RunDetailPage() {
                           <span className={styles.stageName}>{STAGE_LABELS[stage.name]}</span>
                           <span className={styles.stageMeta}>
                             {stage.status}
-                            {stage.startedAt ? ` · ${formatDuration(stage.startedAt, stage.endedAt)}` : ''}
+                            {stage.startedAt ? ` · ${formatDurationBetween(stage.startedAt, stage.endedAt)}` : ''}
                           </span>
                           {stage.error ? <span className={styles.stageError}>{stage.error}</span> : null}
                         </span>
@@ -134,7 +134,7 @@ export function RunDetailPage() {
                       ),
                     },
                     { term: 'Host', value: <Mono>{run.machineId}</Mono> },
-                    { term: 'Duration', value: formatDuration(run.startedAt, run.endedAt) },
+                    { term: 'Duration', value: formatDurationBetween(run.startedAt, run.endedAt) },
                     { term: 'Started', value: formatRelative(run.startedAt) },
                     { term: 'Ended', value: run.endedAt ? formatRelative(run.endedAt) : '—' },
                   ]}

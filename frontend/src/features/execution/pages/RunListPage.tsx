@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/Button';
 import { QueryBoundary, EmptyState } from '@/components/ui/states';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { icons, iconSize } from '@/lib/icons';
-import { formatDuration, formatRelative } from '@/lib/format';
+import { formatDurationBetween, formatRelative } from 'ts-format-utils';
 import { useExecutionRuns } from '../api/execution.api';
 import styles from './RunListPage.module.css';
 
@@ -57,7 +57,7 @@ export function RunListPage() {
                     <MetaSep />
                     <Mono>{run.deviceUdid}</Mono>
                     <MetaSep />
-                    <span>{formatDuration(run.startedAt, run.endedAt)}</span>
+                    <span>{formatDurationBetween(run.startedAt, run.endedAt)}</span>
                     <MetaSep />
                     <span>{formatRelative(run.createdAt)}</span>
                   </Meta>

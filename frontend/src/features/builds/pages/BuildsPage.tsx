@@ -2,7 +2,7 @@ import { Card, CardBody, List, Meta, MetaSep, Mono, Page, PageHeader, ProgressBa
 import { QueryBoundary, EmptyState } from '@/components/ui/states';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { icons } from '@/lib/icons';
-import { formatBytes, formatRelative, shortId } from '@/lib/format';
+import { formatBytes, formatRelative, shortId } from 'ts-format-utils';
 import { useBuilds } from '../api/builds.api';
 import type { Build } from '../types';
 import styles from './BuildsPage.module.css';

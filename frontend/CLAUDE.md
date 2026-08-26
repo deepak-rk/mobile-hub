@@ -70,7 +70,7 @@ npm run dev         # vite — http://localhost:5173, proxies /api and /ws to :3
 npm run build        # tsc && vite build
 npm run lint          # eslint src --ext .ts,.tsx
 npm run typecheck     # tsc --noEmit
-npm test               # vitest run — 12 tests over lib/format and lib/status
+npm test               # vitest run — 3 tests over lib/status (lib/format was extracted to ts-format-utils, 2026-08-26)
 ```
 
 `npm run dev` proxies `/api` to the backend on :3000, so run the backend too or every list shows its error state. Because the proxy handles the prefix, `VITE_API_URL` should be left unset locally — see the `services/api.ts` note about the prefix always being appended.
