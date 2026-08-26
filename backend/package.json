@@ -18,6 +18,7 @@
     "argon2": "^0.41.1",
     "fastify-auth-kit": "github:deepak-rk/fastify-auth-kit",
     "layered-config-ts": "github:deepak-rk/layered-config-ts",
+    "mongoose-index-guard": "github:deepak-rk/mongoose-index-guard",
     "@fastify/cors": "^11.1.0",
     "@fastify/helmet": "^13.1.1",
     "@fastify/jwt": "^10.2.2",

@@ -1,6 +1,6 @@
 import { buildApp } from './app';
 import { connectDB } from './db/connection';
-import { ensureIndexes } from './db/ensure-indexes';
+import mongoose from 'mongoose';
 import { env } from './config/env';
 import { loadEffectiveConfig } from './config/config.service';
 import { markStaleHostsOffline, HOST_STALE_CHECK_INTERVAL_MS } from './modules/hosts/hosts.service';
@@ -50,9 +50,17 @@ async function start(): Promise<void> {
   }
 
   // Fail fast on a broken index rather than serving traffic without the
-  // uniqueness guarantees the app assumes (see db/ensure-indexes.ts).
+  // uniqueness guarantees the app assumes. Real incident: a dropped DB lost
+  // its unique index, duplicate registrations silently returned 201, and the
+  // next restart's index rebuild failed on those duplicates with nothing in
+  // the logs (see docs/LESSONS.md, 2026-08-23). ensureIndexes throws by
+  // default rather than swallowing a build failure the way Mongoose's own
+  // background index build does.
   try {
-    await ensureIndexes();
+    // ESM-only package, dynamically imported — same workaround as
+    // layered-config-ts and fastify-auth-kit (this backend is CommonJS).
+    const { ensureIndexes } = await import('mongoose-index-guard');
+    await ensureIndexes(mongoose);
   } catch (err) {
     app.log.error(err instanceof Error ? err.message : err, 'Index build failed');
     process.exit(1);
