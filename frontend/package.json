@@ -26,6 +26,7 @@
     "react-router-dom": "^6.23.1",
     "recharts": "^2.12.7",
     "ts-format-utils": "github:deepak-rk/ts-format-utils",
+    "use-resilient-websocket": "github:deepak-rk/use-resilient-websocket",
     "zod": "^3.23.8",
     "zustand": "^4.5.2"
   },

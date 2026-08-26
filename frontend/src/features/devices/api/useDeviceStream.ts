@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
+import { buildSocketUrl, useObjectUrl, useResilientWebSocket } from 'use-resilient-websocket';
 import { TOKEN_STORAGE_KEY } from '@/services/api';
 
 export type StreamState =
@@ -17,111 +18,85 @@ interface JoinAck {
   protocol: string;
 }
 
-const RECONNECT_DELAY_MS = 2000;
-
-function socketUrl(udid: string, token: string): string {
-  const origin = import.meta.env.VITE_API_URL ?? window.location.origin;
-  const base = origin.replace(/^http/, 'ws');
-  return `${base}/api/devices/${udid}/stream?protocol=mjpeg&token=${encodeURIComponent(token)}`;
+function readToken(): string | null {
+  try {
+    return localStorage.getItem(TOKEN_STORAGE_KEY);
+  } catch {
+    return null;
+  }
 }
 
 /**
  * Subscribes to a device's MJPEG stream. Frames arrive as binary WS messages
- * and are turned into object URLs for an <img>.
+ * and are turned into object URLs for an <img> via `useObjectUrl` (revokes
+ * the previous URL on every swap, so a long session doesn't leak one per
+ * frame).
  *
  * `retryKey` changes when the backend restarted the capture rather than the
  * socket merely blipping, which the UI surfaces so a viewer knows the picture
- * may have jumped rather than silently showing stale-looking video.
+ * may have jumped rather than silently showing stale-looking video. That
+ * detection is domain state read off the join ack, so it stays here rather
+ * than in the transport-level package.
+ *
+ * `liveWhen: 'first-message'` matches the original behaviour precisely: the
+ * transport can be open before the server has actually admitted this viewer
+ * (the join ack is the real confirmation), so "live" waits for that first
+ * message rather than the socket handshake alone.
  */
 export function useDeviceStream(udid: string | undefined, enabled: boolean) {
-  const [state, setState] = useState<StreamState>('idle');
-  const [frameUrl, setFrameUrl] = useState<string | null>(null);
   const [restarted, setRestarted] = useState(false);
-
   const retryKeyRef = useRef<string | null>(null);
-  const frameUrlRef = useRef<string | null>(null);
-  const socketRef = useRef<WebSocket | null>(null);
-  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const frame = useObjectUrl();
 
-  useEffect(() => {
-    if (!udid || !enabled) {
-      setState('idle');
-      return;
-    }
+  const token = enabled && udid ? readToken() : null;
+  const url =
+    token && udid
+      ? buildSocketUrl(`/api/devices/${udid}/stream`, {
+          origin: import.meta.env.VITE_API_URL || undefined,
+          query: { protocol: 'mjpeg', token },
+        })
+      : null;
 
-    let token: string | null = null;
-    try {
-      token = localStorage.getItem(TOKEN_STORAGE_KEY);
-    } catch {
-      token = null;
-    }
-    if (!token) {
-      setState('unauthenticated');
-      return;
-    }
-
-    let disposed = false;
-    let attempted = false;
-
-    const revoke = () => {
-      if (frameUrlRef.current) URL.revokeObjectURL(frameUrlRef.current);
-      frameUrlRef.current = null;
-    };
-
-    const connect = () => {
-      if (disposed) return;
-      setState(attempted ? 'reconnecting' : 'connecting');
-      attempted = true;
-
-      const ws = new WebSocket(socketUrl(udid, token));
-      ws.binaryType = 'blob';
-      socketRef.current = ws;
-
-      ws.onmessage = (ev: MessageEvent<Blob | string>) => {
-        if (typeof ev.data === 'string') {
-          try {
-            const msg = JSON.parse(ev.data) as JoinAck;
-            if (msg.type === 'joined') {
-              if (retryKeyRef.current && retryKeyRef.current !== msg.retryKey) setRestarted(true);
-              retryKeyRef.current = msg.retryKey;
-              setState('live');
-            }
-          } catch {
-            // not a control message we understand; ignore
+  const handleMessage = useCallback(
+    (event: MessageEvent<Blob | string>) => {
+      if (typeof event.data === 'string') {
+        try {
+          const msg = JSON.parse(event.data) as JoinAck;
+          if (msg.type === 'joined') {
+            if (retryKeyRef.current && retryKeyRef.current !== msg.retryKey) setRestarted(true);
+            retryKeyRef.current = msg.retryKey;
           }
-          return;
+        } catch {
+          // not a control message we understand; ignore
         }
-        // Swap the object URL per frame, revoking the previous one so a long
-        // session doesn't leak a URL for every frame received.
-        const url = URL.createObjectURL(ev.data);
-        revoke();
-        frameUrlRef.current = url;
-        setFrameUrl(url);
-        setState('live');
-      };
+        return;
+      }
+      frame.setFromBlob(event.data);
+    },
+    [frame],
+  );
 
-      ws.onclose = (ev) => {
-        if (disposed) return;
-        socketRef.current = null;
-        // Distinct codes the backend uses; retrying can't fix any of them.
-        if (ev.code === 4001) return setState('unauthenticated');
-        if (ev.code === 4009) return setState('offline');
-        if (ev.code === 4013 || ev.code === 4004 || ev.code === 4000) return setState('rejected');
-        setState('reconnecting');
-        timerRef.current = setTimeout(connect, RECONNECT_DELAY_MS);
-      };
-    };
+  // Every code the backend uses to say "don't bother retrying" — see
+  // streaming.routes.ts. 1011 (internal error starting the capture) is
+  // deliberately absent: that one is worth retrying.
+  const { state: wsState, closeCode } = useResilientWebSocket({
+    url,
+    binaryType: 'blob',
+    liveWhen: 'first-message',
+    onMessage: handleMessage,
+    nonRetryableCodes: [4000, 4001, 4004, 4009, 4013],
+  });
 
-    connect();
+  const state: StreamState = useMemo(() => {
+    if (!enabled || !udid) return 'idle';
+    if (!token) return 'unauthenticated';
+    if (wsState === 'terminated') {
+      if (closeCode === 4001) return 'unauthenticated';
+      if (closeCode === 4009) return 'offline';
+      return 'rejected'; // 4000 / 4004 / 4013, or an unexpected non-retryable close
+    }
+    return wsState;
+  }, [enabled, udid, token, wsState, closeCode]);
 
-    return () => {
-      disposed = true;
-      if (timerRef.current) clearTimeout(timerRef.current);
-      socketRef.current?.close();
-      socketRef.current = null;
-      revoke();
-    };
-  }, [udid, enabled]);
-
-  return { state, frameUrl, restarted, dismissRestarted: () => setRestarted(false) };
+  return { state, frameUrl: frame.url, restarted, dismissRestarted: () => setRestarted(false) };
 }

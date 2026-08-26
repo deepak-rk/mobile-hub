@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
+import { buildSocketUrl, useResilientWebSocket } from 'use-resilient-websocket';
 import { TOKEN_STORAGE_KEY } from '@/services/api';
 
 /** Mirrors the backend's ExecutionEvent union (execution.events.ts). */
@@ -12,14 +13,13 @@ export type StreamState = 'idle' | 'connecting' | 'live' | 'reconnecting' | 'clo
 
 /** Cap retained log lines — a chatty run must not grow the DOM without bound. */
 const MAX_LOG_LINES = 2000;
-const RECONNECT_DELAY_MS = 2000;
 
-function socketUrl(runId: string, token: string): string {
-  const origin = import.meta.env.VITE_API_URL ?? window.location.origin;
-  const base = origin.replace(/^http/, 'ws');
-  // Auth rides in the query string: a browser WebSocket handshake can't
-  // carry an Authorization header.
-  return `${base}/api/execution/${runId}/stream?token=${encodeURIComponent(token)}`;
+function readToken(): string | null {
+  try {
+    return localStorage.getItem(TOKEN_STORAGE_KEY);
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -29,91 +29,60 @@ function socketUrl(runId: string, token: string): string {
  *
  * Connection state is returned rather than hidden — guidelines §1 forbids
  * silently dropping a real-time connection.
+ *
+ * Reconnect/backoff/cleanup lives in `use-resilient-websocket`, which has no
+ * opinion on auth — so the token pre-flight (no point opening a socket with
+ * nothing to authenticate it) stays here, same as the JSON event parsing and
+ * the query-invalidation side effect, both of which are this app's business,
+ * not the transport's.
  */
 export function useRunStream(runId: string | undefined, enabled = true) {
-  const [state, setState] = useState<StreamState>('idle');
-  const [logLines, setLogLines] = useState<string[]>([]);
   const queryClient = useQueryClient();
-  const socketRef = useRef<WebSocket | null>(null);
-  const retryRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [logLines, setLogLines] = useState<string[]>([]);
 
-  useEffect(() => {
-    if (!runId || !enabled) {
-      setState('idle');
-      return;
-    }
+  const token = enabled && runId ? readToken() : null;
+  const url =
+    token && runId
+      ? buildSocketUrl(`/api/execution/${runId}/stream`, {
+          origin: import.meta.env.VITE_API_URL || undefined,
+          query: { token },
+        })
+      : null;
 
-    let token: string | null = null;
-    try {
-      token = localStorage.getItem(TOKEN_STORAGE_KEY);
-    } catch {
-      token = null;
-    }
-    if (!token) {
-      // The stream requires a token; say so instead of retrying forever.
-      setState('unauthenticated');
-      return;
-    }
+  const handleMessage = useCallback(
+    (event: MessageEvent<string>) => {
+      let parsed: ExecutionEvent;
+      try {
+        parsed = JSON.parse(event.data) as ExecutionEvent;
+      } catch {
+        return; // ignore anything that isn't a well-formed event
+      }
+      if (parsed.type === 'log') {
+        setLogLines((prev) => {
+          const next = [...prev, parsed.line];
+          return next.length > MAX_LOG_LINES ? next.slice(-MAX_LOG_LINES) : next;
+        });
+      } else {
+        void queryClient.invalidateQueries({ queryKey: ['runs', runId] });
+        void queryClient.invalidateQueries({ queryKey: ['runs'] });
+      }
+    },
+    [queryClient, runId],
+  );
 
-    let disposed = false;
-    let attempted = false;
+  // 4001 is the server rejecting the token — retrying can't help.
+  const { state: wsState, closeCode } = useResilientWebSocket({
+    url,
+    onMessage: handleMessage,
+    nonRetryableCodes: [4001],
+  });
 
-    const connect = () => {
-      if (disposed) return;
-      setState(attempted ? 'reconnecting' : 'connecting');
-      attempted = true;
-
-      const ws = new WebSocket(socketUrl(runId, token));
-      socketRef.current = ws;
-
-      ws.onopen = () => {
-        if (!disposed) setState('live');
-      };
-
-      ws.onmessage = (ev: MessageEvent<string>) => {
-        let event: ExecutionEvent;
-        try {
-          event = JSON.parse(ev.data) as ExecutionEvent;
-        } catch {
-          return; // ignore anything that isn't a well-formed event
-        }
-        if (event.type === 'log') {
-          setLogLines((prev) => {
-            const next = [...prev, event.line];
-            return next.length > MAX_LOG_LINES ? next.slice(-MAX_LOG_LINES) : next;
-          });
-        } else {
-          void queryClient.invalidateQueries({ queryKey: ['runs', runId] });
-          void queryClient.invalidateQueries({ queryKey: ['runs'] });
-        }
-      };
-
-      ws.onclose = (ev) => {
-        if (disposed) return;
-        socketRef.current = null;
-        // 4001 is the server rejecting the token — retrying can't help.
-        if (ev.code === 4001) {
-          setState('unauthenticated');
-          return;
-        }
-        setState('closed');
-        retryRef.current = setTimeout(connect, RECONNECT_DELAY_MS);
-      };
-
-      ws.onerror = () => {
-        // onclose always follows; it owns the state transition.
-      };
-    };
-
-    connect();
-
-    return () => {
-      disposed = true;
-      if (retryRef.current) clearTimeout(retryRef.current);
-      socketRef.current?.close();
-      socketRef.current = null;
-    };
-  }, [runId, enabled, queryClient]);
+  const state: StreamState = useMemo(() => {
+    if (!enabled || !runId) return 'idle';
+    if (!token) return 'unauthenticated';
+    if (wsState === 'terminated') return closeCode === 4001 ? 'unauthenticated' : 'closed';
+    return wsState;
+  }, [enabled, runId, token, wsState, closeCode]);
 
   return { state, logLines };
 }

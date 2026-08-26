@@ -9,7 +9,11 @@ const STREAM_LABEL: Record<StreamState, { text: string; tone: string }> = {
   connecting: { text: 'Connecting…', tone: 'var(--status-running)' },
   live: { text: 'Live', tone: 'var(--status-idle)' },
   reconnecting: { text: 'Reconnecting…', tone: 'var(--status-smoke)' },
-  closed: { text: 'Disconnected — retrying', tone: 'var(--status-smoke)' },
+  // A transient drop now goes straight to 'reconnecting' rather than flashing
+  // 'closed' first — the retry is already scheduled, so that flash was a
+  // decorative extra step, not information. 'closed' is reserved for the
+  // rare case the connection stopped for a reason not worth retrying at all.
+  closed: { text: 'Disconnected', tone: 'var(--status-smoke)' },
   unauthenticated: { text: 'Sign in to stream logs', tone: 'var(--text-tertiary)' },
 };
 
