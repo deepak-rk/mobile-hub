@@ -1,15 +1,25 @@
+import { useMemo, useState } from 'react';
 import {
-  Card,
-  CardBody,
+  createColumnHelper,
+  flexRender,
+  getCoreRowModel,
+  getSortedRowModel,
+  SortingState,
+  useReactTable,
+} from '@tanstack/react-table';
+import {
   EmptyState,
-  List,
-  Meta,
-  MetaSep,
   Mono,
   Page,
   PageHeader,
   ProgressBar,
   QueryBoundary,
+  Table,
+  Tbody,
+  Td,
+  Th,
+  Thead,
+  Tr,
 } from 'react-design-kit';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { icons } from '@/lib/icons';
@@ -29,8 +39,71 @@ function buildProgress(status: Build['status']): { value: number; complete: bool
   return null;
 }
 
+const columnHelper = createColumnHelper<Build>();
+
+const columns = [
+  columnHelper.accessor('project', {
+    header: 'Project',
+    cell: (info) => <span className={styles.project}>{info.getValue()}</span>,
+  }),
+  columnHelper.accessor('version', {
+    header: 'Version',
+  }),
+  columnHelper.accessor('platform', {
+    header: 'Platform',
+    cell: (info) => (info.getValue() === 'ios' ? 'iOS' : 'Android'),
+  }),
+  columnHelper.accessor('status', {
+    header: 'Status',
+    cell: (info) => {
+      const build = info.row.original;
+      const progress = buildProgress(build.status);
+      return (
+        <div className={styles.statusCell}>
+          <StatusBadge status={build.status} />
+          {progress ? (
+            <ProgressBar
+              value={progress.value}
+              complete={progress.complete}
+              label={build.status === 'validating' ? 'Verifying checksum…' : 'Downloading…'}
+            />
+          ) : null}
+          {build.status === 'corrupt' ? (
+            <p className={styles.error}>Integrity check failed — re-trigger the fetch to try again.</p>
+          ) : null}
+        </div>
+      );
+    },
+  }),
+  columnHelper.accessor('sizeBytes', {
+    header: 'Size',
+    cell: (info) => formatBytes(info.getValue()),
+    sortingFn: 'basic',
+  }),
+  columnHelper.accessor('checksum', {
+    header: 'sha256',
+    enableSorting: false,
+    cell: (info) => (info.getValue() ? <Mono>{shortId(info.getValue()!)}</Mono> : <span className={styles.dash}>—</span>),
+  }),
+  columnHelper.accessor('createdAt', {
+    header: 'Created',
+    cell: (info) => formatRelative(info.getValue()),
+  }),
+];
+
 export function BuildsPage() {
   const { data: builds, isPending, error, refetch } = useBuilds();
+  const [sorting, setSorting] = useState<SortingState>([{ id: 'createdAt', desc: true }]);
+  const data = useMemo(() => builds ?? [], [builds]);
+
+  const table = useReactTable({
+    data,
+    columns,
+    state: { sorting },
+    onSortingChange: setSorting,
+    getCoreRowModel: getCoreRowModel(),
+    getSortedRowModel: getSortedRowModel(),
+  });
 
   return (
     <Page>
@@ -52,56 +125,32 @@ export function BuildsPage() {
           />
         }
       >
-        <List>
-          {builds?.map((build) => {
-            const progress = buildProgress(build.status);
-            return (
-              <Card key={build._id}>
-                <CardBody>
-                  <div className={styles.row}>
-                    <div className={styles.main}>
-                      <div className={styles.head}>
-                        <span className={styles.project}>{build.project}</span>
-                        <span className={styles.version}>{build.version}</span>
-                        <StatusBadge status={build.status} />
-                      </div>
-                      <Meta>
-                        <span>{build.platform === 'ios' ? 'iOS' : 'Android'}</span>
-                        <MetaSep />
-                        <span>{formatBytes(build.sizeBytes)}</span>
-                        <MetaSep />
-                        <span>{formatRelative(build.createdAt)}</span>
-                      </Meta>
-                    </div>
-
-                    {build.checksum ? (
-                      <div className={styles.checksum}>
-                        <span className={styles.checksumLabel}>sha256</span>
-                        <Mono>{shortId(build.checksum)}</Mono>
-                      </div>
-                    ) : null}
-                  </div>
-
-                  {progress ? (
-                    <div className={styles.progress}>
-                      <ProgressBar
-                        value={progress.value}
-                        complete={progress.complete}
-                        label={build.status === 'validating' ? 'Verifying checksum…' : 'Downloading artifact…'}
-                      />
-                    </div>
-                  ) : null}
-
-                  {build.status === 'corrupt' ? (
-                    <p className={styles.error}>
-                      Integrity check failed — the artifact was discarded. Re-trigger the fetch to try again.
-                    </p>
-                  ) : null}
-                </CardBody>
-              </Card>
-            );
-          })}
-        </List>
+        <Table>
+          <Thead>
+            {table.getHeaderGroups().map((headerGroup) => (
+              <Tr key={headerGroup.id}>
+                {headerGroup.headers.map((header) => (
+                  <Th
+                    key={header.id}
+                    onSort={header.column.getCanSort() ? () => header.column.toggleSorting() : undefined}
+                    sort={header.column.getIsSorted() || false}
+                  >
+                    {flexRender(header.column.columnDef.header, header.getContext())}
+                  </Th>
+                ))}
+              </Tr>
+            ))}
+          </Thead>
+          <Tbody>
+            {table.getRowModel().rows.map((row) => (
+              <Tr key={row.id}>
+                {row.getVisibleCells().map((cell) => (
+                  <Td key={cell.id}>{flexRender(cell.column.columnDef.cell, cell.getContext())}</Td>
+                ))}
+              </Tr>
+            ))}
+          </Tbody>
+        </Table>
       </QueryBoundary>
     </Page>
   );

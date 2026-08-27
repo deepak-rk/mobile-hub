@@ -16,6 +16,8 @@ import { StatusBadge } from '@/components/ui/StatusBadge';
 import { icons, iconSize } from '@/lib/icons';
 import { formatRelative, shortId } from 'ts-format-utils';
 import { useDevices } from '../api/devices.api';
+import { DeviceFilterBar } from '../components/DeviceFilterBar';
+import { useDeviceFilters } from '../hooks/useDeviceFilters';
 import type { Device } from '../types';
 import styles from './DevicesPage.module.css';
 
@@ -51,7 +53,9 @@ function LockLine({ device }: { device: Device }) {
 }
 
 export function DevicesPage() {
-  const { data: devices, isPending, error, refetch } = useDevices();
+  const { status, setStatus, platform, setPlatform } = useDeviceFilters();
+  const { data: devices, isPending, error, refetch } = useDevices({ status, platform });
+  const filtered = status !== 'all' || platform !== 'all';
 
   return (
     <Page>
@@ -60,17 +64,34 @@ export function DevicesPage() {
         subtitle="Every device reported by a connected host, with its current lock state."
       />
 
+      <DeviceFilterBar status={status} onStatusChange={setStatus} platform={platform} onPlatformChange={setPlatform} />
+
       <QueryBoundary
         isPending={isPending}
         error={error}
         isEmpty={devices?.length === 0}
         onRetry={() => void refetch()}
         empty={
-          <EmptyState
-            icon={icons.device}
-            title="No devices yet"
-            body="Hosts register the devices they can see by posting to /api/devices/sync. Start an agent on a machine with a device attached and it will appear here."
-          />
+          filtered ? (
+            <EmptyState
+              icon={icons.device}
+              title="No devices match these filters"
+              body="Try a different status or platform."
+              action={{
+                label: 'Clear filters',
+                onClick: () => {
+                  setStatus('all');
+                  setPlatform('all');
+                },
+              }}
+            />
+          ) : (
+            <EmptyState
+              icon={icons.device}
+              title="No devices yet"
+              body="Hosts register the devices they can see by posting to /api/devices/sync. Start an agent on a machine with a device attached and it will appear here."
+            />
+          )
         }
       >
         <Grid>

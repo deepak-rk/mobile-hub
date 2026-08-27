@@ -2,10 +2,22 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/services/api';
 import type { Device } from '../types';
 
-export function useDevices() {
+export interface DeviceFilters {
+  status?: string;
+  platform?: string;
+}
+
+/**
+ * Filters are forwarded to `GET /devices`'s own `status`/`platform` query
+ * params rather than applied client-side — the backend already supports
+ * them, so filtering there keeps one source of truth for "what matched"
+ * instead of fetching everything and hiding rows in the browser.
+ */
+export function useDevices(filters: DeviceFilters = {}) {
+  const params = Object.fromEntries(Object.entries(filters).filter(([, v]) => v && v !== 'all'));
   return useQuery({
-    queryKey: ['devices'],
-    queryFn: async () => (await api.get<Device[]>('/devices')).data,
+    queryKey: ['devices', params],
+    queryFn: async () => (await api.get<Device[]>('/devices', { params })).data,
   });
 }
 
