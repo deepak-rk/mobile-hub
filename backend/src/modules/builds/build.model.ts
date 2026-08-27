@@ -9,9 +9,11 @@ export interface IBuild extends Document {
   sizeBytes: number | null;
   checksum: string | null;
   checksumAlgorithm: 'sha256';
-  status: 'downloading' | 'validating' | 'corrupt' | 'ready';
+  status: 'downloading' | 'validating' | 'corrupt' | 'ready' | 'purged';
   integrityValidatedAt: Date | null;
   fetchedAt: Date | null;
+  /** Set when the retention GC removes this build's artifact from disk. */
+  purgedAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -28,11 +30,12 @@ const buildSchema = new Schema<IBuild>(
     checksumAlgorithm: { type: String, enum: ['sha256'], default: 'sha256' },
     status: {
       type: String,
-      enum: ['downloading', 'validating', 'corrupt', 'ready'],
+      enum: ['downloading', 'validating', 'corrupt', 'ready', 'purged'],
       default: 'downloading',
     },
     integrityValidatedAt: { type: Date, default: null },
     fetchedAt: { type: Date, default: null },
+    purgedAt: { type: Date, default: null },
   },
   { timestamps: true },
 );

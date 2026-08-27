@@ -19,6 +19,20 @@ const featureTogglesSchema = z
 export const buildProviderNameSchema = z.enum(['url', 'nexus', 's3', 'webhook']);
 export type BuildProviderName = z.infer<typeof buildProviderNameSchema>;
 
+const buildRetentionConfigSchema = z
+  .object({
+    // Keeps this many most-recent 'ready' builds per (project, platform);
+    // older ones are purged (file deleted, status -> 'purged'). A build
+    // referenced by any ExecutionRun is never purged regardless of rank.
+    keepPerGroup: z.number().int().positive().optional(),
+    // Optional extra gate: only purges a build that is BOTH beyond
+    // keepPerGroup AND at least this many days old. null/unset disables the
+    // age check, so purging is governed by keepPerGroup alone by default -
+    // no build is ever removed purely for being old.
+    olderThanDays: z.number().int().positive().optional(),
+  })
+  .strict();
+
 const buildConfigSchema = z
   .object({
     provider: buildProviderNameSchema.optional(),
@@ -26,6 +40,7 @@ const buildConfigSchema = z
     nexus: z.object({ baseUrl: z.string().optional(), repository: z.string().optional() }).strict().optional(),
     s3: z.object({ bucket: z.string().optional(), region: z.string().optional() }).strict().optional(),
     webhook: z.object({ endpoint: z.string().optional() }).strict().optional(),
+    retention: buildRetentionConfigSchema.optional(),
   })
   .strict();
 
@@ -56,12 +71,20 @@ export interface EffectiveConfig {
     nexus: { baseUrl?: string; repository?: string };
     s3: { bucket?: string; region?: string };
     webhook: { endpoint?: string };
+    retention: { keepPerGroup: number; olderThanDays: number | null };
   };
   automation: { framework: string; configPath: string; envFile: string; testDir: string };
 }
 
 export const PLATFORM_DEFAULTS: EffectiveConfig = {
   features: { builds: true, execution: true, analytics: true, streaming: true },
-  build: { provider: 'url', url: {}, nexus: {}, s3: {}, webhook: {} },
+  build: {
+    provider: 'url',
+    url: {},
+    nexus: {},
+    s3: {},
+    webhook: {},
+    retention: { keepPerGroup: 10, olderThanDays: null },
+  },
   automation: { framework: 'appium', configPath: 'wdio.conf.js', envFile: '.env', testDir: 'test' },
 };

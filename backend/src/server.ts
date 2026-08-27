@@ -6,6 +6,7 @@ import { loadEffectiveConfig } from './config/config.service';
 import { markStaleHostsOffline, HOST_STALE_CHECK_INTERVAL_MS } from './modules/hosts/hosts.service';
 import { recoverOrphanedRuns } from './modules/execution/execution.service';
 import { computeDailyAggregates, ANALYTICS_RECOMPUTE_INTERVAL_MS } from './modules/analytics/analytics.service';
+import { runBuildGc, BUILD_GC_INTERVAL_MS } from './modules/builds/builds.service';
 import { streamingService } from './modules/streaming/streaming.service';
 import { agentTokenIsConfigured } from './modules/agent-auth/agent-auth';
 import dynamicImport from './common/dynamic-import';
@@ -100,10 +101,24 @@ async function start(): Promise<void> {
     });
   }, ANALYTICS_RECOMPUTE_INTERVAL_MS);
 
+  // Keeps BUILDS_DIR from growing forever — see builds.service.ts's
+  // runBuildGc doc comment for the retention policy itself.
+  const buildGcInterval = setInterval(() => {
+    runBuildGc(config)
+      .then(({ purged, failures }) => {
+        if (purged > 0) app.log.info(`Build GC purged ${purged} old build artifact(s)`);
+        for (const f of failures) app.log.error(`Build GC failed to remove ${f.buildId}: ${f.reason}`);
+      })
+      .catch((err: unknown) => {
+        app.log.error(err, 'Build GC sweep failed');
+      });
+  }, BUILD_GC_INTERVAL_MS);
+
   const shutdown = async (signal: string) => {
     app.log.info(`${signal} received — shutting down`);
     clearInterval(staleHostInterval);
     clearInterval(analyticsInterval);
+    clearInterval(buildGcInterval);
     // No capture process may outlive the server.
     await streamingService.shutdown();
     await app.close();
