@@ -228,7 +228,7 @@ Consolidated 2026-08-27 after an honest end-to-end pass found the product's stat
 | `@fastify/swagger` + `swagger-ui` | Installed as dependencies, never registered in `app.ts`. Hand-authored `docs/api-spec.yaml` exists but nothing serves it or a generated equivalent. | `backend/src/app.ts` |
 | `@fastify/static` | Installed, unused. | — |
 | Typed domain error classes | Every route does inline `zod.safeParse` + manual status codes rather than `ValidationError`/`NotFoundError`/etc. Fine so far; will get repetitive as routes grow. | across `*.routes.ts` |
-| `npm audit` findings | 6 vulnerabilities (4 moderate, 1 high, 1 critical) as of 2026-08-22, not investigated. | — |
+| `npm audit` findings | **Investigated 2026-08-27** (previous row was itself an unexamined count). Only one is production-relevant: `react-router-dom` (moderate, open redirect via backslash in `<Link>`/`useNavigate`, CVE-2025-68470-adjacent) — shipped in the frontend bundle. The high (`vite`) and critical (`vitest`) findings are dev-tooling-only exposure (dev-server path traversal, and Vitest's UI server if it were ever run exposed — it isn't, this repo only uses `vitest run`), not shipped to users. `npm audit fix --force` wants major-version bumps on both `vite` (→8) and `react-router-dom` (→7.18.2), explicitly flagged as breaking — not run blind; needs its own scoped, tested upgrade pass. | frontend `package.json` |
 
 **Deliberately scoped down for v1, not urgent:**
 
