@@ -6,6 +6,12 @@ Newest first. See root `CLAUDE.md` § Self-review for when to add an entry.
 
 ---
 
+## 2026-08-27 (yet later still)
+
+**A new operational rate limit needs the same "raise it for the E2E suite" treatment as the first one did, and this was nearly missed again.** Landing an independent, tighter `AUTH_RATE_LIMIT_MAX` (20/min) broke `auth.spec.ts` at its real default — confirmed by actually running the suite without an override before assuming it was fine, not by reasoning about call counts. The exact same class of gap as the original global `RATE_LIMIT_MAX` (2026-08-26): any new per-route limit is another value the E2E suite's env needs raised, in both the README and CI, or the suite silently starts failing against its own recommended run instructions. **Rule now:** whenever a new rate limit (or similar per-request cap) is added anywhere in the backend, check the E2E suite against it for real before considering the backend change done — this is now the second time, so treat it as a standing checklist item, not a one-off catch.
+
+**Also: verify a fix by testing it at its real default, not just with your test override left in place.** The 5-attempts-then-429 live proof for the rate limiter itself used a deliberately lowered `AUTH_RATE_LIMIT_MAX=5` to keep the test fast — correct for proving the limiter works. But the E2E-suite question ("does this break existing callers?") needed the opposite: running at the real, unmodified default, not a convenient override. Conflating "I tested this feature" with "I tested this feature's default configuration against everything that depends on it" is an easy mistake in the same pass.
+
 ## 2026-08-27 (yet later)
 
 **An outside review of `docs/TODO.md` found real drift this repo's own update discipline had missed: a stale "24 API tests, UI pending" line untouched since 2026-08-23, and two module sections still claiming "zero `.test.ts`" after both gained real coverage.** The rule "update the tracker in the same session as the work" had been followed for the *new* facts each session added, but nobody had swept for older lines the new facts silently made false elsewhere in the same file. **Rule now:** when adding a "N tests" or "zero tests" claim, grep the file for the same claim shape once in a while, not just add the new true line next to old ones that quietly became false.
