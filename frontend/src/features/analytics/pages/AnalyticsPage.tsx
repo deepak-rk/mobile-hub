@@ -1,3 +1,5 @@
+import { useMemo, useState } from 'react';
+import { createColumnHelper, flexRender, getCoreRowModel, getSortedRowModel, SortingState, useReactTable } from '@tanstack/react-table';
 import {
   Card,
   CardBody,
@@ -7,11 +9,19 @@ import {
   PageHeader,
   ProgressBar,
   QueryBoundary,
+  Table,
+  Tbody,
+  Td,
+  Th,
+  Thead,
+  Tr,
 } from 'react-design-kit';
 import { icons } from '@/lib/icons';
 import { formatPercent, formatRelative } from 'ts-format-utils';
 import { useAnalytics } from '../api/analytics.api';
-import type { AnalyticsAggregate } from '../types';
+import { AnalyticsFilterBar } from '../components/AnalyticsFilterBar';
+import { useAnalyticsFilters } from '../hooks/useAnalyticsFilters';
+import type { AnalyticsAggregate, DeviceBreakdown, SuiteBreakdown } from '../types';
 import styles from './AnalyticsPage.module.css';
 
 function passRateTone(rate: number): string {
@@ -46,6 +56,130 @@ function platformLabel(platform: AnalyticsAggregate['platform']): string {
   return platform === 'ios' ? 'iOS' : 'Android';
 }
 
+/** Shared cell renderer: a pass rate as a tinted bar + percentage + run count, used by both breakdown tables below. */
+function PassRateCell({ passRate, runs }: { passRate: number; runs: number }) {
+  return (
+    <div className={styles.rateCell}>
+      <span className={styles.rateBar}>
+        <ProgressBar value={passRate * 100} tone={passRateTone(passRate)} />
+      </span>
+      <span className={styles.rateValue}>
+        {formatPercent(passRate)}
+        <span className={styles.rateRuns}>{runs} runs</span>
+      </span>
+    </div>
+  );
+}
+
+const suiteColumnHelper = createColumnHelper<SuiteBreakdown>();
+const suiteColumns = [
+  suiteColumnHelper.accessor('suite', { header: 'Suite' }),
+  suiteColumnHelper.accessor('passRate', {
+    header: 'Pass rate',
+    cell: (info) => <PassRateCell passRate={info.getValue()} runs={info.row.original.runs} />,
+  }),
+];
+
+function SuiteBreakdownTable({ rows }: { rows: SuiteBreakdown[] }) {
+  const [sorting, setSorting] = useState<SortingState>([{ id: 'passRate', desc: false }]);
+  const data = useMemo(() => rows, [rows]);
+  const table = useReactTable({
+    data,
+    columns: suiteColumns,
+    state: { sorting },
+    onSortingChange: setSorting,
+    getCoreRowModel: getCoreRowModel(),
+    getSortedRowModel: getSortedRowModel(),
+  });
+
+  if (rows.length === 0) return <p className={styles.none}>No suite data.</p>;
+
+  return (
+    <Table>
+      <Thead>
+        {table.getHeaderGroups().map((headerGroup) => (
+          <Tr key={headerGroup.id}>
+            {headerGroup.headers.map((header) => (
+              <Th
+                key={header.id}
+                onSort={header.column.getCanSort() ? () => header.column.toggleSorting() : undefined}
+                sort={header.column.getIsSorted() || false}
+              >
+                {flexRender(header.column.columnDef.header, header.getContext())}
+              </Th>
+            ))}
+          </Tr>
+        ))}
+      </Thead>
+      <Tbody>
+        {table.getRowModel().rows.map((row) => (
+          <Tr key={row.id}>
+            {row.getVisibleCells().map((cell) => (
+              <Td key={cell.id}>{flexRender(cell.column.columnDef.cell, cell.getContext())}</Td>
+            ))}
+          </Tr>
+        ))}
+      </Tbody>
+    </Table>
+  );
+}
+
+const deviceColumnHelper = createColumnHelper<DeviceBreakdown>();
+const deviceColumns = [
+  deviceColumnHelper.accessor('deviceUdid', {
+    header: 'Device',
+    cell: (info) => <Mono>{info.getValue()}</Mono>,
+  }),
+  deviceColumnHelper.accessor('passRate', {
+    header: 'Pass rate',
+    cell: (info) => <PassRateCell passRate={info.getValue()} runs={info.row.original.runs} />,
+  }),
+];
+
+function DeviceBreakdownTable({ rows }: { rows: DeviceBreakdown[] }) {
+  const [sorting, setSorting] = useState<SortingState>([{ id: 'passRate', desc: false }]);
+  const data = useMemo(() => rows, [rows]);
+  const table = useReactTable({
+    data,
+    columns: deviceColumns,
+    state: { sorting },
+    onSortingChange: setSorting,
+    getCoreRowModel: getCoreRowModel(),
+    getSortedRowModel: getSortedRowModel(),
+  });
+
+  if (rows.length === 0) return <p className={styles.none}>No device data.</p>;
+
+  return (
+    <Table>
+      <Thead>
+        {table.getHeaderGroups().map((headerGroup) => (
+          <Tr key={headerGroup.id}>
+            {headerGroup.headers.map((header) => (
+              <Th
+                key={header.id}
+                onSort={header.column.getCanSort() ? () => header.column.toggleSorting() : undefined}
+                sort={header.column.getIsSorted() || false}
+              >
+                {flexRender(header.column.columnDef.header, header.getContext())}
+              </Th>
+            ))}
+          </Tr>
+        ))}
+      </Thead>
+      <Tbody>
+        {table.getRowModel().rows.map((row) => (
+          <Tr key={row.id}>
+            {row.getVisibleCells().map((cell) => (
+              <Td key={cell.id}>{flexRender(cell.column.columnDef.cell, cell.getContext())}</Td>
+            ))}
+          </Tr>
+        ))}
+      </Tbody>
+    </Table>
+  );
+}
+
 function AggregateSection({ aggregate }: { aggregate: AnalyticsAggregate }) {
   return (
     <section className={styles.section}>
@@ -66,50 +200,14 @@ function AggregateSection({ aggregate }: { aggregate: AnalyticsAggregate }) {
         <Card>
           <CardBody>
             <div className={styles.breakdownTitle}>By suite</div>
-            {aggregate.bySuite.length === 0 ? (
-              <p className={styles.none}>No suite data.</p>
-            ) : (
-              <ul className={styles.rows}>
-                {aggregate.bySuite.map((s) => (
-                  <li key={s.suite} className={styles.row}>
-                    <span className={styles.rowName}>{s.suite}</span>
-                    <span className={styles.rowBar}>
-                      <ProgressBar value={s.passRate * 100} tone={passRateTone(s.passRate)} />
-                    </span>
-                    <span className={styles.rowValue}>
-                      {formatPercent(s.passRate)}
-                      <span className={styles.rowRuns}>{s.runs} runs</span>
-                    </span>
-                  </li>
-                ))}
-              </ul>
-            )}
+            <SuiteBreakdownTable rows={aggregate.bySuite} />
           </CardBody>
         </Card>
 
         <Card>
           <CardBody>
             <div className={styles.breakdownTitle}>By device</div>
-            {aggregate.byDevice.length === 0 ? (
-              <p className={styles.none}>No device data.</p>
-            ) : (
-              <ul className={styles.rows}>
-                {aggregate.byDevice.map((d) => (
-                  <li key={d.deviceUdid} className={styles.row}>
-                    <span className={styles.rowName}>
-                      <Mono>{d.deviceUdid}</Mono>
-                    </span>
-                    <span className={styles.rowBar}>
-                      <ProgressBar value={d.passRate * 100} tone={passRateTone(d.passRate)} />
-                    </span>
-                    <span className={styles.rowValue}>
-                      {formatPercent(d.passRate)}
-                      <span className={styles.rowRuns}>{d.runs} runs</span>
-                    </span>
-                  </li>
-                ))}
-              </ul>
-            )}
+            <DeviceBreakdownTable rows={aggregate.byDevice} />
           </CardBody>
         </Card>
       </div>
@@ -118,13 +216,17 @@ function AggregateSection({ aggregate }: { aggregate: AnalyticsAggregate }) {
 }
 
 export function AnalyticsPage() {
-  // The 'all' rollup is the cross-platform view; per-platform aggregates exist
-  // too but duplicate these numbers whenever only one platform is in play.
-  const { data: aggregates, isPending, error, refetch } = useAnalytics({ platform: 'all' });
+  const { project, setProject, platform, setPlatform } = useAnalyticsFilters();
+  // 'all' is the cross-platform rollup; picking a specific platform switches
+  // to that platform's own aggregate instead of the always-'all' one.
+  const { data: aggregates, isPending, error, refetch } = useAnalytics({ project: project || undefined, platform });
+  const filtered = project !== '' || platform !== 'all';
 
   return (
     <Page>
       <PageHeader title="Analytics" subtitle="Daily rollups of execution runs, recomputed hourly." />
+
+      <AnalyticsFilterBar project={project} onProjectChange={setProject} platform={platform} onPlatformChange={setPlatform} />
 
       <QueryBoundary
         isPending={isPending}
@@ -132,11 +234,19 @@ export function AnalyticsPage() {
         isEmpty={aggregates?.length === 0}
         onRetry={() => void refetch()}
         empty={
-          <EmptyState
-            icon={icons.analytics}
-            title="Nothing to report yet"
-            body="Aggregates are computed from completed execution runs. Once runs finish, pass rates and device breakdowns appear here."
-          />
+          filtered ? (
+            <EmptyState
+              icon={icons.analytics}
+              title="No aggregates match these filters"
+              body="Try a different project or platform, or clear the filters to see everything computed so far."
+            />
+          ) : (
+            <EmptyState
+              icon={icons.analytics}
+              title="Nothing to report yet"
+              body="Aggregates are computed from completed execution runs. Once runs finish, pass rates and device breakdowns appear here."
+            />
+          )
         }
       >
         <div className={styles.sections}>

@@ -8,10 +8,23 @@ export function isInFlight(status: ExecutionRun['status']): boolean {
   return IN_FLIGHT.includes(status);
 }
 
-export function useExecutionRuns() {
+export interface RunFilters {
+  status?: string;
+  project?: string;
+}
+
+/**
+ * Filters are forwarded to `GET /execution`'s own `status`/`project` query
+ * params rather than applied client-side — matches the same reasoning as
+ * `useDevices`: the backend already supports them, so filtering there keeps
+ * one source of truth for "what matched" instead of fetching everything and
+ * hiding rows in the browser.
+ */
+export function useExecutionRuns(filters: RunFilters = {}) {
+  const params = Object.fromEntries(Object.entries(filters).filter(([, v]) => v && v !== 'all'));
   return useQuery({
-    queryKey: ['runs'],
-    queryFn: async () => (await api.get<ExecutionRun[]>('/execution')).data,
+    queryKey: ['runs', params],
+    queryFn: async () => (await api.get<ExecutionRun[]>('/execution', { params })).data,
     // Keep the list moving while anything is still running.
     refetchInterval: (query) => (query.state.data?.some((r) => isInFlight(r.status)) ? 3000 : false),
   });
