@@ -44,6 +44,18 @@ const buildConfigSchema = z
   })
   .strict();
 
+const deviceConfigSchema = z
+  .object({
+    // A held lock expires this many minutes after it was last
+    // acquired/renewed, and is released automatically — a crashed client
+    // (not a crashed host; see hosts.service.ts's markStaleHostsOffline for
+    // the offline case) must not hold a device forever. null/unset disables
+    // expiry entirely; a lock then only ever ends via explicit unlock or the
+    // device going offline, the pre-2026-08-27 behaviour.
+    lockTtlMinutes: z.number().int().positive().optional(),
+  })
+  .strict();
+
 const automationConfigSchema = z
   .object({
     framework: z.string().optional(),
@@ -57,6 +69,7 @@ export const partialConfigSchema = z
   .object({
     features: featureTogglesSchema.optional(),
     build: buildConfigSchema.optional(),
+    devices: deviceConfigSchema.optional(),
     automation: automationConfigSchema.optional(),
   })
   .strict();
@@ -73,6 +86,7 @@ export interface EffectiveConfig {
     webhook: { endpoint?: string };
     retention: { keepPerGroup: number; olderThanDays: number | null };
   };
+  devices: { lockTtlMinutes: number | null };
   automation: { framework: string; configPath: string; envFile: string; testDir: string };
 }
 
@@ -86,5 +100,8 @@ export const PLATFORM_DEFAULTS: EffectiveConfig = {
     webhook: {},
     retention: { keepPerGroup: 10, olderThanDays: null },
   },
+  // 45 min: long enough for someone actively testing on a device, short
+  // enough that a crashed/forgotten client doesn't hold it all day.
+  devices: { lockTtlMinutes: 45 },
   automation: { framework: 'appium', configPath: 'wdio.conf.js', envFile: '.env', testDir: 'test' },
 };

@@ -19,6 +19,9 @@ build:
   # webhook:
   #   endpoint: https://ci.example.com/hooks/mobile-hub-build
 
+devices:
+  lockTtlMinutes: 45 # a held lock auto-releases after this long unless renewed; omit to disable expiry
+
 automation:
   framework: appium
   configPath: wdio.conf.js

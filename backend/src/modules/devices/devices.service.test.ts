@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { Device } from './device.model';
-import { syncDevices, acquireLock, releaseLock } from './devices.service';
+import { syncDevices, acquireLock, releaseLock, renewLock, releaseExpiredLocks } from './devices.service';
 
 /**
  * `syncDevices` used to force-set `status:'idle'` on every rediscovered
@@ -116,5 +116,72 @@ describe('releaseLock', () => {
     await releaseLock('d1', 'admin-1', true);
 
     expect(findOneAndUpdate).toHaveBeenCalledWith({ udid: 'd1' }, { lock: null, status: 'idle' }, { new: true });
+  });
+});
+
+describe('renewLock', () => {
+  it('a non-admin can only renew their own lock', async () => {
+    const findOneAndUpdate = vi.fn().mockResolvedValue({});
+    vi.spyOn(Device, 'findOneAndUpdate').mockImplementation(findOneAndUpdate as never);
+
+    await renewLock('d1', 'user-1', false);
+
+    const [filter, update] = findOneAndUpdate.mock.calls[0] as [Record<string, unknown>, Record<string, unknown>];
+    expect(filter).toEqual({ udid: 'd1', 'lock.heldBy': 'user-1' });
+    expect(update).toHaveProperty('lock.acquiredAt');
+    // The lock itself (holder, reason) is untouched — only the TTL clock moves.
+    expect(update).not.toHaveProperty('status');
+  });
+
+  it('an admin can renew any held lock', async () => {
+    const findOneAndUpdate = vi.fn().mockResolvedValue({});
+    vi.spyOn(Device, 'findOneAndUpdate').mockImplementation(findOneAndUpdate as never);
+
+    await renewLock('d1', 'admin-1', true);
+
+    const [filter] = findOneAndUpdate.mock.calls[0] as [Record<string, unknown>, Record<string, unknown>];
+    expect(filter).toEqual({ udid: 'd1', lock: { $ne: null } });
+  });
+});
+
+describe('releaseExpiredLocks', () => {
+  it('does nothing when the TTL is disabled (null)', async () => {
+    const updateMany = vi.fn();
+    vi.spyOn(Device, 'updateMany').mockImplementation(updateMany as never);
+
+    const released = await releaseExpiredLocks(null);
+
+    expect(released).toBe(0);
+    expect(updateMany).not.toHaveBeenCalled();
+  });
+
+  it('releases only locks older than the TTL, and flips status back to idle', async () => {
+    const updateMany = vi.fn().mockResolvedValue({ modifiedCount: 2 });
+    vi.spyOn(Device, 'updateMany').mockImplementation(updateMany as never);
+
+    const before = Date.now();
+    const released = await releaseExpiredLocks(45);
+    const after = Date.now();
+
+    expect(released).toBe(2);
+    const [filter, update] = updateMany.mock.calls[0] as [
+      { lock: unknown; 'lock.acquiredAt': { $lt: Date } },
+      Record<string, unknown>,
+    ];
+    expect(filter.lock).toEqual({ $ne: null });
+    const cutoff = filter['lock.acquiredAt'].$lt.getTime();
+    // Cutoff should be ~45 minutes before "now", bracketed by this test's own
+    // start/end to avoid a flaky exact-timestamp comparison.
+    expect(cutoff).toBeGreaterThanOrEqual(before - 45 * 60_000 - 1000);
+    expect(cutoff).toBeLessThanOrEqual(after - 45 * 60_000 + 1000);
+    expect(update).toEqual({ lock: null, status: 'idle' });
+  });
+
+  it('is a safe no-op when nothing is expired', async () => {
+    vi.spyOn(Device, 'updateMany').mockResolvedValue({ modifiedCount: 0 } as never);
+
+    await expect(releaseExpiredLocks(45)).resolves.toBe(0);
+    // And safe to call again immediately after.
+    await expect(releaseExpiredLocks(45)).resolves.toBe(0);
   });
 });

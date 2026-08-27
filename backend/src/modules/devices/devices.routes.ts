@@ -1,6 +1,6 @@
 import { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
-import { acquireLock, getDevice, listDevices, releaseLock, syncDevices } from './devices.service';
+import { acquireLock, getDevice, listDevices, releaseLock, renewLock, syncDevices } from './devices.service';
 import { requireAgentToken } from '../agent-auth/agent-auth';
 
 const syncBody = z.object({
@@ -52,6 +52,20 @@ export const devicesRoutes: FastifyPluginAsync = async (app) => {
     const device = await acquireLock(udid, req.user.sub, sessionId, reason);
     if (!device) {
       return reply.status(409).send({ code: 'DEVICE_LOCKED', message: 'Device is already locked' });
+    }
+    return device;
+  });
+
+  // Resets the lock's TTL clock (see devices.service.ts's releaseExpiredLocks)
+  // without changing anything else about it. Nothing calls this yet — no
+  // frontend wiring in this pass — but the endpoint exists so a lock holder
+  // has a real way to say "I'm still using this" once one does.
+  app.post('/:udid/lock/renew', { preHandler: app.authenticate }, async (req, reply) => {
+    const { udid } = req.params as { udid: string };
+    const isAdmin = req.user.role === 'admin';
+    const device = await renewLock(udid, req.user.sub, isAdmin);
+    if (!device) {
+      return reply.status(403).send({ code: 'FORBIDDEN', message: 'Cannot renew a lock you do not hold' });
     }
     return device;
   });

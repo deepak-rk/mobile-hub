@@ -7,6 +7,7 @@ import { markStaleHostsOffline, HOST_STALE_CHECK_INTERVAL_MS } from './modules/h
 import { recoverOrphanedRuns } from './modules/execution/execution.service';
 import { computeDailyAggregates, ANALYTICS_RECOMPUTE_INTERVAL_MS } from './modules/analytics/analytics.service';
 import { runBuildGc, BUILD_GC_INTERVAL_MS } from './modules/builds/builds.service';
+import { releaseExpiredLocks, DEVICE_LOCK_SWEEP_INTERVAL_MS } from './modules/devices/devices.service';
 import { streamingService } from './modules/streaming/streaming.service';
 import { agentTokenIsConfigured } from './modules/agent-auth/agent-auth';
 import dynamicImport from './common/dynamic-import';
@@ -114,11 +115,25 @@ async function start(): Promise<void> {
       });
   }, BUILD_GC_INTERVAL_MS);
 
+  // The *online* counterpart to markStaleHostsOffline above: releases a lock
+  // whose holder crashed or walked away while the device kept heartbeating,
+  // so it never went offline and that sweep never touched it.
+  const deviceLockSweepInterval = setInterval(() => {
+    releaseExpiredLocks(config.devices.lockTtlMinutes)
+      .then((released) => {
+        if (released > 0) app.log.info(`Released ${released} expired device lock(s)`);
+      })
+      .catch((err: unknown) => {
+        app.log.error(err, 'Device lock expiry sweep failed');
+      });
+  }, DEVICE_LOCK_SWEEP_INTERVAL_MS);
+
   const shutdown = async (signal: string) => {
     app.log.info(`${signal} received — shutting down`);
     clearInterval(staleHostInterval);
     clearInterval(analyticsInterval);
     clearInterval(buildGcInterval);
+    clearInterval(deviceLockSweepInterval);
     // No capture process may outlive the server.
     await streamingService.shutdown();
     await app.close();

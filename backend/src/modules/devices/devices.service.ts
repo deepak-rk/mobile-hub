@@ -1,5 +1,8 @@
 import { Device, IDevice } from './device.model';
 
+/** How often releaseExpiredLocks should be polled. */
+export const DEVICE_LOCK_SWEEP_INTERVAL_MS = 60_000; // once a minute — a lock TTL is measured in minutes, not seconds
+
 export async function listDevices(filters: {
   platform?: string;
   status?: string;
@@ -77,4 +80,39 @@ export async function acquireLock(
 export async function releaseLock(udid: string, userId: string, isAdmin: boolean): Promise<IDevice | null> {
   const filter = isAdmin ? { udid } : { udid, 'lock.heldBy': userId };
   return Device.findOneAndUpdate(filter, { lock: null, status: 'idle' }, { new: true });
+}
+
+/**
+ * Renews a held lock's TTL clock by resetting `acquiredAt` to now — the lock
+ * itself is unchanged (still `in-use`, same holder), only how much longer it
+ * survives the sweep below. Same owner-or-admin rule as `releaseLock`: the
+ * two are the only ways a lock's lifecycle can be affected by its holder.
+ */
+export async function renewLock(udid: string, userId: string, isAdmin: boolean): Promise<IDevice | null> {
+  const filter = isAdmin ? { udid, lock: { $ne: null } } : { udid, 'lock.heldBy': userId };
+  return Device.findOneAndUpdate(filter, { 'lock.acquiredAt': new Date() }, { new: true });
+}
+
+/**
+ * Releases locks that have outlived `lockTtlMinutes` since they were last
+ * acquired or renewed — the *online* counterpart to
+ * `hosts.service.ts#markStaleHostsOffline`, which already handles a device
+ * going offline entirely. This is the case that was still missing: the
+ * device keeps heartbeating, but the client holding the lock crashed or was
+ * simply left open, and nothing was releasing it except an admin
+ * force-unlock.
+ *
+ * `ttlMinutes: null` disables expiry entirely (the pre-2026-08-27 default
+ * behaviour) — every lock survives until explicit unlock or the device going
+ * offline, same as before this feature existed.
+ */
+export async function releaseExpiredLocks(ttlMinutes: number | null): Promise<number> {
+  if (ttlMinutes == null) return 0;
+
+  const cutoff = new Date(Date.now() - ttlMinutes * 60_000);
+  const result = await Device.updateMany(
+    { lock: { $ne: null }, 'lock.acquiredAt': { $lt: cutoff } },
+    { lock: null, status: 'idle' },
+  );
+  return result.modifiedCount;
 }
