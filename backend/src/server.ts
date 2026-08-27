@@ -8,6 +8,8 @@ import { recoverOrphanedRuns } from './modules/execution/execution.service';
 import { computeDailyAggregates, ANALYTICS_RECOMPUTE_INTERVAL_MS } from './modules/analytics/analytics.service';
 import { streamingService } from './modules/streaming/streaming.service';
 import { agentTokenIsConfigured } from './modules/agent-auth/agent-auth';
+import dynamicImport from './common/dynamic-import';
+import type * as MongooseIndexGuard from 'mongoose-index-guard';
 
 async function start(): Promise<void> {
   let config;
@@ -59,7 +61,10 @@ async function start(): Promise<void> {
   try {
     // ESM-only package, dynamically imported — same workaround as
     // layered-config-ts and fastify-auth-kit (this backend is CommonJS).
-    const { ensureIndexes } = await import('mongoose-index-guard');
+    // Uses dynamicImport(), not raw `await import(...)`: tsc rewrites a
+    // literal dynamic import to `require()` when compiling to CommonJS,
+    // which breaks precisely this case (see common/dynamic-import.ts).
+    const { ensureIndexes } = await dynamicImport<typeof MongooseIndexGuard>('mongoose-index-guard');
     await ensureIndexes(mongoose);
   } catch (err) {
     app.log.error(err instanceof Error ? err.message : err, 'Index build failed');

@@ -11,9 +11,11 @@ import websocket from '@fastify/websocket';
 // still CommonJS - see docs/LESSONS.md). Erased at compile time, no
 // runtime cost.
 import type {} from 'fastify-auth-kit';
+import type * as FastifyAuthKit from 'fastify-auth-kit';
 import { env } from './config/env';
 import { EffectiveConfig } from './config/org-config.schema';
 import { createUserStore } from './modules/auth/auth.service';
+import dynamicImport from './common/dynamic-import';
 import { hostsRoutes } from './modules/hosts/hosts.routes';
 import { devicesRoutes } from './modules/devices/devices.routes';
 import { configRoutes } from './modules/config/config.routes';
@@ -45,7 +47,8 @@ export async function buildApp(config: EffectiveConfig): Promise<FastifyInstance
 
   // Auth (fastify-auth-kit)
   void app.register(jwt, { secret: env.JWT_SECRET });
-  const { registerAuthDecorators, createAuthRoutes } = await import('fastify-auth-kit');
+  const { registerAuthDecorators, createAuthRoutes } =
+    await dynamicImport<typeof FastifyAuthKit>('fastify-auth-kit');
   app.after(() => registerAuthDecorators(app));
   void app.register(createAuthRoutes(createUserStore()), { prefix: '/api/auth' });
 

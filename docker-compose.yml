@@ -12,12 +12,13 @@ services:
 
   backend:
     build:
-      context: ./backend
-      dockerfile: Dockerfile
+      # Repo root: the Dockerfile needs the npm workspaces lockfile at the
+      # root, not just backend/'s own package.json — see backend/Dockerfile.
+      context: .
+      dockerfile: backend/Dockerfile
     restart: unless-stopped
     ports:
       - "${API_PORT:-3000}:3000"
-      - "${STREAM_WS_PORT:-3001}:3001"
     environment:
       NODE_ENV: production
       MONGODB_URI: mongodb://mongodb:27017/mobilehub
@@ -26,22 +27,24 @@ services:
       # start without it rather than exposing the agent endpoints.
       AGENT_TOKEN: ${AGENT_TOKEN}
       API_PORT: "3000"
-      STREAM_WS_PORT: "3001"
-      MACHINE_ID: ${MACHINE_ID:-}
-      EXECUTIONS_DIR: /home/node/mobile-hub-executions
+      EXECUTIONS_DIR: /home/mobilehub/mobile-hub-executions
+      BUILDS_DIR: /home/mobilehub/mobile-hub-builds
     volumes:
-      - executions:/home/node/mobile-hub-executions
+      - executions:/home/mobilehub/mobile-hub-executions
+      - builds:/home/mobilehub/mobile-hub-builds
     depends_on:
       mongodb:
         condition: service_healthy
 
   frontend:
     build:
-      context: ./frontend
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: frontend/Dockerfile
       args:
+        # WebSocket traffic (device streams, live execution logs) rides the
+        # same origin/port as HTTP — nginx.conf proxies /api/ with upgrade
+        # headers, so the frontend needs no separate WS URL.
         VITE_API_URL: ${VITE_API_URL:-http://localhost:3000}
-        VITE_STREAM_WS_URL: ${VITE_STREAM_WS_URL:-ws://localhost:3001}
     restart: unless-stopped
     ports:
       - "80:80"
@@ -51,3 +54,4 @@ services:
 volumes:
   mongo_data:
   executions:
+  builds:

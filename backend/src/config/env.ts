@@ -10,8 +10,6 @@ const envSchema = z.object({
   MONGODB_URI: z.string().min(1, 'MONGODB_URI is required'),
   JWT_SECRET: z.string().min(32, 'JWT_SECRET must be at least 32 characters'),
   API_PORT: z.coerce.number().int().positive().default(3000),
-  STREAM_WS_PORT: z.coerce.number().int().positive().default(3001),
-  MACHINE_ID: z.string().optional(),
   EXECUTIONS_DIR: z.string().default(path.join(os.homedir(), 'mobile-hub-executions')),
   BUILDS_DIR: z.string().default(path.join(os.homedir(), 'mobile-hub-builds')),
   // Global request cap per IP. The default suits a small lab; a busy one

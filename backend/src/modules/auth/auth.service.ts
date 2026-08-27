@@ -1,6 +1,8 @@
 import * as argon2 from 'argon2';
 import type { AuthUserStore } from 'fastify-auth-kit';
+import type * as FastifyAuthKit from 'fastify-auth-kit';
 import { User, IUser, UserRole } from './user.model';
+import dynamicImport from '../../common/dynamic-import';
 
 interface MongoDuplicateKeyError {
   code: number;
@@ -18,7 +20,7 @@ function isDuplicateKeyError(err: unknown): err is MongoDuplicateKeyError {
 export function createUserStore(): AuthUserStore<IUser, UserRole> {
   return {
     async createUser({ email, name, password }) {
-      const { DuplicateUserError } = await import('fastify-auth-kit');
+      const { DuplicateUserError } = await dynamicImport<typeof FastifyAuthKit>('fastify-auth-kit');
       const isFirstUser = (await User.estimatedDocumentCount()) === 0;
       const passwordHash = await argon2.hash(password);
       try {

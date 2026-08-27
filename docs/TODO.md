@@ -125,7 +125,7 @@ Status legend: ⬜ not started · 🔨 built (compiles/typechecks) · ✅ tested
 - [ ] `@fastify/static` is installed, unused so far (likely intended for artifact/log file serving once `builds`/`execution` exist)
 - [ ] No typed domain error classes (`ValidationError`/`NotFoundError`/`ConflictError`/...) yet — every route does inline `zod.safeParse` + manual status codes. Fine so far; will get repetitive once `builds`/`execution` add more routes — worth introducing before then, not after.
 - [x] **Real `.test.ts` coverage added for `devices`/`builds`/`execution`/`analytics` (2026-08-26)** — previously curl/E2E-only. 30 new tests, no real database required (Mongoose stubbed via `vi.spyOn`, matching this repo's existing convention): `devices` pins the two real sync bugs already fixed here — `status`/`lock` untouched for an already-known device except the explicit offline→idle path, and `lock:null` when a device goes offline; `builds` exercises real filesystem I/O through a fake provider (not mocked away, since the checksum/size integrity gate is the entire point) — ready-on-match, corrupt+delete on a 0-byte artifact, corrupt+delete on a size mismatch, corrupt on provider failure; `execution` proves the core property — the device lock is released in every terminal path (pass/fail/cancel) — via real spawned `node -e` processes rather than a mocked `child_process`, plus `recoverOrphanedRuns`; `analytics` covers idempotent upsert, UTC-day bucketing, and a deleted-device run bucketing into the `'all'` rollup only. Backend unit tests: 48 → 78.
-- [ ] **Backend is CommonJS while three dependencies (`layered-config-ts`, `fastify-auth-kit`, `mongoose-index-guard`) are ESM-only** — bridged via dynamic `import()` at the integration points (`app.ts`, `auth.service.ts`, `config.service.ts`, `server.ts`). Works and is verified — including a full failure-reproduction check against `mongoose-index-guard`'s real published GitHub artifact (dropped the `users.email` unique index, inserted duplicates directly, confirmed the server refuses to boot with the exact E11000 detail, then confirmed clean recovery after fixing the duplicates) — but backend/CLAUDE.md's own "Intended stack" already nominally prefers ESM ("unless a compatibility need forces CommonJS") — a real ESM migration would remove this workaround entirely. Deliberately not done this pass (would have been an unscoped, invasive refactor riding along with "consume packages") — worth a deliberate future decision, not a silent drive-by.
+- [x] **Backend is CommonJS while three dependencies (`layered-config-ts`, `fastify-auth-kit`, `mongoose-index-guard`) are ESM-only** — bridged via `backend/src/common/dynamic-import.ts` at the integration points (`app.ts`, `auth.service.ts`, `config.service.ts`, `server.ts`). **Corrected 2026-08-27**: this was previously marked "works and is verified," including a full failure-reproduction check for `mongoose-index-guard` — but every check, including that one, ran under `tsx watch`, which never exercises what `tsc`'s CommonJS output actually does with a dynamic `import()` (silently rewrites it to `require()`, which throws for an ESM-only package). The real compiled build was broken the entire time; only caught when `docker compose up` was run for the first time this session. Now fixed with a `new Function`-wrapped import that survives `tsc`'s rewrite, and **actually verified against the compiled artifact**: `node dist/server.js` in a real container, register/login through the real deployed stack, `GET /api/config` returning a real merged config. Full writeup in `docs/LESSONS.md`. backend/CLAUDE.md's "Intended stack" already nominally prefers ESM ("unless a compatibility need forces CommonJS") — a real ESM migration would remove this workaround category entirely. Still deliberately not done — would be an unscoped, invasive refactor — worth a deliberate future decision, not a silent drive-by.
 - [ ] `npm audit`: 6 vulnerabilities (4 moderate, 1 high, 1 critical) as of 2026-08-22, after bumping `@fastify/*` plugins to Fastify-v5-compatible majors — not yet investigated, run `npm audit` for detail
 
 ### extracted packages (sibling repos, not in this repo)
@@ -194,7 +194,7 @@ The long-standing "frontend doesn't typecheck" blocker is **resolved**. All thre
 
 | Item | Status | Notes |
 |---|---|---|
-| `docker-compose.yml`, `backend/Dockerfile`, `frontend/Dockerfile` | 🔨 | Present, not built/run this session. This session's smoke test used a standalone `mongo:7` container instead of the compose stack. |
+| `docker-compose.yml`, `backend/Dockerfile`, `frontend/Dockerfile` | ✅ | **Tested for real (2026-08-27)** — first time this whole build. Found and fixed three real bugs: (1) both Dockerfiles ran `npm ci` from their own subdirectory in this npm-workspaces monorepo, whose lockfile lives at the repo root — `npm ci` failed with `EUSAGE` on a completely fresh build. Fixed by building from the repo root context. (2) The compiled production build (`node dist/server.js`, what these containers run) turned out to be broken for three ESM-only package integrations — see `docs/LESSONS.md`. (3) `STREAM_WS_PORT`/`VITE_STREAM_WS_URL` were dead config from before streaming was unified onto the main port; removed. Also added a missing `BUILDS_DIR` volume. **Verified**: `docker compose build` clean, `docker compose up` — backend stays up (was crash-looping before the fix), registered a user and logged in through the real nginx-proxied origin (port 80), `GET /api/config` returned a real merged config through the real deployed backend (port 3000), agent endpoints correctly required `AGENT_TOKEN`. |
 
 ---
 
@@ -203,15 +203,54 @@ The long-standing "frontend doesn't typecheck" blocker is **resolved**. All thre
 - **E2E test repo — ✅ live (2026-08-23)**: [`deepak-rk/playwright-project_js`](https://github.com/deepak-rk/playwright-project_js) (package name `mobile-hub-e2e`) is now the dedicated mobile-hub E2E project. **24 Playwright API tests, all passing against a real backend** (19.5s, serial by design): auth, hosts, devices (including the sync-while-locked and host-drops-locked-device regression cases this repo fixed), config (admin-only), builds (real fetch/checksum via a local fixture artifact server), execution (pass/fail/cancel/409, plus the live WS event stream with token auth). `global-setup.ts` wipes a dedicated test DB (with a name-based guardrail against dropping real data) and mints the single first-user admin. CI workflow boots mobile-hub + a Mongo service container. Old tutorial scratch preserved on `legacy/original-scratch`. To run it locally: see that repo's README (backend must be started separately against `mobilehub_e2e`). UI tests still pending — blocked on this repo's frontend (see below).
 - **Extracted packages**: see the "extracted packages" section above — `layered-config-ts` and `fastify-auth-kit` live in their own repos, not here.
 
+## Stubs & placeholders — tracked for future completion or removal
+
+Consolidated 2026-08-27 after an honest end-to-end pass found the product's status report had been glossing over how much of this list existed. One list, so nothing here gets lost or re-discovered from scratch. Update this table in place — move a row out when it's actually built, don't just delete it.
+
+**Deferred by explicit decision (2026-08-26) — do not build without new input:**
+
+| Stub | What exists today | Where |
+|---|---|---|
+| Appium server orchestration | Nothing. `execution` is a generic `{command, args}` shell-command runner with zero Appium awareness — no session, no capabilities, no WebDriver protocol, no server lifecycle. | `backend/src/modules/execution/execution.service.ts` |
+| Automation/test-repo pulling | Nothing, not even a clear-rejection stub (unlike the build providers below). The `pulling` stage is silently skipped. | `execution.service.ts`'s stage list |
+| `automation.framework: 'appium'` config default | Declared, never read by any code — a placeholder tied to the row above. | `config/org-config.schema.ts:66` |
+| "Servers" nav page | Renders the exact same `hosts` data as the Devices page's host column, under a different label. No distinct Appium-server entity, lifecycle, or health check exists. | `frontend/src/features/servers/pages/ServersPage.tsx` |
+
+**No blocker — just not built yet:**
+
+| Stub | Status | Where |
+|---|---|---|
+| Nexus / S3 / webhook build providers | Real stubs — reject with a clear "not implemented yet" at fetch time, don't crash. Only `url` actually fetches anything. | `builds/providers/unimplemented-build-provider.ts` |
+| H264 streaming | MJPEG only. Protocol is already part of the session key and adapter interface — slots in without redesign. | `streaming/capture-source.ts` |
+| iOS discovery + capture adapter | Interfaces + per-host simulator cap exist, nothing populates them. **Blocked on hardware** (no Mac in this environment), not a decision. | `agent/device-discovery.ts`, `streaming/capture-source.ts` |
+| Weekly analytics aggregates | Model supports `window: 'weekly'`, only `daily` is ever computed. | `analytics/analytics.service.ts` |
+| Suite `flakiness` metric | Hardcoded `0`. Needs a real definition (e.g. same suite passing and failing across runs in a window). | `analytics/analytics.service.ts` |
+| `@fastify/swagger` + `swagger-ui` | Installed as dependencies, never registered in `app.ts`. Hand-authored `docs/api-spec.yaml` exists but nothing serves it or a generated equivalent. | `backend/src/app.ts` |
+| `@fastify/static` | Installed, unused. | — |
+| Typed domain error classes | Every route does inline `zod.safeParse` + manual status codes rather than `ValidationError`/`NotFoundError`/etc. Fine so far; will get repetitive as routes grow. | across `*.routes.ts` |
+| `npm audit` findings | 6 vulnerabilities (4 moderate, 1 high, 1 critical) as of 2026-08-22, not investigated. | — |
+
+**Deliberately scoped down for v1, not urgent:**
+
+| Item | Current behavior |
+|---|---|
+| Per-agent `AGENT_TOKEN` identity | One shared secret for every agent — no per-agent identity, rotation, or revocation. A compromised host means rotating all of them. |
+| Password reset / email verification | Not built. |
+| Refresh-token flow | A JWT just stops working after 24h; user re-logs-in. |
+| Device-lock TTL/heartbeat | A crashed client's lock is released when its device goes offline (auto), or by an admin force-unlock — no timeout while the device stays online. |
+| Host deregister endpoint | Doesn't exist. |
+| `BUILDS_DIR` retention | No cleanup/GC — every fetched build artifact is kept on disk forever. |
+| Execution WS event pub/sub | In-memory `EventEmitter` — doesn't survive a backend restart, single-instance only. Consistent with the rest of the codebase's single-instance assumption so far. |
+| Historical run log streaming | Completed runs' logs are read directly off disk (`logPath`); no dedicated tail endpoint. |
+
 ## Suggested next steps (in priority order)
 
-As of 2026-08-26 **every backend module is built and verified**, including a host-side device agent and authenticated agent endpoints. The frontend has auth, mutations, live run logs and a live device view. Root `npm test` / `typecheck` / `lint` / `build` are green (78 backend unit tests, 3 frontend — `lib/format`'s 9 moved to `ts-format-utils`'s own suite). The E2E suite is 51 tests (29 API + 22 UI) and runs against a token-enforcing hub. Both adb adapters are validated against a real booted emulator. **All four packages extracted this session are now integrated back in and pushed** (`mongoose-index-guard`, `ts-format-utils`, `react-design-kit`, `use-resilient-websocket`), alongside the two from the prior session (`layered-config-ts`, `fastify-auth-kit`) — see "extracted packages" above.
+As of 2026-08-27 **every backend module is built and tested, and `docker compose` actually deploys the whole stack** (found and fixed real bugs the first time it was ever run — see `docs/LESSONS.md`). The frontend has auth, mutations, live run logs and a live device view. Root `npm test` / `typecheck` / `lint` / `build` are green (78 backend unit tests, 3 frontend). The E2E suite is 51 tests (29 API + 22 UI) and runs against a token-enforcing hub. Both adb adapters are validated against real hardware. All six extracted personal packages are integrated back in and pushed — see "extracted packages" above. **Appium orchestration and the automation-repo-source decision are explicitly deferred** — the user will give input later; see the "Stubs & placeholders" table above for everything currently stubbed or scoped down, not just these two.
 
 1. **H264 streaming** — only MJPEG exists. The protocol is already part of the session key and the adapter interface, so it slots in without redesign, and it's the difference between a usable and a pleasant live view.
 2. **Per-agent identity for `AGENT_TOKEN`** — today it's one shared secret for every agent, so a single compromised host means rotating all of them. No revocation, no per-host attribution.
 3. **An iOS discovery + capture adapter** (`xcrun simctl`) — the interfaces and the per-host simulator cap already exist, but nothing populates them, so the platform is Android-only in practice.
 4. Remaining design-system components not yet covered by `react-design-kit`: `Toast`, `Dialog`/slide-over, filter bar with URL-synced filters, themed TanStack Table, Recharts trends (needs multi-day data first).
-5. Decide the automation-repo-source config (git URL, branch convention) — unblocks the real `pulling`/`restoring_cache` stages in `execution`. Related: now that a device agent exists, decide push-vs-pull for `install-job` in `builds`.
-6. Consider the ESM migration noted under "cross-cutting backend gaps" — would remove the dynamic-`import()` workaround needed for the extracted packages.
+5. Consider the ESM migration noted under "cross-cutting backend gaps" — would remove the `dynamic-import.ts` workaround needed for the extracted packages.
 
 See also `docs/LESSONS.md` (mistakes made + rules learned) and `docs/SELF_REVIEW.md` (the checklist to run at every major completion).

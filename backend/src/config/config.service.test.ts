@@ -1,10 +1,25 @@
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { ConfigError } from 'layered-config-ts';
 import { loadEffectiveConfig } from './config.service';
 import { PLATFORM_DEFAULTS } from './org-config.schema';
+
+// config.service.ts imports layered-config-ts through common/dynamic-import,
+// whose `new Function`-wrapped import() is what makes it survive tsc's
+// CommonJS downlevel in the real compiled build (see that file's doc
+// comment) — but the same trick throws ERR_VM_DYNAMIC_IMPORT_CALLBACK_MISSING
+// under Vitest, which runs test modules inside a vm sandbox that only wires
+// up a dynamic-import callback for code it transforms itself, not for a
+// separately-compiled `new Function` body. This mock routes around that by
+// delegating to a plain `import()` written directly in this file, which
+// Vitest's own transform handles correctly — still a real import of the
+// real package, not a stub, so this test still exercises actual
+// layered-config-ts behavior end to end.
+vi.mock('../common/dynamic-import', () => ({
+  default: (specifier: string) => import(specifier),
+}));
 
 // Generic merge/parse/validation behavior is covered by layered-config-ts's
 // own test suite. These tests only check that this backend's schema,

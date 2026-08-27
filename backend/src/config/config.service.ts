@@ -1,5 +1,7 @@
 import { parse as parseYaml } from 'yaml';
 import { partialConfigSchema, EffectiveConfig, PLATFORM_DEFAULTS } from './org-config.schema';
+import dynamicImport from '../common/dynamic-import';
+import type * as LayeredConfigTs from 'layered-config-ts';
 
 declare module 'fastify' {
   interface FastifyInstance {
@@ -17,7 +19,7 @@ declare module 'fastify' {
  * YAML or a schema violation (e.g. a typo'd key).
  */
 export async function loadEffectiveConfig(orgPath: string, projectPath: string): Promise<EffectiveConfig> {
-  const { loadLayeredConfig } = await import('layered-config-ts');
+  const { loadLayeredConfig } = await dynamicImport<typeof LayeredConfigTs>('layered-config-ts');
   return loadLayeredConfig({
     schema: partialConfigSchema,
     defaults: PLATFORM_DEFAULTS,
