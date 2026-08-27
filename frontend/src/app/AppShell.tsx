@@ -13,6 +13,13 @@ const navItems = [
   { to: '/servers', label: 'Hosts', icon: icons.host },
 ];
 
+// Every other nav item is a public read gated only on its actions — this one
+// is different because the backend gates the *read itself* (GET
+// /api/agent-credentials is admin-only, unlike /devices or /hosts), so
+// showing the link to anyone else would just point at a page that can never
+// load anything for them.
+const adminNavItems = [{ to: '/agent-credentials', label: 'Agent tokens', icon: icons.credential }];
+
 function UserMenu() {
   const { user, isLoading, logout } = useAuth();
   const location = useLocation();
@@ -48,6 +55,8 @@ export function AppShell() {
   // a saved preference keeps it.
   const { theme, toggle } = useTheme({ storageKey: 'mh_theme', defaultTheme: 'dark' });
   const ThemeIcon = theme === 'dark' ? icons.themeLight : icons.themeDark;
+  const { can } = useAuth();
+  const visibleNavItems = can('admin') ? [...navItems, ...adminNavItems] : navItems;
 
   return (
     <div className={styles.shell}>
@@ -57,7 +66,7 @@ export function AppShell() {
         </NavLink>
 
         <nav className={styles.nav} aria-label="Main">
-          {navItems.map(({ to, label, icon: Icon }) => (
+          {visibleNavItems.map(({ to, label, icon: Icon }) => (
             <NavLink
               key={to}
               to={to}

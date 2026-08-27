@@ -10,6 +10,7 @@ import {
   CheckCircle2,
   Circle,
   Download,
+  KeyRound,
   Lock,
   LockOpen,
   MinusCircle,
@@ -35,6 +36,7 @@ export const icons = {
   build: Package,
   execution: Terminal,
   analytics: BarChart3,
+  credential: KeyRound,
 
   // Lock state
   locked: Lock,

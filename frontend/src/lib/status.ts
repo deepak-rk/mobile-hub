@@ -25,7 +25,10 @@ export type StatusKind =
   | 'corrupt'
   | 'ready'
   // host
-  | 'online';
+  | 'online'
+  // agent credential
+  | 'active'
+  | 'revoked';
 
 interface StatusMeta {
   label: string;
@@ -60,6 +63,10 @@ export const statusMeta: Record<StatusKind, StatusMeta> = {
   validating: { label: 'Validating', token: '--status-smoke', icon: icons.validating, active: true },
   corrupt: { label: 'Corrupt', token: '--status-failed', icon: icons.corrupt },
   ready: { label: 'Ready', token: '--status-passed', icon: icons.ready },
+
+  // Agent credentials
+  active: { label: 'Active', token: '--status-passed', icon: icons.credential },
+  revoked: { label: 'Revoked', token: '--status-cancelled', icon: icons.offline },
 };
 
 export function getStatusMeta(status: string): StatusMeta {

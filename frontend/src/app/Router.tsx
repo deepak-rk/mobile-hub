@@ -9,6 +9,7 @@ import { TriggerRunPage } from '@/features/execution/pages/TriggerRunPage';
 import { RunDetailPage } from '@/features/execution/pages/RunDetailPage';
 import { AnalyticsPage } from '@/features/analytics/pages/AnalyticsPage';
 import { ServersPage } from '@/features/servers/pages/ServersPage';
+import { AgentCredentialsPage } from '@/features/agent-credentials/pages/AgentCredentialsPage';
 
 // Reads are public (the backend leaves list routes unauthenticated), so the
 // app shell is reachable signed-out and only *actions* are gated. Signing in
@@ -28,6 +29,7 @@ const router = createBrowserRouter([
       { path: 'execution/:runId', element: <RunDetailPage /> },
       { path: 'analytics', element: <AnalyticsPage /> },
       { path: 'servers', element: <ServersPage /> },
+      { path: 'agent-credentials', element: <AgentCredentialsPage /> },
     ],
   },
 ]);
