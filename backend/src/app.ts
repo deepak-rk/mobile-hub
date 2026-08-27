@@ -18,6 +18,7 @@ import { createUserStore } from './modules/auth/auth.service';
 import dynamicImport from './common/dynamic-import';
 import { hostsRoutes } from './modules/hosts/hosts.routes';
 import { devicesRoutes } from './modules/devices/devices.routes';
+import { agentCredentialsRoutes } from './modules/agent-credentials/agent-credentials.routes';
 import { configRoutes } from './modules/config/config.routes';
 import { buildsRoutes } from './modules/builds/builds.routes';
 import { executionRoutes } from './modules/execution/execution.routes';
@@ -44,6 +45,9 @@ export async function buildApp(config: EffectiveConfig): Promise<FastifyInstance
   void app.register(rateLimit, { max: env.RATE_LIMIT_MAX, timeWindow: env.RATE_LIMIT_WINDOW });
 
   app.decorate('config', config);
+  // Default null so a request that never reaches requireAgentToken still
+  // has a defined value, not undefined.
+  app.decorateRequest('agentMachineId', null);
 
   // Auth (fastify-auth-kit)
   void app.register(jwt, { secret: env.JWT_SECRET });
@@ -62,6 +66,7 @@ export async function buildApp(config: EffectiveConfig): Promise<FastifyInstance
   void app.register(hostsRoutes, { prefix: '/api/hosts' });
   void app.register(devicesRoutes, { prefix: '/api/devices' });
   void app.register(configRoutes, { prefix: '/api/config' });
+  void app.register(agentCredentialsRoutes, { prefix: '/api/agent-credentials' });
   void app.register(buildsRoutes, { prefix: '/api/builds' });
   void app.register(executionRoutes, { prefix: '/api/execution' });
   // Streaming hangs off the device resource it belongs to.

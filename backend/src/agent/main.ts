@@ -20,7 +20,12 @@ const envSchema = z.object({
   AGENT_POLL_INTERVAL_MS: z.coerce.number().int().positive().default(10_000),
   AGENT_MAX_DEVICES: z.coerce.number().int().nonnegative().default(8),
   AGENT_DISCOVERY: z.string().optional(),
-  // Must match the hub's AGENT_TOKEN. Optional only against a dev hub that has none.
+  // Preferred: a per-agent credential minted via POST /api/agent-credentials
+  // (admin-only), scoped to this host's machineId and individually
+  // revocable. Takes priority over AGENT_TOKEN below when both are set.
+  AGENT_CREDENTIAL_TOKEN: z.string().optional(),
+  // Legacy fallback: the hub's single shared secret. Must match the hub's
+  // AGENT_TOKEN. Optional only against a dev hub that has none.
   AGENT_TOKEN: z.string().optional(),
 });
 
@@ -56,7 +61,7 @@ async function main(): Promise<void> {
     },
     pollIntervalMs: env.AGENT_POLL_INTERVAL_MS,
     discovery,
-    hub: new HubClient(env.HUB_URL, env.AGENT_TOKEN),
+    hub: new HubClient(env.HUB_URL, env.AGENT_CREDENTIAL_TOKEN ?? env.AGENT_TOKEN),
   });
 
   const shutdown = (signal: string) => {

@@ -28,6 +28,13 @@ export const devicesRoutes: FastifyPluginAsync = async (app) => {
     if (!body.success) {
       return reply.status(400).send({ code: 'VALIDATION_ERROR', message: body.error.message });
     }
+    // See hosts.routes.ts's heartbeat handler for why this check exists.
+    if (req.agentMachineId && req.agentMachineId !== body.data.machineId) {
+      return reply.status(403).send({
+        code: 'AGENT_MACHINE_MISMATCH',
+        message: 'This credential is scoped to a different machineId.',
+      });
+    }
     return syncDevices(body.data.machineId, body.data.devices);
   });
 

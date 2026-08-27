@@ -21,7 +21,12 @@ const REQUEST_TIMEOUT_MS = 10_000;
 
 /** Thin wrapper over the two endpoints an agent talks to. */
 export class HubClient {
-  /** `agentToken` must match the hub's AGENT_TOKEN; omit it only against a dev hub that has none. */
+  /**
+   * A per-agent credential's raw token, or the hub's shared AGENT_TOKEN as a
+   * fallback — either is sent the same way (a Bearer header), so this class
+   * doesn't need to know which. Omit only against a dev hub with no auth
+   * configured at all.
+   */
   constructor(
     private readonly baseUrl: string,
     private readonly agentToken?: string,

@@ -25,6 +25,15 @@ export const hostsRoutes: FastifyPluginAsync = async (app) => {
     if (!body.success) {
       return reply.status(400).send({ code: 'VALIDATION_ERROR', message: body.error.message });
     }
+    // A per-agent credential is scoped to one machineId — that's the entire
+    // point of it over the shared AGENT_TOKEN. `agentMachineId` is null for
+    // the shared-token path, which stays unrestricted exactly as before.
+    if (req.agentMachineId && req.agentMachineId !== body.data.machineId) {
+      return reply.status(403).send({
+        code: 'AGENT_MACHINE_MISMATCH',
+        message: 'This credential is scoped to a different machineId.',
+      });
+    }
     const host = await upsertHeartbeat(body.data);
     return host;
   });
