@@ -104,6 +104,36 @@ describe('triggerExecutionRun', () => {
     expect(releaseLock).not.toHaveBeenCalled(); // never acquired, so nothing to release
   });
 
+  it('marks pulling/restoring_cache as not-implemented, distinct from installing being genuinely skipped', async () => {
+    // installing is 'skipped' with no error when the caller simply didn't
+    // supply a setup command — that's a real, intentional skip. pulling and
+    // restoring_cache are 'skipped' for every run because the feature does
+    // not exist yet, which is a different claim and must not read the same
+    // way, or a caller could believe a repo was pulled when nothing happened.
+    const doc = fakeRunDoc();
+    const create = vi.spyOn(ExecutionRun, 'create').mockResolvedValue(doc as never);
+    vi.spyOn(devicesService, 'acquireLock').mockResolvedValue({} as never);
+    const released = waitForReleaseLock();
+
+    await triggerExecutionRun({ ...baseInput, run: { command: 'node', args: ['-e', 'process.exit(0)'] } });
+    await released;
+
+    const passedStages = (create.mock.calls[0][0] as { stages: { name: string; status: string; error?: string }[] })
+      .stages;
+    const pulling = passedStages.find((s) => s.name === 'pulling');
+    const restoringCache = passedStages.find((s) => s.name === 'restoring_cache');
+    const installing = passedStages.find((s) => s.name === 'installing');
+
+    expect(pulling?.status).toBe('skipped');
+    expect(pulling?.error).toMatch(/not implemented/i);
+    expect(restoringCache?.status).toBe('skipped');
+    expect(restoringCache?.error).toMatch(/not implemented/i);
+    // No setup command was supplied in this input, so installing's skip is
+    // the genuinely-optional kind — no error attached.
+    expect(installing?.status).toBe('skipped');
+    expect(installing?.error).toBeUndefined();
+  });
+
   it('releases the lock after a passing run', async () => {
     const doc = fakeRunDoc();
     vi.spyOn(ExecutionRun, 'create').mockResolvedValue(doc as never);

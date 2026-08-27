@@ -50,9 +50,19 @@ const cancelledRuns = new Set<string>();
  * "restoring_cache" stages) are deliberately NOT implemented — root
  * CLAUDE.md / docs/architecture-blueprint.md don't yet specify where an
  * automation repo's source lives (git URL, branch-per-project convention,
- * etc.). Those two stages are marked 'skipped' until that's a real decision;
- * building them now would mean guessing. See docs/TODO.md.
+ * etc.). Building them now would mean guessing. See docs/TODO.md.
+ *
+ * Both stages carry `status: 'skipped'` *and* an explicit `error` message —
+ * not `status: 'skipped'` alone, the way `installing` legitimately is when a
+ * caller simply didn't supply a `setup` command. Those are different claims:
+ * "this step wasn't needed" versus "this step doesn't exist yet." Collapsing
+ * them into the same bare 'skipped' would let a caller believe a repo was
+ * pulled when nothing happened — the exact trap the build providers below
+ * already avoid by rejecting with a clear message instead of a silent no-op.
  */
+const NOT_IMPLEMENTED_STAGE_ERROR =
+  'Not implemented: no automation-repo-source config exists yet (root CLAUDE.md/docs/architecture-blueprint.md). ' +
+  'This did not run — it is not that nothing was needed.';
 export async function triggerExecutionRun(input: TriggerExecutionInput): Promise<IExecutionRun> {
   const runId = new Types.ObjectId();
   const workspacePath = path.join(env.EXECUTIONS_DIR, runId.toString());
@@ -69,8 +79,8 @@ export async function triggerExecutionRun(input: TriggerExecutionInput): Promise
     triggeredBy: input.triggeredBy,
     status: 'queued',
     stages: [
-      { name: 'pulling', status: 'skipped' },
-      { name: 'restoring_cache', status: 'skipped' },
+      { name: 'pulling', status: 'skipped', error: NOT_IMPLEMENTED_STAGE_ERROR },
+      { name: 'restoring_cache', status: 'skipped', error: NOT_IMPLEMENTED_STAGE_ERROR },
       { name: 'installing', status: input.setup ? 'pending' : 'skipped' },
       { name: 'execute', status: 'pending' },
     ],
