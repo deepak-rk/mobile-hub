@@ -20,6 +20,16 @@ const envSchema = z.object({
   AGENT_TOKEN: z.string().min(16, 'AGENT_TOKEN must be at least 16 characters').optional(),
   RATE_LIMIT_MAX: z.coerce.number().int().positive().default(200),
   RATE_LIMIT_WINDOW: z.string().default('1 minute'),
+  // A separate, tighter bucket for POST /api/auth/register and .../login —
+  // brute-force protection backend/CLAUDE.md already calls for. Must be its
+  // own config, not a hardcoded literal, for the same reason the global
+  // limit above is: an E2E suite or a shared-IP office network legitimately
+  // needs a different value than a small lab does. Plain milliseconds, not
+  // a duration string like RATE_LIMIT_WINDOW — this one is parsed by a
+  // small dedicated limiter (common/auth-rate-limit.ts), not
+  // @fastify/rate-limit, so there's no duration-string parser to reuse.
+  AUTH_RATE_LIMIT_MAX: z.coerce.number().int().positive().default(20),
+  AUTH_RATE_LIMIT_WINDOW_MS: z.coerce.number().int().positive().default(60_000),
   ORG_CONFIG_PATH: z.string().default(path.join(process.cwd(), '..', 'mobilehub.org.yaml')),
   PROJECT_CONFIG_PATH: z.string().default(path.join(process.cwd(), '..', 'mobilehub.project.yaml')),
 });

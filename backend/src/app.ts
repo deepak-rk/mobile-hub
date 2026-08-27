@@ -16,6 +16,7 @@ import { env } from './config/env';
 import { EffectiveConfig } from './config/org-config.schema';
 import { createUserStore } from './modules/auth/auth.service';
 import dynamicImport from './common/dynamic-import';
+import { createAuthRateLimiter } from './common/auth-rate-limit';
 import { hostsRoutes } from './modules/hosts/hosts.routes';
 import { devicesRoutes } from './modules/devices/devices.routes';
 import { agentCredentialsRoutes } from './modules/agent-credentials/agent-credentials.routes';
@@ -54,7 +55,26 @@ export async function buildApp(config: EffectiveConfig): Promise<FastifyInstance
   const { registerAuthDecorators, createAuthRoutes } =
     await dynamicImport<typeof FastifyAuthKit>('fastify-auth-kit');
   app.after(() => registerAuthDecorators(app));
-  void app.register(createAuthRoutes(createUserStore()), { prefix: '/api/auth' });
+
+  // fastify-auth-kit owns POST /register, POST /login and GET /me's route
+  // definitions internally — AuthRoutesOptions has no rate-limit passthrough.
+  // A tighter, independent limit for just register/login (see
+  // common/auth-rate-limit.ts for why it isn't built on @fastify/rate-limit's
+  // own decorator) is applied as a preHandler scoped to this child plugin, so
+  // it reaches only these routes and nothing else in the app. GET /me is
+  // deliberately excluded: it needs a valid JWT already, so it isn't
+  // brute-forceable the way credentials are, and the frontend calls it on
+  // every page load — tightening it too would risk a shared office IP
+  // getting locked out of normal use.
+  const authRateLimit = createAuthRateLimiter(env.AUTH_RATE_LIMIT_MAX, env.AUTH_RATE_LIMIT_WINDOW_MS);
+  void app.register(async (authScope) => {
+    authScope.addHook('preHandler', async (req, reply) => {
+      if (req.method === 'POST' && (req.url.endsWith('/register') || req.url.endsWith('/login'))) {
+        await authRateLimit(req, reply);
+      }
+    });
+    await authScope.register(createAuthRoutes(createUserStore()), { prefix: '/api/auth' });
+  });
 
   // WebSocket (execution events, build job progress)
   void app.register(websocket);
