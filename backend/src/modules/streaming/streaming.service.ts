@@ -1,7 +1,9 @@
 import { randomUUID } from 'crypto';
 import { CaptureHandle, CaptureSource, StreamProtocol } from './capture-source';
 import { AdbMjpegCaptureSource } from './sources/adb-mjpeg.source';
+import { AdbH264CaptureSource } from './sources/adb-h264.source';
 import { SyntheticCaptureSource } from './sources/synthetic.source';
+import { CompositeCaptureSource } from './sources/composite.source';
 import { StreamSession, IStreamSession } from './stream-session.model';
 
 export class StreamingError extends Error {
@@ -261,7 +263,10 @@ function resolveCaptureSource(): CaptureSource {
   // Synthetic is opt-in only: a misconfigured deployment must fail loudly
   // against a real device, never quietly serve fake frames.
   if (process.env.STREAM_CAPTURE_SOURCE === 'synthetic') return new SyntheticCaptureSource();
-  return new AdbMjpegCaptureSource();
+  // Real per-protocol adapters, dispatched by CompositeCaptureSource. Adding
+  // a protocol from here on is "write an adapter, add it to this list" —
+  // StreamingService itself needs no change; see composite.source.ts.
+  return new CompositeCaptureSource([new AdbMjpegCaptureSource(), new AdbH264CaptureSource()]);
 }
 
 export const streamingService = new StreamingService();

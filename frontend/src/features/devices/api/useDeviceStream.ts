@@ -11,6 +11,8 @@ export type StreamState =
   | 'unauthenticated'
   | 'rejected';
 
+export type StreamProtocol = 'mjpeg' | 'h264';
+
 interface JoinAck {
   type: 'joined';
   sessionId: string;
@@ -27,10 +29,19 @@ function readToken(): string | null {
 }
 
 /**
- * Subscribes to a device's MJPEG stream. Frames arrive as binary WS messages
- * and are turned into object URLs for an <img> via `useObjectUrl` (revokes
- * the previous URL on every swap, so a long session doesn't leak one per
- * frame).
+ * Subscribes to a device's live view. Frames/segments arrive as binary WS
+ * messages and are turned into object URLs via `useObjectUrl` (revokes the
+ * previous URL on every swap, so a long session doesn't leak one per
+ * frame/segment) — that swap-and-revoke logic is identical for both
+ * protocols, since `useObjectUrl` just wraps a `Blob`, whatever it contains.
+ *
+ * The two protocols are NOT equivalent, and the caller (`DeviceStream.tsx`)
+ * renders them differently — `mjpeg` is a continuous stream of independent
+ * still images (`<img>`), `h264` is a sequence of ~2s standalone video
+ * segments (`<video>`, one `load()`+`play()` per new blob). See
+ * `backend/src/modules/streaming/sources/adb-h264.source.ts`'s doc comment
+ * for why h264 is real but higher-latency, not a low-latency replacement for
+ * mjpeg — this hook just relays whichever protocol it's asked for.
  *
  * `retryKey` changes when the backend restarted the capture rather than the
  * socket merely blipping, which the UI surfaces so a viewer knows the picture
@@ -43,7 +54,7 @@ function readToken(): string | null {
  * (the join ack is the real confirmation), so "live" waits for that first
  * message rather than the socket handshake alone.
  */
-export function useDeviceStream(udid: string | undefined, enabled: boolean) {
+export function useDeviceStream(udid: string | undefined, enabled: boolean, protocol: StreamProtocol = 'mjpeg') {
   const [restarted, setRestarted] = useState(false);
   const retryKeyRef = useRef<string | null>(null);
   const frame = useObjectUrl();
@@ -53,7 +64,7 @@ export function useDeviceStream(udid: string | undefined, enabled: boolean) {
     token && udid
       ? buildSocketUrl(`/api/devices/${udid}/stream`, {
           origin: import.meta.env.VITE_API_URL || undefined,
-          query: { protocol: 'mjpeg', token },
+          query: { protocol, token },
         })
       : null;
 
@@ -71,9 +82,17 @@ export function useDeviceStream(udid: string | undefined, enabled: boolean) {
         }
         return;
       }
-      frame.setFromBlob(event.data);
+      // A WS binary MessageEvent's Blob carries no useful MIME type (Chrome
+      // reports it as text/plain). <img> doesn't care — image decoding is
+      // content-sniffed regardless of blob.type — but <video> strictly
+      // requires a correct type on its src blob or it never attempts to
+      // decode at all: readyState stays 0 (HAVE_NOTHING) forever with no
+      // error, which is exactly the "video never appears" failure this had
+      // before the type was set explicitly here. Re-wrapping costs nothing
+      // extra — Blob() over an existing Blob doesn't copy the bytes.
+      frame.setFromBlob(protocol === 'h264' ? new Blob([event.data], { type: 'video/mp4' }) : event.data);
     },
-    [frame],
+    [frame, protocol],
   );
 
   // Every code the backend uses to say "don't bother retrying" — see

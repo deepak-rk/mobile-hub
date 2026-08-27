@@ -45,6 +45,15 @@ export class SyntheticCaptureSource implements CaptureSource {
   constructor(private readonly intervalMs = 200) {}
 
   supports(_protocol: StreamProtocol): boolean {
+    // Claims every protocol, but always emits PNG stills regardless — this
+    // fixture exists for fan-out/multiplexing tests (see the class comment;
+    // streaming.service.test.ts uses 'h264' only as "a second distinct
+    // protocol value" to prove captureKey() differentiates by protocol, not
+    // to test protocol-accurate content). Never selected implicitly
+    // (STREAM_CAPTURE_SOURCE=synthetic is explicit opt-in dev/CI use), so a
+    // real browser never points a real <video>/h264 decoder at this. Do not
+    // "fix" this to only support mjpeg without also updating every test that
+    // relies on a second protocol value working here.
     return true;
   }
 

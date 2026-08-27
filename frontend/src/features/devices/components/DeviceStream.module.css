@@ -119,3 +119,31 @@
 .link:hover {
   text-decoration: underline;
 }
+
+.protocolToggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+}
+
+.protocolButton {
+  background: none;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-pill);
+  padding: 2px var(--space-2);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-ui);
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+.protocolButton:hover {
+  border-color: var(--border-strong);
+  color: var(--text-primary);
+}
+.protocolButtonActive {
+  background: var(--accent-muted);
+  border-color: var(--accent);
+  color: var(--accent);
+}
