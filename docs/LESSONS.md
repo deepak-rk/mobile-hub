@@ -6,6 +6,12 @@ Newest first. See root `CLAUDE.md` § Self-review for when to add an entry.
 
 ---
 
+## 2026-08-27 (yet later)
+
+**An outside review of `docs/TODO.md` found real drift this repo's own update discipline had missed: a stale "24 API tests, UI pending" line untouched since 2026-08-23, and two module sections still claiming "zero `.test.ts`" after both gained real coverage.** The rule "update the tracker in the same session as the work" had been followed for the *new* facts each session added, but nobody had swept for older lines the new facts silently made false elsewhere in the same file. **Rule now:** when adding a "N tests" or "zero tests" claim, grep the file for the same claim shape once in a while, not just add the new true line next to old ones that quietly became false.
+
+**The same review caught a real inconsistency in this repo's own stub convention: `pulling`/`restoring_cache` silently reported `'skipped'`, the same status legitimately used for `installing` when a caller simply chose not to supply a step — but one means "not needed" and the other means "doesn't exist yet," and collapsing them let a caller believe a repo was pulled when nothing happened.** The `builds` module already had the right shape for this exact situation (the Nexus/S3/webhook providers reject with a clear message); `execution` just hadn't applied it. **Rule now:** when a codebase already has a correct pattern for "this isn't built yet," a new stub that quietly does the same thing differently is worth noticing and reconciling, not just replicating from whatever felt natural for that specific stage — inconsistent stub shapes are the corner logging/reviews will not think to check twice.
+
 ## 2026-08-27 (later still)
 
 **A stubbed feature's own doc comment turned out to be wrong about the underlying platform, not just incomplete about the implementation.** `docs/TODO.md` said H264 "slots in without redesign" since the protocol was already part of the session key — true for that layer, but investigating the actual capture path found `adb screenrecord` on this environment's emulator has no `--output-format` flag and cannot write to stdout at all, contradicting what the existing code comments implied about a pipeable raw stream. **Rule now:** when picking up a stub, verify the platform assumption behind it before building on top of it, especially when the existing note was written without ever having tried the actual command — a plausible-sounding assumption about a device API is still a guess until it's run for real.
