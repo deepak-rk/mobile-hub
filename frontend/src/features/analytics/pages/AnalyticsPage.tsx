@@ -216,17 +216,36 @@ function AggregateSection({ aggregate }: { aggregate: AnalyticsAggregate }) {
 }
 
 export function AnalyticsPage() {
-  const { project, setProject, platform, setPlatform } = useAnalyticsFilters();
+  const { project, setProject, platform, setPlatform, window, setWindow } = useAnalyticsFilters();
   // 'all' is the cross-platform rollup; picking a specific platform switches
   // to that platform's own aggregate instead of the always-'all' one.
-  const { data: aggregates, isPending, error, refetch } = useAnalytics({ project: project || undefined, platform });
-  const filtered = project !== '' || platform !== 'all';
+  const {
+    data: aggregates,
+    isPending,
+    error,
+    refetch,
+  } = useAnalytics({ project: project || undefined, platform, window });
+  const filtered = project !== '' || platform !== 'all' || window !== 'daily';
 
   return (
     <Page>
-      <PageHeader title="Analytics" subtitle="Daily rollups of execution runs, recomputed hourly." />
+      <PageHeader
+        title="Analytics"
+        subtitle={
+          window === 'weekly'
+            ? 'Weekly rollups of execution runs, recomputed daily.'
+            : 'Daily rollups of execution runs, recomputed hourly.'
+        }
+      />
 
-      <AnalyticsFilterBar project={project} onProjectChange={setProject} platform={platform} onPlatformChange={setPlatform} />
+      <AnalyticsFilterBar
+        project={project}
+        onProjectChange={setProject}
+        platform={platform}
+        onPlatformChange={setPlatform}
+        window={window}
+        onWindowChange={setWindow}
+      />
 
       <QueryBoundary
         isPending={isPending}
