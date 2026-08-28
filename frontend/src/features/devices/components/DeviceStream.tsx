@@ -101,10 +101,15 @@ export function DeviceStream({ device }: { device: Device }) {
     protocol,
   );
 
-  // An offline device is never dialled at all, so say so directly. Not yet
-  // started reads as the same "Not streaming" idle state as offline/idle —
-  // the stage's own button is what invites starting it.
-  const displayState: StreamState = isOffline ? 'offline' : !started ? 'idle' : state;
+  // An offline device is never dialled at all, so say so directly. `!user`
+  // must be checked before `!started` — the hook itself never reaches its
+  // own 'unauthenticated' state while disabled (enabled = !isOffline &&
+  // started, so `state` is just the hook's idle default until start is
+  // clicked), and a signed-out visitor shouldn't have to click "start" to be
+  // told to sign in. Only once both offline and auth are ruled out does "not
+  // yet started" fall back to the same idle banner as offline/idle — the
+  // stage's own button is what invites starting it from there.
+  const displayState: StreamState = isOffline ? 'offline' : !user ? 'unauthenticated' : !started ? 'idle' : state;
   const banner = BANNER[displayState];
 
   return (

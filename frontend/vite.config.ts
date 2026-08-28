@@ -27,5 +27,16 @@ export default defineConfig({
     globals: true,
     environment: 'jsdom',
     setupFiles: ['./src/test-utils/setup.ts'],
+    server: {
+      // react-design-kit's compiled ESM output omits the .js extension on
+      // its own relative imports (dist/index.js imports './Button', not
+      // './Button.js') — invalid under strict Node ESM resolution, which is
+      // what Vitest uses for anything left external. Inlining forces it
+      // through Vite's own (extension-tolerant) resolver instead, matching
+      // how the real app already consumes it via `vite build`/`vite dev`.
+      // No test imported from this package until useMultiViewSelection's
+      // tests, which is why this never surfaced before.
+      deps: { inline: ['react-design-kit'] },
+    },
   },
 });
