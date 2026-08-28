@@ -1,6 +1,6 @@
 import { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
-import { computeDailyAggregates, queryAggregates } from './analytics.service';
+import { computeDailyAggregates, computeWeeklyAggregates, queryAggregates } from './analytics.service';
 
 const listQuery = z.object({
   project: z.string().optional(),
@@ -12,6 +12,9 @@ const listQuery = z.object({
 
 const recomputeBody = z.object({
   date: z.coerce.date().optional(),
+  // Defaults to 'daily' — unchanged behavior for existing callers that don't
+  // pass this.
+  window: z.enum(['daily', 'weekly']).optional(),
 });
 
 export const analyticsRoutes: FastifyPluginAsync = async (app) => {
@@ -28,7 +31,10 @@ export const analyticsRoutes: FastifyPluginAsync = async (app) => {
     if (!body.success) {
       return reply.status(400).send({ code: 'VALIDATION_ERROR', message: body.error.message });
     }
-    const aggregates = await computeDailyAggregates(body.data.date);
+    const aggregates =
+      body.data.window === 'weekly'
+        ? await computeWeeklyAggregates(body.data.date)
+        : await computeDailyAggregates(body.data.date);
     return { computed: aggregates.length, aggregates };
   });
 };

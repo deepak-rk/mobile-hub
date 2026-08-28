@@ -5,7 +5,12 @@ import { env } from './config/env';
 import { loadEffectiveConfig } from './config/config.service';
 import { markStaleHostsOffline, HOST_STALE_CHECK_INTERVAL_MS } from './modules/hosts/hosts.service';
 import { recoverOrphanedRuns } from './modules/execution/execution.service';
-import { computeDailyAggregates, ANALYTICS_RECOMPUTE_INTERVAL_MS } from './modules/analytics/analytics.service';
+import {
+  computeDailyAggregates,
+  computeWeeklyAggregates,
+  ANALYTICS_RECOMPUTE_INTERVAL_MS,
+  WEEKLY_RECOMPUTE_INTERVAL_MS,
+} from './modules/analytics/analytics.service';
 import { runBuildGc, BUILD_GC_INTERVAL_MS } from './modules/builds/builds.service';
 import { releaseExpiredLocks, DEVICE_LOCK_SWEEP_INTERVAL_MS } from './modules/devices/devices.service';
 import { streamingService } from './modules/streaming/streaming.service';
@@ -102,6 +107,14 @@ async function start(): Promise<void> {
     });
   }, ANALYTICS_RECOMPUTE_INTERVAL_MS);
 
+  // The current ISO week only changes as today's runs land in it, so a daily
+  // cadence keeps it current without the hourly churn daily aggregates need.
+  const weeklyAnalyticsInterval = setInterval(() => {
+    computeWeeklyAggregates().catch((err: unknown) => {
+      app.log.error(err, 'Failed to recompute weekly analytics aggregates');
+    });
+  }, WEEKLY_RECOMPUTE_INTERVAL_MS);
+
   // Keeps BUILDS_DIR from growing forever — see builds.service.ts's
   // runBuildGc doc comment for the retention policy itself.
   const buildGcInterval = setInterval(() => {
@@ -132,6 +145,7 @@ async function start(): Promise<void> {
     app.log.info(`${signal} received — shutting down`);
     clearInterval(staleHostInterval);
     clearInterval(analyticsInterval);
+    clearInterval(weeklyAnalyticsInterval);
     clearInterval(buildGcInterval);
     clearInterval(deviceLockSweepInterval);
     // No capture process may outlive the server.

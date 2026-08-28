@@ -2,7 +2,7 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import { ExecutionRun } from '../execution/execution-run.model';
 import { Device } from '../devices/device.model';
 import { AnalyticsAggregate } from './analytics-aggregate.model';
-import { computeDailyAggregates, queryAggregates } from './analytics.service';
+import { computeDailyAggregates, computeWeeklyAggregates, queryAggregates } from './analytics.service';
 
 /**
  * Covers the three properties `computeDailyAggregates` exists for:
@@ -113,6 +113,74 @@ describe('computeDailyAggregates', () => {
     // Durations: run 1 = 60s, run 2 = 120s (its own endedAt override, default startedAt);
     // run 3 has no startedAt and is excluded. Average of the other two: 90s.
     expect(summary?.avgDurationMs).toBe(90000);
+  });
+});
+
+describe('computeWeeklyAggregates', () => {
+  it('upserts on the (window, date, project, platform) key with date pinned to the week\'s Monday', async () => {
+    stubRuns([run()], [{ udid: 'd1', platform: 'android' }]);
+    const upsert = vi.fn().mockResolvedValue({ id: 'agg-1' });
+    vi.spyOn(AnalyticsAggregate, 'findOneAndUpdate').mockImplementation(upsert as never);
+
+    // 2026-01-01 is a Thursday; that ISO week's Monday is 2025-12-29.
+    await computeWeeklyAggregates(new Date('2026-01-01T12:00:00Z'));
+
+    const calls = upsert.mock.calls as UpsertCall[];
+    for (const [filter, , options] of calls) {
+      expect(filter).toMatchObject({ window: 'weekly', date: new Date('2025-12-29T00:00:00.000Z'), project: 'p1' });
+      expect(options).toMatchObject({ upsert: true, new: true });
+    }
+  });
+
+  it('any day within the same ISO week resolves to the same Monday, including Sunday (the week\'s last day)', async () => {
+    const findSpy = vi.spyOn(ExecutionRun, 'find').mockResolvedValue([] as never);
+    vi.spyOn(Device, 'find').mockReturnValue({ select: () => Promise.resolve([]) } as never);
+
+    // 2026-01-04 is the Sunday closing the same ISO week as 2026-01-01 above.
+    await computeWeeklyAggregates(new Date('2026-01-04T23:00:00Z'));
+
+    expect(findSpy).toHaveBeenCalledWith({
+      status: { $in: ['passed', 'failed', 'cancelled'] },
+      endedAt: { $gte: new Date('2025-12-29T00:00:00.000Z'), $lt: new Date('2026-01-05T00:00:00.000Z') },
+    });
+  });
+
+  it('queries the full 7-day range, not a single day', async () => {
+    const findSpy = vi.spyOn(ExecutionRun, 'find').mockResolvedValue([] as never);
+    vi.spyOn(Device, 'find').mockReturnValue({ select: () => Promise.resolve([]) } as never);
+
+    await computeWeeklyAggregates(new Date('2026-03-18T12:00:00Z')); // a Wednesday
+
+    const [{ endedAt }] = findSpy.mock.calls[0] as unknown as [{ endedAt: { $gte: Date; $lt: Date } }];
+    const spanMs = endedAt.$lt.getTime() - endedAt.$gte.getTime();
+    expect(spanMs).toBe(7 * 24 * 60 * 60 * 1000);
+  });
+
+  it('produces both the per-platform aggregate and an "all" rollup, same as daily', async () => {
+    stubRuns([run()], [{ udid: 'd1', platform: 'android' }]);
+    const upsert = vi.fn().mockResolvedValue({ id: 'agg' });
+    vi.spyOn(AnalyticsAggregate, 'findOneAndUpdate').mockImplementation(upsert as never);
+
+    await computeWeeklyAggregates(new Date('2026-01-01T12:00:00Z'));
+
+    const calls = upsert.mock.calls as UpsertCall[];
+    const platforms = calls.map(([filter]) => filter.platform);
+    expect(platforms).toEqual(expect.arrayContaining(['android', 'all']));
+  });
+
+  it('is idempotent — recomputing the same week upserts the same key, not a duplicate row', async () => {
+    stubRuns([run()], [{ udid: 'd1', platform: 'android' }]);
+    const upsert = vi.fn().mockResolvedValue({ id: 'agg' });
+    vi.spyOn(AnalyticsAggregate, 'findOneAndUpdate').mockImplementation(upsert as never);
+
+    await computeWeeklyAggregates(new Date('2026-01-01T12:00:00Z'));
+    const firstCallKeys = (upsert.mock.calls as UpsertCall[]).map(([filter]) => filter);
+    upsert.mockClear();
+
+    await computeWeeklyAggregates(new Date('2026-01-02T09:00:00Z')); // a different day, same week
+    const secondCallKeys = (upsert.mock.calls as UpsertCall[]).map(([filter]) => filter);
+
+    expect(secondCallKeys).toEqual(firstCallKeys);
   });
 });
 

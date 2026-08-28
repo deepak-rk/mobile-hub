@@ -3,6 +3,7 @@ import { Device } from '../devices/device.model';
 import { AnalyticsAggregate, IAnalyticsAggregate } from './analytics-aggregate.model';
 
 export const ANALYTICS_RECOMPUTE_INTERVAL_MS = 60 * 60 * 1000; // recompute today's aggregates hourly
+export const WEEKLY_RECOMPUTE_INTERVAL_MS = 24 * 60 * 60 * 1000; // the current week changes at most once a day
 
 type Platform = 'android' | 'ios' | 'all';
 
@@ -17,6 +18,19 @@ interface RunFacts {
 
 function utcDayStart(date: Date): Date {
   return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
+}
+
+/**
+ * The Monday (UTC) that starts the ISO 8601 week containing `date` — the
+ * `date` field weekly aggregates are keyed and queried by. ISO weeks start
+ * Monday, not Sunday; `Date#getUTCDay()` returns 0 for Sunday, so Sunday
+ * needs a 6-day rewind rather than the naive `day - 1`.
+ */
+function isoWeekStart(date: Date): Date {
+  const day = utcDayStart(date);
+  const daysSinceMonday = day.getUTCDay() === 0 ? 6 : day.getUTCDay() - 1;
+  day.setUTCDate(day.getUTCDate() - daysSinceMonday);
+  return day;
 }
 
 function summarize(runs: RunFacts[]): Pick<
@@ -65,19 +79,29 @@ function summarize(runs: RunFacts[]): Pick<
 
 /**
  * Rolls terminal ExecutionRun docs (passed/failed/cancelled, bucketed by
- * endedAt within the given UTC day) into daily AnalyticsAggregate docs,
- * upserting on the (window, date, project, platform) unique index so
- * recomputing the same day is idempotent. Produces one aggregate per
- * (project, platform-with-data) plus an 'all'-platform rollup per project.
- * Returns the aggregates written.
+ * endedAt within [rangeStart, rangeEnd)) into AnalyticsAggregate docs keyed
+ * by (window, bucketDate, project, platform), upserting on that unique
+ * index so recomputing the same window is idempotent. Produces one
+ * aggregate per (project, platform-with-data) plus an 'all'-platform
+ * rollup per project. Shared by both daily and weekly so the two windows
+ * can never drift in what "terminal run" or "platform join" means — weekly
+ * deliberately rescans runs rather than summing daily rows: a daily row's
+ * avgDurationMs is an average over only the runs that had a duration, and
+ * the count of those isn't stored separately from totalRuns, so summing
+ * pre-aggregated daily rows cannot exactly reconstruct a weekly average
+ * without either a schema change or a documented approximation. Rescanning
+ * avoids that gap entirely, and at this app's scale (a device lab, not
+ * millions of runs) the extra query cost is not a real tradeoff.
  */
-export async function computeDailyAggregates(date: Date = new Date()): Promise<IAnalyticsAggregate[]> {
-  const dayStart = utcDayStart(date);
-  const dayEnd = new Date(dayStart.getTime() + 24 * 60 * 60 * 1000);
-
+async function computeAggregates(
+  window: 'daily' | 'weekly',
+  bucketDate: Date,
+  rangeStart: Date,
+  rangeEnd: Date,
+): Promise<IAnalyticsAggregate[]> {
   const runs = await ExecutionRun.find({
     status: { $in: ['passed', 'failed', 'cancelled'] },
-    endedAt: { $gte: dayStart, $lt: dayEnd },
+    endedAt: { $gte: rangeStart, $lt: rangeEnd },
   });
 
   // Resolve each run's platform via its device. A device that has since been
@@ -113,7 +137,7 @@ export async function computeDailyAggregates(date: Date = new Date()): Promise<I
 
     for (const { platform, group } of buckets) {
       const doc = await AnalyticsAggregate.findOneAndUpdate(
-        { window: 'daily', date: dayStart, project, platform },
+        { window, date: bucketDate, project, platform },
         { ...summarize(group), computedAt: new Date() },
         { upsert: true, new: true, setDefaultsOnInsert: true },
       );
@@ -122,6 +146,25 @@ export async function computeDailyAggregates(date: Date = new Date()): Promise<I
   }
 
   return written;
+}
+
+/** Recomputes the daily aggregate for the UTC day containing `date`. */
+export async function computeDailyAggregates(date: Date = new Date()): Promise<IAnalyticsAggregate[]> {
+  const dayStart = utcDayStart(date);
+  const dayEnd = new Date(dayStart.getTime() + 24 * 60 * 60 * 1000);
+  return computeAggregates('daily', dayStart, dayStart, dayEnd);
+}
+
+/**
+ * Recomputes the weekly aggregate for the ISO week containing `date`. The
+ * `date` field on a weekly row is that week's Monday (UTC) — the same value
+ * `isoWeekStart` returns for any date in that week, so re-running for any
+ * day within the week upserts the same row.
+ */
+export async function computeWeeklyAggregates(date: Date = new Date()): Promise<IAnalyticsAggregate[]> {
+  const weekStart = isoWeekStart(date);
+  const weekEnd = new Date(weekStart.getTime() + 7 * 24 * 60 * 60 * 1000);
+  return computeAggregates('weekly', weekStart, weekStart, weekEnd);
 }
 
 export async function queryAggregates(filters: {
