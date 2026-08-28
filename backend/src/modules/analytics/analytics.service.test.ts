@@ -25,10 +25,22 @@ function run(overrides: Partial<Record<string, unknown>> = {}) {
   };
 }
 
-function stubRuns(runs: ReturnType<typeof run>[], devices: { udid: string; platform: string }[]) {
+/**
+ * `history` is the trailing daily AnalyticsAggregate rows computeFlakinessBySuite
+ * queries — defaults to none, matching every existing test's assumption
+ * (no prior days on record, flakiness computed over whatever data exists).
+ */
+function stubRuns(
+  runs: ReturnType<typeof run>[],
+  devices: { udid: string; platform: string }[],
+  history: Array<{ bySuite: Array<{ suite: string; passRate: number }> }> = [],
+) {
   vi.spyOn(ExecutionRun, 'find').mockResolvedValue(runs as never);
   vi.spyOn(Device, 'find').mockReturnValue({
     select: () => Promise.resolve(devices),
+  } as never);
+  vi.spyOn(AnalyticsAggregate, 'find').mockReturnValue({
+    select: () => Promise.resolve(history),
   } as never);
 }
 
@@ -181,6 +193,85 @@ describe('computeWeeklyAggregates', () => {
     const secondCallKeys = (upsert.mock.calls as UpsertCall[]).map(([filter]) => filter);
 
     expect(secondCallKeys).toEqual(firstCallKeys);
+  });
+});
+
+describe('flakiness (docs/competitive-analysis.md §4f: stddev of daily pass rate over a trailing window)', () => {
+  it('scores 0 for a suite that is consistently green across the trailing history', async () => {
+    stubRuns([run({ status: 'passed' })], [{ udid: 'd1', platform: 'android' }], [
+      { bySuite: [{ suite: 'smoke', passRate: 1 }] },
+      { bySuite: [{ suite: 'smoke', passRate: 1 }] },
+      { bySuite: [{ suite: 'smoke', passRate: 1 }] },
+    ]);
+    const upsert = vi.fn().mockResolvedValue({ id: 'agg' });
+    vi.spyOn(AnalyticsAggregate, 'findOneAndUpdate').mockImplementation(upsert as never);
+
+    await computeDailyAggregates(new Date('2026-01-01T12:00:00Z'));
+
+    const calls = upsert.mock.calls as UpsertCall[];
+    const androidCall = calls.find(([filter]) => filter.platform === 'android');
+    const summary = androidCall?.[1] as { bySuite: Array<{ suite: string; flakiness: number }> };
+    expect(summary.bySuite.find((s) => s.suite === 'smoke')?.flakiness).toBe(0);
+  });
+
+  it('scores above 0 for a suite alternating pass/fail across the trailing history', async () => {
+    stubRuns([run({ status: 'passed' })], [{ udid: 'd1', platform: 'android' }], [
+      { bySuite: [{ suite: 'smoke', passRate: 1 }] },
+      { bySuite: [{ suite: 'smoke', passRate: 0 }] },
+      { bySuite: [{ suite: 'smoke', passRate: 1 }] },
+    ]);
+    const upsert = vi.fn().mockResolvedValue({ id: 'agg' });
+    vi.spyOn(AnalyticsAggregate, 'findOneAndUpdate').mockImplementation(upsert as never);
+
+    await computeDailyAggregates(new Date('2026-01-01T12:00:00Z'));
+
+    const calls = upsert.mock.calls as UpsertCall[];
+    const androidCall = calls.find(([filter]) => filter.platform === 'android');
+    const summary = androidCall?.[1] as { bySuite: Array<{ suite: string; flakiness: number }> };
+    expect(summary.bySuite.find((s) => s.suite === 'smoke')?.flakiness).toBeGreaterThan(0);
+  });
+
+  it('folds in the fresh (not-yet-persisted) rate for today, not just prior history', async () => {
+    // No prior history at all — today's own run is the only data point.
+    // A single point has no measurable variance, so flakiness reads 0
+    // (honest "not enough data yet"), not NaN.
+    stubRuns([run({ status: 'passed' })], [{ udid: 'd1', platform: 'android' }], []);
+    const upsert = vi.fn().mockResolvedValue({ id: 'agg' });
+    vi.spyOn(AnalyticsAggregate, 'findOneAndUpdate').mockImplementation(upsert as never);
+
+    await computeDailyAggregates(new Date('2026-01-01T12:00:00Z'));
+
+    const calls = upsert.mock.calls as UpsertCall[];
+    const androidCall = calls.find(([filter]) => filter.platform === 'android');
+    const summary = androidCall?.[1] as { bySuite: Array<{ suite: string; flakiness: number }> };
+    expect(summary.bySuite.find((s) => s.suite === 'smoke')?.flakiness).toBe(0);
+  });
+
+  it('a suite with no runs at all in the trailing window is simply absent, not NaN', async () => {
+    stubRuns([], [], []);
+    const upsert = vi.fn().mockResolvedValue({ id: 'agg' });
+    vi.spyOn(AnalyticsAggregate, 'findOneAndUpdate').mockImplementation(upsert as never);
+
+    await computeDailyAggregates(new Date('2026-01-01T12:00:00Z'));
+
+    expect(upsert).not.toHaveBeenCalled(); // no runs at all -> no projects -> no buckets written
+  });
+
+  it('a weekly bucket uses only real trailing daily history, not a fabricated "this week" data point', async () => {
+    stubRuns([run({ status: 'passed' })], [{ udid: 'd1', platform: 'android' }], [
+      { bySuite: [{ suite: 'smoke', passRate: 0.5 }] },
+      { bySuite: [{ suite: 'smoke', passRate: 0.5 }] },
+    ]);
+    const upsert = vi.fn().mockResolvedValue({ id: 'agg' });
+    vi.spyOn(AnalyticsAggregate, 'findOneAndUpdate').mockImplementation(upsert as never);
+
+    await computeWeeklyAggregates(new Date('2026-01-01T12:00:00Z'));
+
+    const calls = upsert.mock.calls as UpsertCall[];
+    const androidCall = calls.find(([filter]) => filter.platform === 'android');
+    const summary = androidCall?.[1] as { bySuite: Array<{ suite: string; flakiness: number }> };
+    // Constant 0.5 history -> 0 variance, regardless of this week's own (unused) pass rate.
+    expect(summary.bySuite.find((s) => s.suite === 'smoke')?.flakiness).toBe(0);
   });
 });
 

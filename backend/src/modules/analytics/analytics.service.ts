@@ -4,6 +4,8 @@ import { AnalyticsAggregate, IAnalyticsAggregate } from './analytics-aggregate.m
 
 export const ANALYTICS_RECOMPUTE_INTERVAL_MS = 60 * 60 * 1000; // recompute today's aggregates hourly
 export const WEEKLY_RECOMPUTE_INTERVAL_MS = 24 * 60 * 60 * 1000; // the current week changes at most once a day
+/** docs/competitive-analysis.md §4f: flakiness = stddev(daily pass rate) over this trailing window. */
+export const FLAKINESS_WINDOW_DAYS = 14;
 
 type Platform = 'android' | 'ios' | 'all';
 
@@ -33,10 +35,21 @@ function isoWeekStart(date: Date): Date {
   return day;
 }
 
-function summarize(runs: RunFacts[]): Pick<
-  IAnalyticsAggregate,
-  'totalRuns' | 'passedRuns' | 'failedRuns' | 'cancelledRuns' | 'passRate' | 'avgDurationMs' | 'byDevice' | 'bySuite'
-> {
+/** Population standard deviation — 0 for fewer than 2 values, since no variance is measurable from one data point (or none). */
+function stddev(values: number[]): number {
+  if (values.length < 2) return 0;
+  const mean = values.reduce((a, b) => a + b, 0) / values.length;
+  const variance = values.reduce((sum, v) => sum + (v - mean) ** 2, 0) / values.length;
+  return Math.sqrt(variance);
+}
+
+type SummaryBySuite = { suite: string; runs: number; passRate: number };
+
+function summarize(
+  runs: RunFacts[],
+): Pick<IAnalyticsAggregate, 'totalRuns' | 'passedRuns' | 'failedRuns' | 'cancelledRuns' | 'passRate' | 'avgDurationMs' | 'byDevice'> & {
+  bySuite: SummaryBySuite[];
+} {
   const passed = runs.filter((r) => r.status === 'passed').length;
   const failed = runs.filter((r) => r.status === 'failed').length;
   const cancelled = runs.filter((r) => r.status === 'cancelled').length;
@@ -65,16 +78,67 @@ function summarize(runs: RunFacts[]): Pick<
       runs: group.length,
       passRate: groupRate(group),
     })),
-    // flakiness is 0 for v1 - computing it properly needs retry/history
-    // correlation (same suite+branch flip-flopping pass/fail), which doesn't
-    // exist yet. The field stays in the schema so the API shape is stable.
     bySuite: [...bySuiteMap.entries()].map(([suite, group]) => ({
       suite,
       runs: group.length,
       passRate: groupRate(group),
-      flakiness: 0,
     })),
   };
+}
+
+/**
+ * Per-suite flakiness = stddev of that suite's daily pass rate over the
+ * trailing FLAKINESS_WINDOW_DAYS (docs/competitive-analysis.md §4f) — a
+ * suite alternating pass/fail scores high, one that's consistently green or
+ * consistently red scores 0 (population stddev of a constant series is 0),
+ * matching what "flaky" actually means (inconsistent, not just failing).
+ *
+ * Computed from real persisted *daily* AnalyticsAggregate rows, never
+ * re-derived from raw runs — so a weekly aggregate's flakiness uses the
+ * exact same trailing daily history a same-day daily aggregate would, and
+ * the two windows can't drift in what flakiness means the way they're
+ * already documented not to drift on "terminal run" above.
+ *
+ * `windowEnd` is exclusive. `freshRates`, when given, is folded in as the
+ * final (most recent) data point — used only when computing the *daily*
+ * bucket for `windowEnd`'s own day, since that day's own row doesn't exist
+ * in AnalyticsAggregate yet at the point this runs (upsert hasn't happened).
+ * A weekly bucket has no such "current day" of its own, so it's omitted
+ * there — flakiness is purely the trailing real daily history.
+ *
+ * A suite with fewer than FLAKINESS_WINDOW_DAYS of history is scored over
+ * however many days it actually has, not blocked as "not enough data" —
+ * `stddev`'s own <2-point guard already makes a single day read as 0
+ * (no evidence of flakiness yet) rather than NaN, which is the honest
+ * answer for a suite that's brand new.
+ */
+async function computeFlakinessBySuite(
+  project: string,
+  platform: Platform,
+  windowEnd: Date,
+  freshRates?: Map<string, number>,
+): Promise<Map<string, number>> {
+  const windowStart = new Date(windowEnd.getTime() - FLAKINESS_WINDOW_DAYS * 24 * 60 * 60 * 1000);
+  const history = await AnalyticsAggregate.find({
+    window: 'daily',
+    project,
+    platform,
+    date: { $gte: windowStart, $lt: windowEnd },
+  }).select('bySuite');
+
+  const ratesBySuite = new Map<string, number[]>();
+  for (const doc of history) {
+    for (const s of doc.bySuite) {
+      ratesBySuite.set(s.suite, [...(ratesBySuite.get(s.suite) ?? []), s.passRate]);
+    }
+  }
+  if (freshRates) {
+    for (const [suite, rate] of freshRates) {
+      ratesBySuite.set(suite, [...(ratesBySuite.get(suite) ?? []), rate]);
+    }
+  }
+
+  return new Map([...ratesBySuite.entries()].map(([suite, rates]) => [suite, stddev(rates)]));
 }
 
 /**
@@ -136,9 +200,21 @@ async function computeAggregates(
     ];
 
     for (const { platform, group } of buckets) {
+      const summary = summarize(group);
+
+      // Only a *daily* bucket represents "today" itself, which isn't yet a
+      // persisted row for computeFlakinessBySuite's history query to find —
+      // fold its own fresh rates in as the window's final data point. A
+      // weekly bucket isn't a single day, so it contributes nothing of its
+      // own; flakiness there is purely the real trailing daily history.
+      const freshRates =
+        window === 'daily' ? new Map(summary.bySuite.map((s) => [s.suite, s.passRate])) : undefined;
+      const flakinessBySuite = await computeFlakinessBySuite(project, platform, rangeEnd, freshRates);
+      const bySuite = summary.bySuite.map((s) => ({ ...s, flakiness: flakinessBySuite.get(s.suite) ?? 0 }));
+
       const doc = await AnalyticsAggregate.findOneAndUpdate(
         { window, date: bucketDate, project, platform },
-        { ...summarize(group), computedAt: new Date() },
+        { ...summary, bySuite, computedAt: new Date() },
         { upsert: true, new: true, setDefaultsOnInsert: true },
       );
       written.push(doc);
