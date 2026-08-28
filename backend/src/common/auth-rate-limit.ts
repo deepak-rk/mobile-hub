@@ -23,11 +23,37 @@ import { FastifyReply, FastifyRequest } from 'fastify';
  * into the same tight bucket would tighten a request the frontend makes on
  * every page load — a real usability risk for anyone sharing an office IP.
  */
-export function createAuthRateLimiter(max: number, windowMs: number) {
+/**
+ * The handler function, plus a read-only count of currently-tracked IPs —
+ * exposed the same way `StreamingService.activeCaptureCount` is, for tests
+ * and diagnostics only, never consumed by request handling itself.
+ */
+export interface AuthRateLimiter {
+  (req: FastifyRequest, reply: FastifyReply): Promise<void>;
+  readonly trackedIpCount: number;
+}
+
+export function createAuthRateLimiter(max: number, windowMs: number): AuthRateLimiter {
   const hits = new Map<string, { count: number; resetAt: number }>();
 
-  return async function authRateLimit(req: FastifyRequest, reply: FastifyReply): Promise<void> {
+  const authRateLimit = (async (req: FastifyRequest, reply: FastifyReply): Promise<void> => {
     const now = Date.now();
+
+    // Evict every expired entry before handling this request. Without this,
+    // `hits` grows by one entry per unique IP ever seen, for the life of the
+    // process — fine at lab scale, a real problem before this is ever
+    // internet-facing (see docs/TODO.md). A full sweep on every call is an
+    // O(map size) walk, but this limiter only guards two low-frequency
+    // routes (register/login), so that's negligible — unlike streamingService's
+    // idle sweeper or hosts.service's stale-host check, which guard much
+    // higher-frequency paths and need their own timer/lifecycle wiring in
+    // server.ts, this doesn't: eviction piggybacks on the traffic the map
+    // itself is sized by, so it can't fall behind under load the way a fixed
+    // periodic sweep could.
+    for (const [ip, e] of hits) {
+      if (e.resetAt <= now) hits.delete(ip);
+    }
+
     const entry = hits.get(req.ip);
 
     if (!entry || entry.resetAt <= now) {
@@ -46,5 +72,9 @@ export function createAuthRateLimiter(max: number, windowMs: number) {
           message: `Too many login/registration attempts. Try again in ${retryAfterSeconds}s.`,
         });
     }
-  };
+  }) as AuthRateLimiter;
+
+  Object.defineProperty(authRateLimit, 'trackedIpCount', { get: () => hits.size });
+
+  return authRateLimit;
 }

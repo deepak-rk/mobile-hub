@@ -88,6 +88,32 @@ describe('createAuthRateLimiter', () => {
     expect(reply3.statusCode).toBe(0); // window reset, allowed again
   });
 
+  it('evicts an expired IP entry once the window has passed, bounding memory growth', async () => {
+    // Guards against the map growing by one entry per unique IP ever seen
+    // for the life of the process (docs/TODO.md's documented gap).
+    const limiter = createAuthRateLimiter(5, 10);
+    await limiter(reqFrom('6.6.6.1'), fakeReply());
+    await limiter(reqFrom('6.6.6.2'), fakeReply());
+    await limiter(reqFrom('6.6.6.3'), fakeReply());
+    expect(limiter.trackedIpCount).toBe(3);
+
+    await new Promise((r) => setTimeout(r, 15)); // past the 10ms window for all three
+
+    // Eviction is lazy (runs on the next call, not on a timer), so it takes
+    // one more request to trigger the sweep — that request's own IP re-adds
+    // one entry, so the map should settle at 1, not 4.
+    await limiter(reqFrom('6.6.6.4'), fakeReply());
+    expect(limiter.trackedIpCount).toBe(1);
+  });
+
+  it('does not evict an IP whose window has not expired yet', async () => {
+    const limiter = createAuthRateLimiter(5, 60_000);
+    await limiter(reqFrom('7.7.7.1'), fakeReply());
+    await limiter(reqFrom('7.7.7.2'), fakeReply());
+
+    expect(limiter.trackedIpCount).toBe(2); // both still well within their window
+  });
+
   it('two independently created limiters never share state', async () => {
     // Guards against accidentally reintroducing a shared/module-level Map.
     const limiterA = createAuthRateLimiter(1, 60_000);
