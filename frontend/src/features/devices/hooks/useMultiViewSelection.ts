@@ -35,5 +35,10 @@ export function useMultiViewSelection() {
     setRaw('');
   }
 
-  return { selected, toggle, remove, clear, atMax: selected.length >= MULTI_VIEW_MAX };
+  /** Replaces the whole selection at once, capped at MULTI_VIEW_MAX — the "select all online" shortcut. */
+  function selectMany(udids: string[]) {
+    setRaw(udids.slice(0, MULTI_VIEW_MAX).join(','));
+  }
+
+  return { selected, toggle, remove, clear, selectMany, atMax: selected.length >= MULTI_VIEW_MAX };
 }

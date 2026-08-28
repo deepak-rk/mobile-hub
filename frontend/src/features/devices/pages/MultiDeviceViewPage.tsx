@@ -12,10 +12,15 @@ import styles from './MultiDeviceViewPage.module.css';
  * different code path — picking a device here and opening its own detail
  * page both just attach another viewer to the same host-side capture.
  */
+function isOnline(device: { status: string }): boolean {
+  return device.status !== 'offline' && device.status !== 'unreachable';
+}
+
 export function MultiDeviceViewPage() {
   const { data: devices, isPending, error, refetch } = useDevices();
-  const { selected, toggle, remove, clear, atMax } = useMultiViewSelection();
+  const { selected, toggle, remove, clear, selectMany, atMax } = useMultiViewSelection();
   const selectedDevices = devices?.filter((d) => selected.includes(d.udid)) ?? [];
+  const onlineUdids = devices?.filter(isOnline).map((d) => d.udid) ?? [];
 
   return (
     <Page>
@@ -32,6 +37,22 @@ export function MultiDeviceViewPage() {
       />
 
       <QueryBoundary isPending={isPending} error={error} onRetry={() => void refetch()}>
+        <div className={styles.pickerToolbar}>
+          <span className={styles.pickerLabel}>Pick devices</span>
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => selectMany(onlineUdids)}
+            disabled={onlineUdids.length === 0}
+            title={
+              onlineUdids.length === 0
+                ? 'No online devices to select'
+                : `Watch the first ${Math.min(MULTI_VIEW_MAX, onlineUdids.length)} online device(s)`
+            }
+          >
+            Select all online
+          </Button>
+        </div>
         <div className={styles.picker}>
           {devices?.map((device) => {
             const isSelected = selected.includes(device.udid);
