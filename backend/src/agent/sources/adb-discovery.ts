@@ -49,6 +49,26 @@ export function isUsableState(state: string): boolean {
   return state === 'device';
 }
 
+/**
+ * Picks the friendliest available device name. Google's stock emulator
+ * system images report a generic `ro.product.model` ("sdk_gphone64_x86_64")
+ * for every device profile — the actual AVD name (e.g. "Pixel_3a_API_34...")
+ * only lives in `ro.boot.qemu.avd_name`, which real hardware never sets, so
+ * it takes priority whenever present.
+ */
+export function resolveDeviceName(params: {
+  avdName: string;
+  model: string;
+  propsModel: string | undefined;
+  serial: string;
+}): string {
+  const { avdName, model, propsModel, serial } = params;
+  if (avdName) return avdName.replace(/_/g, ' ');
+  if (model) return model;
+  if (propsModel) return propsModel.replace(/_/g, ' ');
+  return serial;
+}
+
 export function connectionTypeFor(serial: string): DiscoveredDevice['connectionType'] {
   if (serial.startsWith('emulator-')) return 'emulator';
   // `adb connect host:port` produces a serial containing a colon.
@@ -79,18 +99,24 @@ export class AdbDeviceDiscovery implements DeviceDiscovery {
     const devices = await Promise.all(
       usable.map(async (d): Promise<DiscoveredDevice | null> => {
         try {
-          const [osVersion, model] = await Promise.all([
+          const connectionType = connectionTypeFor(d.serial);
+          const [osVersion, model, avdName] = await Promise.all([
             this.getProp(d.serial, 'ro.build.version.release'),
             this.getProp(d.serial, 'ro.product.model'),
+            // Google's stock emulator system images report a generic
+            // ro.product.model ("sdk_gphone64_x86_64") for every device
+            // profile — the actual AVD name (e.g. "Pixel_3a_API_34...")
+            // only lives in this boot-time prop, which real hardware never
+            // sets. Emulator-only, so only worth asking on that transport.
+            connectionType === 'emulator' ? this.getProp(d.serial, 'ro.boot.qemu.avd_name') : Promise.resolve(''),
           ]);
           return {
             udid: d.serial,
             platform: 'android',
-            // `-l` gives a device codename; the marketing model is friendlier.
-            name: model || d.props.model?.replace(/_/g, ' ') || d.serial,
+            name: resolveDeviceName({ avdName, model, propsModel: d.props.model, serial: d.serial }),
             osVersion: osVersion || 'unknown',
             model: model || d.props.model || 'unknown',
-            connectionType: connectionTypeFor(d.serial),
+            connectionType,
           };
         } catch {
           return null;

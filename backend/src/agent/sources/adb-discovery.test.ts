@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseAdbDevices, isUsableState, connectionTypeFor } from './adb-discovery';
+import { parseAdbDevices, isUsableState, connectionTypeFor, resolveDeviceName } from './adb-discovery';
 
 /**
  * adb's output varies by version, transport and device state. Getting this
@@ -59,6 +59,38 @@ describe('isUsableState', () => {
     for (const state of ['offline', 'unauthorized', 'no', 'recovery', 'sideload', 'bootloader']) {
       expect(isUsableState(state), state).toBe(false);
     }
+  });
+});
+
+describe('resolveDeviceName', () => {
+  it('prefers the AVD name over the generic stock model on an emulator', () => {
+    // Real bug: Google's stock system images report ro.product.model as
+    // "sdk_gphone64_x86_64" for every device profile, hiding which AVD
+    // ("Pixel 3a", "Pixel 6", ...) is actually running.
+    expect(
+      resolveDeviceName({
+        avdName: 'Pixel_3a_API_34_extension_level_7_x86_64',
+        model: 'sdk_gphone64_x86_64',
+        propsModel: 'sdk_gphone64_x86_64',
+        serial: 'emulator-5554',
+      }),
+    ).toBe('Pixel 3a API 34 extension level 7 x86 64');
+  });
+
+  it('falls back to the marketing model on real hardware, where there is no AVD name', () => {
+    expect(
+      resolveDeviceName({ avdName: '', model: 'SM_S911B', propsModel: 'SM_S911B', serial: 'RZ8N70XABCD' }),
+    ).toBe('SM_S911B');
+  });
+
+  it('falls back to the -l device codename when getprop model failed', () => {
+    expect(resolveDeviceName({ avdName: '', model: '', propsModel: 'dm3q', serial: 'RZ8N70XABCD' })).toBe('dm3q');
+  });
+
+  it('falls back to the serial when nothing else is available', () => {
+    expect(resolveDeviceName({ avdName: '', model: '', propsModel: undefined, serial: 'RZ8N70XABCD' })).toBe(
+      'RZ8N70XABCD',
+    );
   });
 });
 

@@ -147,3 +147,7 @@
   border-color: var(--accent);
   color: var(--accent);
 }
+
+.stopWatching {
+  justify-self: end;
+}

@@ -83,15 +83,28 @@ export function DeviceStream({ device }: { device: Device }) {
   const { user } = useAuth();
   const location = useLocation();
   const [protocol, setProtocol] = useState<StreamProtocol>('mjpeg');
+  // The capture only starts on the host once a viewer actually attaches
+  // (streaming.service.ts's whole design), but the WS itself used to open
+  // the instant this page loaded — watching a device was never something a
+  // visitor opted into. Gating it behind a click matches that backend
+  // invariant on the frontend too, and avoids spending a capture slot (see
+  // the per-host Android stream cap) on a tab nobody is actually looking at.
+  const [started, setStarted] = useState(false);
   const isOffline = device.status === 'offline' || device.status === 'unreachable';
   // Not gated on `user`: the hook reports 'unauthenticated' when there's no
   // token, which the banner shows as "Sign in to view". Gating here instead
   // would leave it reading "Not streaming", which wrongly implies the device
   // simply isn't being watched (the same flaw fixed in the run log viewer).
-  const { state, frameUrl, restarted, dismissRestarted } = useDeviceStream(device.udid, !isOffline, protocol);
+  const { state, frameUrl, restarted, dismissRestarted } = useDeviceStream(
+    device.udid,
+    !isOffline && started,
+    protocol,
+  );
 
-  // An offline device is never dialled at all, so say so directly.
-  const displayState: StreamState = isOffline ? 'offline' : state;
+  // An offline device is never dialled at all, so say so directly. Not yet
+  // started reads as the same "Not streaming" idle state as offline/idle —
+  // the stage's own button is what invites starting it.
+  const displayState: StreamState = isOffline ? 'offline' : !started ? 'idle' : state;
   const banner = BANNER[displayState];
 
   return (
@@ -159,12 +172,26 @@ export function DeviceStream({ device }: { device: Device }) {
                   A host must report this device before it can be streamed.
                 </p>
               </>
+            ) : !started ? (
+              <>
+                <div className={styles.placeholderTitle}>Live view is off</div>
+                <p className={styles.placeholderBody}>
+                  Starts a capture on the host — nothing is spent watching a page nobody has opened this on.
+                </p>
+                <Button size="sm" onClick={() => setStarted(true)}>
+                  <icons.stream size={iconSize.control} aria-hidden="true" />
+                  Start live view
+                </Button>
+              </>
             ) : displayState === 'rejected' ? (
               <>
                 <div className={styles.placeholderTitle}>Stream unavailable</div>
                 <p className={styles.placeholderBody}>
                   The host refused the capture. It may be at its concurrent-stream limit.
                 </p>
+                <Button size="sm" variant="ghost" onClick={() => setStarted(false)}>
+                  Cancel
+                </Button>
               </>
             ) : (
               <>
@@ -181,6 +208,12 @@ export function DeviceStream({ device }: { device: Device }) {
           </div>
         )}
       </div>
+
+      {started ? (
+        <Button size="sm" variant="ghost" onClick={() => setStarted(false)} className={styles.stopWatching}>
+          Stop watching
+        </Button>
+      ) : null}
     </div>
   );
 }
