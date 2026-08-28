@@ -64,12 +64,13 @@ class AdbH264Handle extends EventEmitter implements CaptureHandle {
     // practice (screenrecord needs to finalize the container on exit), so
     // segment length is controlled entirely via --time-limit, not by us
     // stopping it partway.
-    const record = spawn(this.adbPath, [
-      '-s',
-      this.deviceUdid,
-      'shell',
-      `screenrecord --time-limit ${this.segmentSeconds} ${REMOTE_SEGMENT_PATH}`,
-    ]);
+    // stdin explicitly ignored — see adb-mjpeg.source.ts's tick() for why an
+    // unconsumed default 'pipe' stdin can hang adb indefinitely.
+    const record = spawn(
+      this.adbPath,
+      ['-s', this.deviceUdid, 'shell', `screenrecord --time-limit ${this.segmentSeconds} ${REMOTE_SEGMENT_PATH}`],
+      { stdio: ['ignore', 'pipe', 'pipe'] },
+    );
     this.child = record;
 
     let recordErr = '';
@@ -100,7 +101,10 @@ class AdbH264Handle extends EventEmitter implements CaptureHandle {
     // adb-mjpeg.source.ts's pattern (collect stdout chunks directly) and
     // avoids filesystem cleanup on this side entirely. Verified byte-
     // identical to `adb pull` output.
-    const cat = spawn(this.adbPath, ['-s', this.deviceUdid, 'exec-out', 'cat', REMOTE_SEGMENT_PATH]);
+    // stdin explicitly ignored — see adb-mjpeg.source.ts's tick().
+    const cat = spawn(this.adbPath, ['-s', this.deviceUdid, 'exec-out', 'cat', REMOTE_SEGMENT_PATH], {
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
     this.child = cat;
 
     const chunks: Buffer[] = [];

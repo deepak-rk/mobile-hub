@@ -34,7 +34,15 @@ class AdbMjpegHandle extends EventEmitter implements CaptureHandle {
   private tick(): void {
     if (this.stopped) return;
 
-    const child = spawn(this.adbPath, ['-s', this.deviceUdid, 'exec-out', 'screencap', '-p']);
+    // stdin explicitly ignored: screencap never reads it, but a spawned
+    // process's default 'pipe' stdio leaves stdin open and unconsumed,
+    // which can leave adb waiting on input that will never arrive and
+    // hang indefinitely — reproduced when this runs as a long-lived child
+    // of a background `tsx watch` process, though not in an earlier
+    // one-shot verification script (see docs/LESSONS.md).
+    const child = spawn(this.adbPath, ['-s', this.deviceUdid, 'exec-out', 'screencap', '-p'], {
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
     this.child = child;
 
     const chunks: Buffer[] = [];
