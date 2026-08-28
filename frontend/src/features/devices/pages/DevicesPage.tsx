@@ -1,5 +1,6 @@
 import { Link } from 'react-router-dom';
 import {
+  Button,
   Card,
   CardBody,
   EmptyState,
@@ -62,6 +63,14 @@ export function DevicesPage() {
       <PageHeader
         title="Devices"
         subtitle="Every device reported by a connected host, with its current lock state."
+        actions={
+          <Link to="/devices/multi-view">
+            <Button size="sm" variant="secondary">
+              <icons.stream size={iconSize.control} aria-hidden="true" />
+              Multi-view
+            </Button>
+          </Link>
+        }
       />
 
       <DeviceFilterBar status={status} onStatusChange={setStatus} platform={platform} onPlatformChange={setPlatform} />

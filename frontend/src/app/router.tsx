@@ -3,6 +3,7 @@ import { AppShell } from './AppShell';
 import { LoginPage } from '@/features/auth/LoginPage';
 import { DevicesPage } from '@/features/devices/pages/DevicesPage';
 import { DeviceViewerPage } from '@/features/devices/pages/DeviceViewerPage';
+import { MultiDeviceViewPage } from '@/features/devices/pages/MultiDeviceViewPage';
 import { BuildsPage } from '@/features/builds/pages/BuildsPage';
 import { RunListPage } from '@/features/execution/pages/RunListPage';
 import { TriggerRunPage } from '@/features/execution/pages/TriggerRunPage';
@@ -22,6 +23,7 @@ const router = createBrowserRouter([
     children: [
       { index: true, element: <Navigate to="/devices" replace /> },
       { path: 'devices', element: <DevicesPage /> },
+      { path: 'devices/multi-view', element: <MultiDeviceViewPage /> },
       { path: 'devices/:udid', element: <DeviceViewerPage /> },
       { path: 'builds', element: <BuildsPage /> },
       { path: 'execution', element: <RunListPage /> },
