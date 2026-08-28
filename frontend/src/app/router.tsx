@@ -9,7 +9,7 @@ import { RunListPage } from '@/features/execution/pages/RunListPage';
 import { TriggerRunPage } from '@/features/execution/pages/TriggerRunPage';
 import { RunDetailPage } from '@/features/execution/pages/RunDetailPage';
 import { AnalyticsPage } from '@/features/analytics/pages/AnalyticsPage';
-import { ServersPage } from '@/features/servers/pages/ServersPage';
+import { HostsPage } from '@/features/hosts/pages/HostsPage';
 import { AgentCredentialsPage } from '@/features/agent-credentials/pages/AgentCredentialsPage';
 
 // Reads are public (the backend leaves list routes unauthenticated), so the
@@ -30,7 +30,7 @@ const router = createBrowserRouter([
       { path: 'execution/new', element: <TriggerRunPage /> },
       { path: 'execution/:runId', element: <RunDetailPage /> },
       { path: 'analytics', element: <AnalyticsPage /> },
-      { path: 'servers', element: <ServersPage /> },
+      { path: 'hosts', element: <HostsPage /> },
       { path: 'agent-credentials', element: <AgentCredentialsPage /> },
     ],
   },

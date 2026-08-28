@@ -10,7 +10,7 @@ const navItems = [
   { to: '/builds', label: 'Builds', icon: icons.build },
   { to: '/execution', label: 'Execution', icon: icons.execution },
   { to: '/analytics', label: 'Analytics', icon: icons.analytics },
-  { to: '/servers', label: 'Hosts', icon: icons.host },
+  { to: '/hosts', label: 'Hosts', icon: icons.host },
 ];
 
 // Every other nav item is a public read gated only on its actions — this one
