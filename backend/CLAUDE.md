@@ -48,7 +48,7 @@ npm run agent        # the host-side device agent (see below); AGENT_DISCOVERY=s
 npm run build         # tsc
 npm run lint           # eslint src --ext .ts
 npm run typecheck      # tsc --noEmit
-npm test                # vitest run — 114 tests, no database required
+npm test                # vitest run — 119 tests, no database required
 ```
 
 `dev` requires `MONGODB_URI` reachable and `JWT_SECRET` (32+ chars) in `backend/.env` — see `backend/.env.example`. `typecheck`/`lint`/`build`/`test` need neither Mongo nor a device: the tests stub the database and use the synthetic capture/discovery sources. For `dev`, a plain `docker run -d -p 27017:27017 mongo:7` is enough.
