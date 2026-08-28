@@ -51,6 +51,20 @@ export function useUnlockDevice(udid: string) {
   });
 }
 
+/**
+ * Renews a held lock's TTL clock (resets `acquiredAt` to now) without
+ * changing anything else about it. Same owner-or-admin rule as unlock.
+ */
+export function useRenewLock(udid: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async () => (await api.post<Device>(`/devices/${udid}/lock/renew`)).data,
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['devices'] });
+    },
+  });
+}
+
 /** Force-stops any live capture for this device (operator/admin only). */
 export function useStopDeviceStream(udid: string) {
   const qc = useQueryClient();

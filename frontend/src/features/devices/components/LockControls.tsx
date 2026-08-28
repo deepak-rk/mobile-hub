@@ -4,7 +4,7 @@ import { Button, Dialog, useToast } from 'react-design-kit';
 import type { ApiError } from '@/services/api';
 import { icons, iconSize } from '@/lib/icons';
 import { useAuth } from '@/features/auth/useAuth';
-import { useLockDevice, useUnlockDevice } from '../api/devices.api';
+import { useLockDevice, useUnlockDevice, useRenewLock } from '../api/devices.api';
 import type { Device } from '../types';
 import styles from './LockControls.module.css';
 
@@ -19,6 +19,7 @@ export function LockControls({ device }: { device: Device }) {
   const { show } = useToast();
   const lock = useLockDevice(device.udid);
   const unlock = useUnlockDevice(device.udid);
+  const renew = useRenewLock(device.udid);
   const [confirmForceUnlock, setConfirmForceUnlock] = useState(false);
 
   if (!user) {
@@ -39,8 +40,8 @@ export function LockControls({ device }: { device: Device }) {
 
   const heldByMe = device.lock?.heldBy === user.id;
   const canForceUnlock = user.role === 'admin';
-  const pending = lock.isPending || unlock.isPending;
-  const error = (lock.error ?? unlock.error) as ApiError | null;
+  const pending = lock.isPending || unlock.isPending || renew.isPending;
+  const error = (lock.error ?? unlock.error ?? renew.error) as ApiError | null;
 
   function doLock() {
     lock.mutate(undefined, {
@@ -53,6 +54,13 @@ export function LockControls({ device }: { device: Device }) {
     unlock.mutate(undefined, {
       onSuccess: () => show(heldByMe ? `${device.name} released` : `${device.name} force-unlocked`, { tone: 'success' }),
       onError: () => show(`Failed to release ${device.name}`, { tone: 'danger' }),
+    });
+  }
+
+  function doRenew() {
+    renew.mutate(undefined, {
+      onSuccess: () => show(`${device.name}'s lock renewed`, { tone: 'success' }),
+      onError: () => show(`Failed to renew the lock on ${device.name}`, { tone: 'danger' }),
     });
   }
 
@@ -73,10 +81,25 @@ export function LockControls({ device }: { device: Device }) {
       <div className={styles.actions}>
         {device.lock ? (
           heldByMe || canForceUnlock ? (
-            <Button size="sm" onClick={onReleaseClick} disabled={pending}>
-              <icons.unlocked size={iconSize.control} aria-hidden="true" />
-              {heldByMe ? 'Release lock' : 'Force unlock'}
-            </Button>
+            <>
+              {heldByMe ? (
+                // No exact "expires in Nm" countdown: the TTL value
+                // (EffectiveConfig.devices.lockTtlMinutes) only comes back
+                // from the admin-only GET /api/config, and a non-admin
+                // holder — the common case — can't read it. Guessing a
+                // number into the UI would silently drift from whatever an
+                // org actually configured; a plain renew action doesn't
+                // have that failure mode.
+                <Button size="sm" variant="ghost" onClick={doRenew} disabled={pending}>
+                  <icons.retry size={iconSize.control} aria-hidden="true" />
+                  Renew lock
+                </Button>
+              ) : null}
+              <Button size="sm" onClick={onReleaseClick} disabled={pending}>
+                <icons.unlocked size={iconSize.control} aria-hidden="true" />
+                {heldByMe ? 'Release lock' : 'Force unlock'}
+              </Button>
+            </>
           ) : (
             <span className={styles.note}>Locked by someone else. An admin can force-release it.</span>
           )
@@ -87,6 +110,10 @@ export function LockControls({ device }: { device: Device }) {
           </Button>
         )}
       </div>
+
+      {heldByMe ? (
+        <p className={styles.note}>Locks expire automatically after a period of inactivity — renew to keep this one.</p>
+      ) : null}
 
       {error ? (
         <p className={styles.error} role="alert">
