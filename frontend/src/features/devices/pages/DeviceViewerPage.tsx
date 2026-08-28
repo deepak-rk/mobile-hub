@@ -15,6 +15,7 @@ import { formatRelative, shortId } from 'ts-format-utils';
 import { useDevice } from '../api/devices.api';
 import { LockControls } from '../components/LockControls';
 import { DeviceStream, StreamStopButton } from '../components/DeviceStream';
+import { AppiumCapabilities } from '../components/AppiumCapabilities';
 import { useAuth } from '@/features/auth/useAuth';
 import styles from './DeviceViewerPage.module.css';
 
@@ -43,11 +44,15 @@ export function DeviceViewerPage() {
       <QueryBoundary isPending={isPending} error={error} onRetry={() => void refetch()} skeletonCount={2}>
         {device ? (
           <div className={styles.split}>
-            <Card>
-              <CardBody>
-                <DeviceStream device={device} />
-              </CardBody>
-            </Card>
+            <div className={styles.mainColumn}>
+              <Card>
+                <CardBody>
+                  <DeviceStream device={device} />
+                </CardBody>
+              </Card>
+
+              <AppiumCapabilities device={device} />
+            </div>
 
             <Card>
               <CardBody>

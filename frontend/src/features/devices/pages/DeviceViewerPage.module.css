@@ -5,6 +5,11 @@
   align-items: start;
 }
 
+.mainColumn {
+  display: grid;
+  gap: var(--space-4);
+}
+
 .stage {
   display: flex;
   flex-direction: column;

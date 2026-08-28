@@ -9,6 +9,7 @@ import {
   BarChart3,
   CheckCircle2,
   Circle,
+  Copy,
   Download,
   KeyRound,
   Lock,
@@ -59,6 +60,7 @@ export const icons = {
   // Generic
   dot: Circle,
   retry: RefreshCw,
+  copy: Copy,
   themeDark: Moon,
   themeLight: Sun,
 } as const;
