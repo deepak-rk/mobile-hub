@@ -23,7 +23,7 @@
     "react-design-kit": "github:deepak-rk/react-design-kit",
     "react-dom": "^18.3.1",
     "react-hook-form": "^7.51.5",
-    "react-router-dom": "^6.23.1",
+    "react-router-dom": "^7.18.2",
     "recharts": "^2.12.7",
     "ts-format-utils": "github:deepak-rk/ts-format-utils",
     "use-resilient-websocket": "github:deepak-rk/use-resilient-websocket",
