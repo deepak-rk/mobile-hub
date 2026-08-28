@@ -1,0 +1,4 @@
+# Shell scripts must check out with LF regardless of the cloning machine's
+# core.autocrlf — a CRLF shebang line ("#!/usr/bin/env bash\r") fails to
+# execute outside Git Bash on Windows.
+*.sh text eol=lf
