@@ -7,30 +7,8 @@ import { isInFlight, useCancelRun, useExecutionRun } from '../api/execution.api'
 import { useRunStream } from '../api/useRunStream';
 import { LogViewer } from '../components/LogViewer';
 import { useAuth } from '@/features/auth/useAuth';
-import type { RunStage } from '../types';
+import { STAGE_LABELS, stageColor, stageIcon } from '../lib/stageMeta';
 import styles from './RunDetailPage.module.css';
-
-const STAGE_LABELS: Record<RunStage['name'], string> = {
-  pulling: 'Pull repository',
-  restoring_cache: 'Restore cache',
-  installing: 'Install dependencies',
-  execute: 'Execute suite',
-};
-
-function stageIcon(status: RunStage['status']) {
-  if (status === 'done') return icons.passed;
-  if (status === 'error') return icons.failed;
-  if (status === 'running') return icons.running;
-  if (status === 'skipped') return icons.cancelled;
-  return icons.dot;
-}
-
-function stageColor(status: RunStage['status']): string {
-  if (status === 'done') return 'var(--status-passed)';
-  if (status === 'error') return 'var(--status-failed)';
-  if (status === 'running') return 'var(--status-running)';
-  return 'var(--text-disabled)';
-}
 
 export function RunDetailPage() {
   const { runId } = useParams<{ runId: string }>();

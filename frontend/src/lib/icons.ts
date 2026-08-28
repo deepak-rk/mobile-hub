@@ -7,6 +7,7 @@
 import {
   AlertTriangle,
   BarChart3,
+  Bookmark,
   CheckCircle2,
   Circle,
   Copy,
@@ -26,6 +27,7 @@ import {
   Smartphone,
   Sun,
   Terminal,
+  Trash2,
   WifiOff,
   XCircle,
 } from 'lucide-react';
@@ -61,8 +63,12 @@ export const icons = {
   dot: Circle,
   retry: RefreshCw,
   copy: Copy,
+  remove: Trash2,
   themeDark: Moon,
   themeLight: Sun,
+
+  // Run presets (execution trigger form)
+  presetSave: Bookmark,
 } as const;
 
 /** Icon sizes by context (guidelines §6). */

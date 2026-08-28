@@ -1,7 +1,25 @@
 .form {
   display: grid;
   gap: var(--space-4);
-  max-width: 720px;
+}
+
+.presetRow {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--space-3);
+  padding-bottom: var(--space-4);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.presetRow .field {
+  flex: 1;
+  min-width: 0;
+}
+
+.presetActions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
 }
 
 .row {
@@ -64,7 +82,10 @@
 }
 
 @media (max-width: 640px) {
-  .row {
+  .row,
+  .presetRow {
     grid-template-columns: 1fr;
+    flex-direction: column;
+    align-items: stretch;
   }
 }

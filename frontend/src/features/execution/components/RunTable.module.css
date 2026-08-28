@@ -1,0 +1,18 @@
+.link {
+  display: block;
+}
+
+.project {
+  font-size: var(--text-md);
+  font-weight: var(--weight-ui);
+  color: var(--text-primary);
+}
+
+.suite {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+  padding: 2px var(--space-2);
+  border-radius: var(--radius-control);
+  background: var(--bg-hover);
+}

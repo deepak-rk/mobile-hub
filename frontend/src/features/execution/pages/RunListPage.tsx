@@ -1,148 +1,99 @@
-import { useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
-import { createColumnHelper, flexRender, getCoreRowModel, getSortedRowModel, SortingState, useReactTable } from '@tanstack/react-table';
-import {
-  Button,
-  EmptyState,
-  Mono,
-  Page,
-  PageHeader,
-  QueryBoundary,
-  Table,
-  Tbody,
-  Td,
-  Th,
-  Thead,
-  Tr,
-} from 'react-design-kit';
-import { StatusBadge } from '@/components/ui/StatusBadge';
+import { Button, EmptyState, Page, PageHeader, QueryBoundary } from 'react-design-kit';
 import { icons, iconSize } from '@/lib/icons';
-import { formatDurationBetween, formatRelative } from 'ts-format-utils';
-import { useExecutionRuns } from '../api/execution.api';
+import { isInFlight, useExecutionRuns } from '../api/execution.api';
+import { CurrentRunPanel } from '../components/CurrentRunPanel';
+import { PipelineTabs } from '../components/PipelineTabs';
 import { RunFilterBar } from '../components/RunFilterBar';
+import { RunTable } from '../components/RunTable';
+import { TriggerRunForm } from '../components/TriggerRunForm';
 import { useRunFilters } from '../hooks/useRunFilters';
-import type { ExecutionRun } from '../types';
+import { usePipelineTab } from '../hooks/usePipelineTab';
 import styles from './RunListPage.module.css';
 
-const columnHelper = createColumnHelper<ExecutionRun>();
-
-const columns = [
-  columnHelper.accessor('status', {
-    header: 'Status',
-    cell: (info) => <StatusBadge status={info.getValue()} />,
-  }),
-  columnHelper.accessor('project', {
-    header: 'Project',
-    cell: (info) => (
-      <Link to={`/execution/${info.row.original._id}`} className={styles.link}>
-        <span className={styles.project}>{info.getValue()}</span>
-      </Link>
-    ),
-  }),
-  columnHelper.accessor('suite', {
-    header: 'Suite',
-    cell: (info) => <span className={styles.suite}>{info.getValue()}</span>,
-  }),
-  columnHelper.accessor('branch', {
-    header: 'Branch',
-  }),
-  columnHelper.accessor('deviceUdid', {
-    header: 'Device',
-    enableSorting: false,
-    cell: (info) => <Mono>{info.getValue()}</Mono>,
-  }),
-  columnHelper.accessor((run) => formatDurationBetween(run.startedAt, run.endedAt), {
-    id: 'duration',
-    header: 'Duration',
-    enableSorting: false,
-  }),
-  columnHelper.accessor('createdAt', {
-    header: 'Created',
-    cell: (info) => formatRelative(info.getValue()),
-  }),
-];
-
+/**
+ * The unified execution pipeline page — Trigger / Current / History as tabs
+ * on one page (design-gap review point 1), replacing the old split between
+ * this file (list) and the standalone `TriggerRunPage` (now a redirect here,
+ * see `TriggerRunPage.tsx`).
+ *
+ * One `GET /execution` query backs every tab: "Current" is whatever isn't
+ * terminal yet (`isInFlight`), "History" is everything else, and the History
+ * tab's count badge is this same array's real length — no separate count
+ * endpoint.
+ */
 export function RunListPage() {
-  const { status, setStatus, project, setProject } = useRunFilters();
-  const { data: runs, isPending, error, refetch } = useExecutionRuns({ status, project });
-  const [sorting, setSorting] = useState<SortingState>([{ id: 'createdAt', desc: true }]);
-  const data = useMemo(() => runs ?? [], [runs]);
-  const filtered = status !== 'all' || project !== '';
+  const { project, setProject } = useRunFilters();
+  const [tab, setTab] = usePipelineTab();
+  const { data: runs, isPending, error, refetch } = useExecutionRuns({ project });
 
-  const table = useReactTable({
-    data,
-    columns,
-    state: { sorting },
-    onSortingChange: setSorting,
-    getCoreRowModel: getCoreRowModel(),
-    getSortedRowModel: getSortedRowModel(),
-  });
+  const allRuns = runs ?? [];
+  const currentRuns = allRuns.filter((r) => isInFlight(r.status));
+  const historyRuns = allRuns.filter((r) => !isInFlight(r.status));
 
   return (
     <Page>
       <PageHeader
-        title="Execution runs"
-        subtitle="Test runs dispatched to devices, newest first."
+        title="Execution"
+        subtitle="Trigger runs, watch what's in flight, and review history."
         actions={
-          <Link to="/execution/new">
-            <Button variant="primary" size="sm">
+          tab !== 'trigger' ? (
+            <Button variant="primary" size="sm" onClick={() => setTab('trigger')}>
               <icons.running size={iconSize.control} aria-hidden="true" />
               Trigger a run
             </Button>
-          </Link>
+          ) : undefined
         }
       />
 
-      <RunFilterBar status={status} onStatusChange={setStatus} project={project} onProjectChange={setProject} />
+      <PipelineTabs
+        active={tab}
+        onChange={setTab}
+        currentCount={currentRuns.length}
+        historyCount={historyRuns.length}
+      />
 
-      <QueryBoundary
-        isPending={isPending}
-        error={error}
-        isEmpty={runs?.length === 0}
-        onRetry={() => void refetch()}
-        empty={
-          filtered ? (
-            <EmptyState
-              icon={icons.execution}
-              title="No runs match these filters"
-              body="Try a different status or project, or clear the filters to see every run."
-            />
-          ) : (
-            <EmptyState
-              icon={icons.execution}
-              title="No runs yet"
-              body="When a run is triggered it locks a device, executes its suite, and streams stage and log events here in real time."
-            />
-          )
-        }
-      >
-        <Table>
-          <Thead>
-            {table.getHeaderGroups().map((headerGroup) => (
-              <Tr key={headerGroup.id}>
-                {headerGroup.headers.map((header) => (
-                  <Th
-                    key={header.id}
-                    onSort={header.column.getCanSort() ? () => header.column.toggleSorting() : undefined}
-                    sort={header.column.getIsSorted() || false}
-                  >
-                    {flexRender(header.column.columnDef.header, header.getContext())}
-                  </Th>
-                ))}
-              </Tr>
-            ))}
-          </Thead>
-          <Tbody>
-            {table.getRowModel().rows.map((row) => (
-              <Tr key={row.id}>
-                {row.getVisibleCells().map((cell) => (
-                  <Td key={cell.id}>{flexRender(cell.column.columnDef.cell, cell.getContext())}</Td>
-                ))}
-              </Tr>
-            ))}
-          </Tbody>
-        </Table>
-      </QueryBoundary>
+      {tab === 'trigger' ? (
+        <div className={styles.triggerLayout}>
+          <TriggerRunForm />
+          <QueryBoundary isPending={isPending} error={error} onRetry={() => void refetch()} skeletonCount={1}>
+            <CurrentRunPanel latestCurrentRun={currentRuns[0] ?? null} recentHistory={historyRuns.slice(0, 5)} />
+          </QueryBoundary>
+        </div>
+      ) : (
+        <>
+          <RunFilterBar project={project} onProjectChange={setProject} />
+
+          <QueryBoundary
+            isPending={isPending}
+            error={error}
+            isEmpty={(tab === 'current' ? currentRuns : historyRuns).length === 0}
+            onRetry={() => void refetch()}
+            empty={
+              tab === 'current' ? (
+                <EmptyState
+                  icon={icons.execution}
+                  title="Nothing in flight"
+                  body="Trigger a run and it'll show up here while it's queued, preparing, or running."
+                />
+              ) : project ? (
+                <EmptyState
+                  icon={icons.execution}
+                  title="No runs match this project"
+                  body="Try a different project, or clear the filter to see every finished run."
+                />
+              ) : (
+                <EmptyState
+                  icon={icons.execution}
+                  title="No runs yet"
+                  body="Once a run finishes — passed, failed, or cancelled — it shows up here."
+                />
+              )
+            }
+          >
+            <RunTable runs={tab === 'current' ? currentRuns : historyRuns} />
+          </QueryBoundary>
+        </>
+      )}
     </Page>
   );
 }

@@ -1,47 +1,20 @@
 import { Field } from 'react-design-kit';
-import type { RunStatus } from '../types';
 import styles from './RunFilterBar.module.css';
 
-export type RunStatusFilter = RunStatus | 'all';
-
-const STATUS_OPTIONS: { value: RunStatusFilter; label: string }[] = [
-  { value: 'all', label: 'All statuses' },
-  { value: 'queued', label: 'Queued' },
-  { value: 'preparing', label: 'Preparing' },
-  { value: 'running', label: 'Running' },
-  { value: 'passed', label: 'Passed' },
-  { value: 'failed', label: 'Failed' },
-  { value: 'cancelled', label: 'Cancelled' },
-];
-
+/**
+ * Project is the only filter left here — status is now expressed by the
+ * pipeline page's Current/History tabs (see `usePipelineTab`), not a
+ * dropdown alongside this one.
+ */
 export function RunFilterBar({
-  status,
-  onStatusChange,
   project,
   onProjectChange,
 }: {
-  status: RunStatusFilter;
-  onStatusChange: (v: RunStatusFilter) => void;
   project: string;
   onProjectChange: (v: string) => void;
 }) {
   return (
     <div className={styles.bar}>
-      <label className={styles.field}>
-        <span className={styles.label}>Status</span>
-        <select
-          className={styles.select}
-          value={status}
-          onChange={(e) => onStatusChange(e.target.value as RunStatusFilter)}
-        >
-          {STATUS_OPTIONS.map((o) => (
-            <option key={o.value} value={o.value}>
-              {o.label}
-            </option>
-          ))}
-        </select>
-      </label>
-
       <div className={styles.field}>
         <Field
           label="Project"
@@ -51,16 +24,9 @@ export function RunFilterBar({
         />
       </div>
 
-      {status !== 'all' || project !== '' ? (
-        <button
-          type="button"
-          className={styles.clear}
-          onClick={() => {
-            onStatusChange('all');
-            onProjectChange('');
-          }}
-        >
-          Clear filters
+      {project !== '' ? (
+        <button type="button" className={styles.clear} onClick={() => onProjectChange('')}>
+          Clear filter
         </button>
       ) : null}
     </div>

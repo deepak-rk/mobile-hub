@@ -1,13 +1,18 @@
 import { useEffect, useState } from 'react';
 import { useSearchParamsState } from 'react-design-kit';
-import type { RunStatusFilter } from '../components/RunFilterBar';
 
 const PROJECT_DEBOUNCE_MS = 300;
 
 /**
- * URL-synced run filters, backed by the same query params `GET /api/execution`
- * already accepts server-side (`status`, `project`) — filtering happens on
+ * URL-synced project filter, backed by the same `project` query param
+ * `GET /api/execution` already accepts server-side — filtering happens on
  * the backend, matching the same pattern `useDeviceFilters` established.
+ *
+ * There is no `status` filter here anymore: the pipeline page's Trigger /
+ * Current / History tabs (`usePipelineTab`) now partition runs by terminal
+ * state, which was the old status dropdown's main job — keeping both would
+ * mean two overlapping ways to ask the same question (e.g. selecting
+ * "Passed" while on the Current tab would always show nothing).
  *
  * `project` is free text (there's no fixed list of project names to offer as
  * a dropdown), so it's debounced: the input reflects every keystroke
@@ -15,7 +20,6 @@ const PROJECT_DEBOUNCE_MS = 300;
  * once typing pauses, so a request isn't fired per character.
  */
 export function useRunFilters() {
-  const [status, setStatus] = useSearchParamsState('status', 'all');
   const [urlProject, setUrlProject] = useSearchParamsState('project', '');
   const [project, setProjectInput] = useState(urlProject);
 
@@ -26,8 +30,6 @@ export function useRunFilters() {
   }, [project]);
 
   return {
-    status: status as RunStatusFilter,
-    setStatus: (v: RunStatusFilter) => setStatus(v),
     project,
     setProject: setProjectInput,
   };
