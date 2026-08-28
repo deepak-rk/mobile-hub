@@ -30,6 +30,14 @@ const envSchema = z.object({
   // @fastify/rate-limit, so there's no duration-string parser to reuse.
   AUTH_RATE_LIMIT_MAX: z.coerce.number().int().positive().default(20),
   AUTH_RATE_LIMIT_WINDOW_MS: z.coerce.number().int().positive().default(60_000),
+  // Per-host cap on concurrent Android MJPEG/H264 captures — unlike iOS
+  // simulators (xcrun silently drops frames past 8, a hard platform limit),
+  // Android has no such wall; it just degrades: shared adb server, host CPU,
+  // and emulator/USB I/O all get worse per additional stream. Default of 3
+  // matches the documented streaming-risk guidance (2-4 comfortable before
+  // H264 is verified on real hardware) — must be config, same reasoning as
+  // every other operational limit here.
+  ANDROID_STREAM_CAP: z.coerce.number().int().positive().default(3),
   ORG_CONFIG_PATH: z.string().default(path.join(process.cwd(), '..', 'mobilehub.org.yaml')),
   PROJECT_CONFIG_PATH: z.string().default(path.join(process.cwd(), '..', 'mobilehub.project.yaml')),
 });

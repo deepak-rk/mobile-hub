@@ -1,7 +1,10 @@
+import { EventEmitter } from 'events';
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 import { StreamingService, IDLE_TEARDOWN_MS } from './streaming.service';
 import { SyntheticCaptureSource } from './sources/synthetic.source';
 import { StreamSession } from './stream-session.model';
+import { env } from '../../config/env';
+import type { CaptureHandle, CaptureSource } from './capture-source';
 
 /**
  * These cover the invariant the whole module exists for: one capture per
@@ -172,5 +175,73 @@ describe('lifecycle', () => {
     await expect(
       mjpegOnly.addViewer({ ...base, protocol: 'h264', viewerId: 'v1', onFrame: () => {} }),
     ).rejects.toThrow(/does not support/);
+  });
+});
+
+describe('per-host Android capture cap', () => {
+  it('rejects a new capture once a host is at ANDROID_STREAM_CAP active captures', async () => {
+    // stubMongo's countDocuments always resolves 0; override it for this one
+    // test to simulate a host already at capacity.
+    vi.spyOn(StreamSession, 'countDocuments').mockReturnValue({
+      then: (resolve: (v: unknown) => unknown) => Promise.resolve(env.ANDROID_STREAM_CAP).then(resolve),
+    } as never);
+
+    await expect(
+      service.addViewer({ ...base, deviceUdid: 'device-new', platform: 'android', viewerId: 'v1', onFrame: () => {} }),
+    ).rejects.toThrow(/already has/);
+  });
+
+  it('does not apply to a platform other than android (matches the existing iOS-only simulator cap)', async () => {
+    vi.spyOn(StreamSession, 'countDocuments').mockReturnValue({
+      then: (resolve: (v: unknown) => unknown) => Promise.resolve(env.ANDROID_STREAM_CAP).then(resolve),
+    } as never);
+
+    // No platform at all — the synthetic-source tests above never set one —
+    // must still work exactly as before this cap existed.
+    await expect(service.addViewer({ ...base, viewerId: 'v1', onFrame: () => {} })).resolves.toBeDefined();
+  });
+});
+
+describe('capture errors', () => {
+  /** A source whose handle can be told to error() on demand, for testing the error-push path. */
+  function flakySource(): { source: CaptureSource; error: (message: string) => void } {
+    let handle: (CaptureHandle & EventEmitter) | null = null;
+    const source: CaptureSource = {
+      name: 'flaky',
+      supports: () => true,
+      start: () => {
+        const h = new EventEmitter() as CaptureHandle & EventEmitter;
+        Object.defineProperty(h, 'pid', { value: null });
+        h.stop = () => {};
+        handle = h;
+        return h;
+      },
+    };
+    return { source, error: (message) => handle?.emit('error', new Error(message)) };
+  }
+
+  it('pushes the error to every attached viewer before tearing the capture down', async () => {
+    const { source, error } = flakySource();
+    const flaky = new StreamingService(source);
+    const seenA: string[] = [];
+    const seenB: string[] = [];
+
+    await flaky.addViewer({ ...base, viewerId: 'v1', onFrame: () => {}, onError: (m) => seenA.push(m) });
+    await flaky.addViewer({ ...base, viewerId: 'v2', onFrame: () => {}, onError: (m) => seenB.push(m) });
+
+    error('adb exec-out screencap: device offline');
+    await new Promise((r) => setTimeout(r, 0)); // let the synchronous emit's async teardown settle
+
+    expect(seenA).toEqual(['adb exec-out screencap: device offline']);
+    expect(seenB).toEqual(['adb exec-out screencap: device offline']);
+    expect(flaky.activeCaptureCount).toBe(0); // still tears down, same as before onError existed
+  });
+
+  it('a viewer with no onError does not crash the fan-out', async () => {
+    const { source, error } = flakySource();
+    const flaky = new StreamingService(source);
+    await flaky.addViewer({ ...base, viewerId: 'v1', onFrame: () => {} }); // no onError passed
+
+    expect(() => error('boom')).not.toThrow();
   });
 });

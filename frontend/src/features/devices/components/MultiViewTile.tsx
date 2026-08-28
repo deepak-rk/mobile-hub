@@ -24,8 +24,12 @@ const TONE: Record<StreamState, string> = {
  */
 export function MultiViewTile({ device, onRemove }: { device: Device; onRemove: () => void }) {
   const isOffline = device.status === 'offline' || device.status === 'unreachable';
-  const { state, frameUrl } = useDeviceStream(device.udid, !isOffline, 'mjpeg');
+  const { state, frameUrl, lastError, closeReason } = useDeviceStream(device.udid, !isOffline, 'mjpeg');
   const displayState: StreamState = isOffline ? 'offline' : state;
+  // A tile is too small for the full-page banner's prose — the real message
+  // rides as a title/tooltip instead of being cut, matching the design
+  // review's "the banner shouldn't just say starting forever" principle.
+  const errorDetail = closeReason || lastError;
 
   return (
     <div className={styles.tile}>
@@ -42,7 +46,7 @@ export function MultiViewTile({ device, onRemove }: { device: Device; onRemove: 
         {frameUrl ? (
           <img className={styles.frame} src={frameUrl} alt={`${device.name} screen`} />
         ) : (
-          <div className={styles.placeholder}>
+          <div className={styles.placeholder} title={errorDetail ?? undefined}>
             <icons.stream size={iconSize.empty} aria-hidden="true" />
             <span>{isOffline ? 'Offline' : displayState === 'rejected' ? 'Unavailable' : 'Connecting…'}</span>
           </div>

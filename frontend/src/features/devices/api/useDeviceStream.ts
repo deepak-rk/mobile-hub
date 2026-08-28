@@ -20,6 +20,11 @@ interface JoinAck {
   protocol: string;
 }
 
+interface CaptureErrorMsg {
+  type: 'error';
+  message: string;
+}
+
 function readToken(): string | null {
   try {
     return localStorage.getItem(TOKEN_STORAGE_KEY);
@@ -56,6 +61,7 @@ function readToken(): string | null {
  */
 export function useDeviceStream(udid: string | undefined, enabled: boolean, protocol: StreamProtocol = 'mjpeg') {
   const [restarted, setRestarted] = useState(false);
+  const [lastError, setLastError] = useState<string | null>(null);
   const retryKeyRef = useRef<string | null>(null);
   const frame = useObjectUrl();
 
@@ -72,10 +78,20 @@ export function useDeviceStream(udid: string | undefined, enabled: boolean, prot
     (event: MessageEvent<Blob | string>) => {
       if (typeof event.data === 'string') {
         try {
-          const msg = JSON.parse(event.data) as JoinAck;
+          const msg = JSON.parse(event.data) as JoinAck | CaptureErrorMsg;
           if (msg.type === 'joined') {
             if (retryKeyRef.current && retryKeyRef.current !== msg.retryKey) setRestarted(true);
             retryKeyRef.current = msg.retryKey;
+            // A fresh join means a new attempt is under way — don't keep
+            // showing an error from a previous one that may already be fixed.
+            setLastError(null);
+          } else if (msg.type === 'error') {
+            // Pushed once by the backend right before the capture that broke
+            // gets torn down (streaming.service.ts) — the socket closes with
+            // 1011 right after, which useResilientWebSocket retries
+            // automatically, so this is "why the last attempt failed", not a
+            // terminal state.
+            setLastError(msg.message);
           }
         } catch {
           // not a control message we understand; ignore
@@ -98,7 +114,7 @@ export function useDeviceStream(udid: string | undefined, enabled: boolean, prot
   // Every code the backend uses to say "don't bother retrying" — see
   // streaming.routes.ts. 1011 (internal error starting the capture) is
   // deliberately absent: that one is worth retrying.
-  const { state: wsState, closeCode } = useResilientWebSocket({
+  const { state: wsState, closeCode, closeReason } = useResilientWebSocket({
     url,
     binaryType: 'blob',
     liveWhen: 'first-message',
@@ -117,5 +133,17 @@ export function useDeviceStream(udid: string | undefined, enabled: boolean, prot
     return wsState;
   }, [enabled, udid, token, wsState, closeCode]);
 
-  return { state, frameUrl: frame.url, restarted, dismissRestarted: () => setRestarted(false) };
+  return {
+    state,
+    frameUrl: frame.url,
+    restarted,
+    dismissRestarted: () => setRestarted(false),
+    // Two distinct sources, deliberately not merged into one: `lastError` is
+    // a mid-stream failure pushed while a viewer was already attached
+    // (retryable — the socket keeps reconnecting after it); `closeReason` is
+    // why the very first attempt was refused outright (4013 capacity, etc. —
+    // terminal, see `nonRetryableCodes` above).
+    lastError,
+    closeReason,
+  };
 }

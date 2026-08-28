@@ -96,6 +96,18 @@ export const streamingRoutes: FastifyPluginAsync = async (app) => {
           onFrame: (frame) => {
             if (socket.readyState === socket.OPEN) socket.send(frame);
           },
+          // Pushed once, right before teardown drops this viewer along with
+          // everyone else's — without this a broken capture just looked like
+          // "starting..." forever (docs/architecture-blueprint.md's streaming
+          // risk review). 1011 is the one non-retryable-code exclusion the
+          // frontend hook already treats as "reconnect" — a fresh attempt is
+          // exactly what should happen next.
+          onError: (message) => {
+            if (socket.readyState === socket.OPEN) {
+              socket.send(JSON.stringify({ type: 'error', message }));
+              socket.close(1011, message.slice(0, 120));
+            }
+          },
         });
 
         if (closedEarly) {

@@ -95,7 +95,7 @@ export function DeviceStream({ device }: { device: Device }) {
   // token, which the banner shows as "Sign in to view". Gating here instead
   // would leave it reading "Not streaming", which wrongly implies the device
   // simply isn't being watched (the same flaw fixed in the run log viewer).
-  const { state, frameUrl, restarted, dismissRestarted } = useDeviceStream(
+  const { state, frameUrl, restarted, dismissRestarted, lastError, closeReason } = useDeviceStream(
     device.udid,
     !isOffline && started,
     protocol,
@@ -186,12 +186,16 @@ export function DeviceStream({ device }: { device: Device }) {
             ) : displayState === 'rejected' ? (
               <>
                 <div className={styles.placeholderTitle}>Stream unavailable</div>
-                <p className={styles.placeholderBody}>
-                  The host refused the capture. It may be at its concurrent-stream limit.
-                </p>
+                <p className={styles.placeholderBody}>{closeReason || 'The host refused the capture.'}</p>
                 <Button size="sm" variant="ghost" onClick={() => setStarted(false)}>
                   Cancel
                 </Button>
+              </>
+            ) : lastError ? (
+              <>
+                <div className={styles.placeholderTitle}>Last attempt failed</div>
+                <p className={styles.placeholderBody}>{lastError}</p>
+                <p className={styles.placeholderBody}>Retrying…</p>
               </>
             ) : (
               <>

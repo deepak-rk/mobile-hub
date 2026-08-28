@@ -1,4 +1,5 @@
 import { randomUUID } from 'crypto';
+import { env } from '../../config/env';
 import { CaptureHandle, CaptureSource, StreamProtocol } from './capture-source';
 import { AdbMjpegCaptureSource } from './sources/adb-mjpeg.source';
 import { AdbH264CaptureSource } from './sources/adb-h264.source';
@@ -23,6 +24,13 @@ export const IDLE_TEARDOWN_MS = 10 * 60 * 1000;
 export const IDLE_SWEEP_INTERVAL_MS = 60 * 1000;
 
 export type FrameListener = (frame: Buffer) => void;
+/** Called once, right before the viewer's socket is about to stop receiving frames because the capture broke. */
+export type ErrorListener = (message: string) => void;
+
+interface Viewer {
+  onFrame: FrameListener;
+  onError?: ErrorListener;
+}
 
 interface LiveCapture {
   key: string;
@@ -30,8 +38,9 @@ interface LiveCapture {
   deviceUdid: string;
   protocol: StreamProtocol;
   handle: CaptureHandle;
-  /** Viewer id -> its frame callback. One capture, many listeners. */
-  viewers: Map<string, FrameListener>;
+  isSimulator: boolean;
+  /** Viewer id -> its callbacks. One capture, many listeners. */
+  viewers: Map<string, Viewer>;
   idleSince: number | null;
 }
 
@@ -70,8 +79,9 @@ class StreamingService {
     platform?: 'android' | 'ios';
     isSimulator?: boolean;
     onFrame: FrameListener;
+    onError?: ErrorListener;
   }): Promise<{ session: IStreamSession; detach: () => Promise<void> }> {
-    const { machineId, deviceUdid, protocol, viewerId, onFrame } = params;
+    const { machineId, deviceUdid, protocol, viewerId, onFrame, onError } = params;
 
     if (!this.source.supports(protocol)) {
       throw new StreamingError(
@@ -84,11 +94,11 @@ class StreamingService {
     let capture = this.captures.get(key);
 
     if (!capture) {
-      await this.assertSimulatorCapacity(params);
-      capture = this.startCapture(key, machineId, deviceUdid, protocol);
+      await this.assertCapacity(params);
+      capture = this.startCapture(key, machineId, deviceUdid, protocol, params.isSimulator ?? false);
     }
 
-    capture.viewers.set(viewerId, onFrame);
+    capture.viewers.set(viewerId, { onFrame, onError });
     capture.idleSince = null;
 
     const session = await this.upsertSession(capture);
@@ -105,6 +115,7 @@ class StreamingService {
     machineId: string,
     deviceUdid: string,
     protocol: StreamProtocol,
+    isSimulator: boolean,
   ): LiveCapture {
     const handle = this.source.start({ deviceUdid, protocol });
     const capture: LiveCapture = {
@@ -113,18 +124,24 @@ class StreamingService {
       deviceUdid,
       protocol,
       handle,
+      isSimulator,
       viewers: new Map(),
       idleSince: null,
     };
 
     handle.on('frame', (frame: Buffer) => {
       // Fan out one captured frame to every attached viewer.
-      for (const listener of capture.viewers.values()) listener(frame);
+      for (const viewer of capture.viewers.values()) viewer.onFrame(frame);
     });
 
     handle.on('error', (err: Error) => {
-      // A broken capture must not look like a quiet device: drop it so the
-      // next viewer starts a fresh one, and let the record reflect reality.
+      // A broken capture must not look like a quiet device: tell every
+      // attached viewer why (so a client can show it instead of retrying
+      // silently forever — the "starting..." banner that never explains
+      // itself was a real gap, see docs/architecture-blueprint.md's
+      // streaming risk review), then drop it so the next viewer/reconnect
+      // starts a fresh attempt and the record reflects reality.
+      for (const viewer of capture.viewers.values()) viewer.onError?.(err.message);
       void this.teardown(key, `capture error: ${err.message}`);
     });
 
@@ -132,24 +149,42 @@ class StreamingService {
     return capture;
   }
 
-  private async assertSimulatorCapacity(params: {
+  private async assertCapacity(params: {
     machineId: string;
     platform?: 'android' | 'ios';
     isSimulator?: boolean;
   }): Promise<void> {
-    if (params.platform !== 'ios' || !params.isSimulator) return;
+    if (params.platform === 'ios' && params.isSimulator) {
+      const active = await StreamSession.countDocuments({
+        machineId: params.machineId,
+        captureStatus: 'active',
+        isSimulator: true,
+      });
+      if (active >= IOS_SIMULATOR_STREAM_CAP) {
+        throw new StreamingError(
+          'SIMULATOR_CAPACITY',
+          `Host ${params.machineId} already has ${IOS_SIMULATOR_STREAM_CAP} iOS simulator streams; ` +
+            `xcrun simctl silently drops frames beyond that. Stop one before starting another.`,
+        );
+      }
+      return;
+    }
 
-    const active = await StreamSession.countDocuments({
-      machineId: params.machineId,
-      captureStatus: 'active',
-      isSimulator: true,
-    });
-    if (active >= IOS_SIMULATOR_STREAM_CAP) {
-      throw new StreamingError(
-        'SIMULATOR_CAPACITY',
-        `Host ${params.machineId} already has ${IOS_SIMULATOR_STREAM_CAP} iOS simulator streams; ` +
-          `xcrun simctl silently drops frames beyond that. Stop one before starting another.`,
-      );
+    if (params.platform === 'android') {
+      // No hard platform wall the way iOS simulators have — Android just
+      // degrades per additional stream (shared adb server, host CPU,
+      // emulator/USB I/O), which is worse in a way that's easy to miss until
+      // a multi-view grid is opened. Capped defensively rather than after
+      // the fact.
+      const active = await StreamSession.countDocuments({ machineId: params.machineId, captureStatus: 'active' });
+      if (active >= env.ANDROID_STREAM_CAP) {
+        throw new StreamingError(
+          'ANDROID_CAPTURE_CAPACITY',
+          `Host ${params.machineId} already has ${env.ANDROID_STREAM_CAP} active captures; adb/host resources ` +
+            `degrade per additional stream. Stop one before starting another (raise ANDROID_STREAM_CAP if this ` +
+            `host has room).`,
+        );
+      }
     }
   }
 
@@ -160,6 +195,7 @@ class StreamingService {
       {
         captureStatus: 'active',
         capturePid: capture.handle.pid,
+        isSimulator: capture.isSimulator,
         viewerIds,
         viewerCount: viewerIds.length,
         lastViewerJoinedAt: new Date(),

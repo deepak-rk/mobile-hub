@@ -1,7 +1,13 @@
 import { useSearchParamsState } from 'react-design-kit';
 
-/** Grid gets unwieldy and each tile is a real capture on some host — keep it sane client-side. */
-export const MULTI_VIEW_MAX = 6;
+/**
+ * Matches the backend's default per-host Android capture cap
+ * (ANDROID_STREAM_CAP) — MJPEG is a paced screencap loop, not a real video
+ * encoder, and each additional simultaneous capture on one host degrades
+ * shared adb-server/CPU/I/O. Raise only once H264 is verified on real
+ * hardware (see docs/architecture-blueprint.md's streaming risk review).
+ */
+export const MULTI_VIEW_MAX = 3;
 
 /**
  * URL-synced set of devices selected for the multi-view grid (same idiom as
