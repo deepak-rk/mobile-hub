@@ -24,6 +24,7 @@ export type StatusKind =
   | 'validating'
   | 'corrupt'
   | 'ready'
+  | 'purged'
   // host
   | 'online'
   // agent credential
@@ -63,6 +64,10 @@ export const statusMeta: Record<StatusKind, StatusMeta> = {
   validating: { label: 'Validating', token: '--status-smoke', icon: icons.validating, active: true },
   corrupt: { label: 'Corrupt', token: '--status-failed', icon: icons.corrupt },
   ready: { label: 'Ready', token: '--status-passed', icon: icons.ready },
+  // GC'd by the retention sweep (builds-gc.test.ts) — the record stays for
+  // audit trail, but the file's gone, so it reads distinctly from a live
+  // failure state (corrupt) rather than sharing its red.
+  purged: { label: 'Purged', token: '--status-cancelled', icon: icons.remove },
 
   // Agent credentials
   active: { label: 'Active', token: '--status-passed', icon: icons.credential },

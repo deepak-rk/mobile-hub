@@ -1,121 +1,56 @@
 import { useMemo, useState } from 'react';
-import {
-  createColumnHelper,
-  flexRender,
-  getCoreRowModel,
-  getSortedRowModel,
-  SortingState,
-  useReactTable,
-} from '@tanstack/react-table';
-import {
-  EmptyState,
-  Mono,
-  Page,
-  PageHeader,
-  ProgressBar,
-  QueryBoundary,
-  Table,
-  Tbody,
-  Td,
-  Th,
-  Thead,
-  Tr,
-} from 'react-design-kit';
-import { StatusBadge } from '@/components/ui/StatusBadge';
+import { Button, EmptyState, Page, PageHeader, QueryBoundary, useSearchParamsState } from 'react-design-kit';
 import { icons } from '@/lib/icons';
-import { formatBytes, formatRelative, shortId } from 'ts-format-utils';
 import { useBuilds } from '../api/builds.api';
+import { BuildDetailDialog } from '../components/BuildDetailDialog';
+import { ProjectCatalog } from '../components/ProjectCatalog';
+import { ProjectVersionTable } from '../components/ProjectVersionTable';
+import { summarizeProjects } from '../lib/summarizeProjects';
 import type { Build } from '../types';
-import styles from './BuildsPage.module.css';
 
 /**
- * Builds move downloading → validating → ready|corrupt. The backend fetches
- * synchronously today (no per-byte progress events yet), so the bar shows
- * indeterminate-ish stage progress rather than inventing a byte count.
+ * Builds page — three drill-down levels over the same `GET /builds` data:
+ * app catalog (one card per `project`) → per-app version table → build
+ * detail. `project` stays URL-synced (guidelines §10's "filters URL-synced"),
+ * so a link into a specific app's version table is shareable; the build
+ * detail dialog is transient, local state, matching how LockControls'
+ * confirm dialog works.
  */
-function buildProgress(status: Build['status']): { value: number; complete: boolean } | null {
-  if (status === 'downloading') return { value: 45, complete: false };
-  if (status === 'validating') return { value: 100, complete: false };
-  return null;
-}
-
-const columnHelper = createColumnHelper<Build>();
-
-const columns = [
-  columnHelper.accessor('project', {
-    header: 'Project',
-    cell: (info) => <span className={styles.project}>{info.getValue()}</span>,
-  }),
-  columnHelper.accessor('version', {
-    header: 'Version',
-  }),
-  columnHelper.accessor('platform', {
-    header: 'Platform',
-    cell: (info) => (info.getValue() === 'ios' ? 'iOS' : 'Android'),
-  }),
-  columnHelper.accessor('status', {
-    header: 'Status',
-    cell: (info) => {
-      const build = info.row.original;
-      const progress = buildProgress(build.status);
-      return (
-        <div className={styles.statusCell}>
-          <StatusBadge status={build.status} />
-          {progress ? (
-            <ProgressBar
-              value={progress.value}
-              complete={progress.complete}
-              label={build.status === 'validating' ? 'Verifying checksum…' : 'Downloading…'}
-            />
-          ) : null}
-          {build.status === 'corrupt' ? (
-            <p className={styles.error}>Integrity check failed — re-trigger the fetch to try again.</p>
-          ) : null}
-        </div>
-      );
-    },
-  }),
-  columnHelper.accessor('sizeBytes', {
-    header: 'Size',
-    cell: (info) => formatBytes(info.getValue()),
-    sortingFn: 'basic',
-  }),
-  columnHelper.accessor('checksum', {
-    header: 'sha256',
-    enableSorting: false,
-    cell: (info) => (info.getValue() ? <Mono>{shortId(info.getValue()!)}</Mono> : <span className={styles.dash}>—</span>),
-  }),
-  columnHelper.accessor('createdAt', {
-    header: 'Created',
-    cell: (info) => formatRelative(info.getValue()),
-  }),
-];
-
 export function BuildsPage() {
   const { data: builds, isPending, error, refetch } = useBuilds();
-  const [sorting, setSorting] = useState<SortingState>([{ id: 'createdAt', desc: true }]);
-  const data = useMemo(() => builds ?? [], [builds]);
+  const [projectParam, setProjectParam] = useSearchParamsState('project', '');
+  const [openBuild, setOpenBuild] = useState<Build | null>(null);
 
-  const table = useReactTable({
-    data,
-    columns,
-    state: { sorting },
-    onSortingChange: setSorting,
-    getCoreRowModel: getCoreRowModel(),
-    getSortedRowModel: getSortedRowModel(),
-  });
+  const data = useMemo(() => builds ?? [], [builds]);
+  const projects = useMemo(() => summarizeProjects(data), [data]);
+  const selectedProject = projectParam || null;
+  const projectBuilds = useMemo(
+    () => (selectedProject ? data.filter((build) => build.project === selectedProject) : []),
+    [data, selectedProject],
+  );
 
   return (
     <Page>
       <PageHeader
-        title="Builds"
-        subtitle="Artifacts fetched by the platform. Every build is checksummed before it is marked ready."
+        title={selectedProject ?? 'Builds'}
+        subtitle={
+          selectedProject
+            ? `${projectBuilds.length} build${projectBuilds.length === 1 ? '' : 's'} fetched for this project.`
+            : 'Artifacts fetched by the platform, grouped by project. Every build is checksummed before it is marked ready.'
+        }
+        actions={
+          selectedProject ? (
+            <Button size="sm" variant="ghost" onClick={() => setProjectParam('')}>
+              Back to all projects
+            </Button>
+          ) : undefined
+        }
       />
 
       <QueryBoundary
         isPending={isPending}
         error={error}
-        isEmpty={builds?.length === 0}
+        isEmpty={data.length === 0}
         onRetry={() => void refetch()}
         empty={
           <EmptyState
@@ -125,33 +60,23 @@ export function BuildsPage() {
           />
         }
       >
-        <Table>
-          <Thead>
-            {table.getHeaderGroups().map((headerGroup) => (
-              <Tr key={headerGroup.id}>
-                {headerGroup.headers.map((header) => (
-                  <Th
-                    key={header.id}
-                    onSort={header.column.getCanSort() ? () => header.column.toggleSorting() : undefined}
-                    sort={header.column.getIsSorted() || false}
-                  >
-                    {flexRender(header.column.columnDef.header, header.getContext())}
-                  </Th>
-                ))}
-              </Tr>
-            ))}
-          </Thead>
-          <Tbody>
-            {table.getRowModel().rows.map((row) => (
-              <Tr key={row.id}>
-                {row.getVisibleCells().map((cell) => (
-                  <Td key={cell.id}>{flexRender(cell.column.columnDef.cell, cell.getContext())}</Td>
-                ))}
-              </Tr>
-            ))}
-          </Tbody>
-        </Table>
+        {selectedProject ? (
+          projectBuilds.length > 0 ? (
+            <ProjectVersionTable builds={projectBuilds} onView={setOpenBuild} />
+          ) : (
+            <EmptyState
+              icon={icons.build}
+              title="No builds for this project"
+              body="It may have been purged entirely, or the link points at a project name that no longer has any builds."
+              action={{ label: 'Back to all projects', onClick: () => setProjectParam('') }}
+            />
+          )
+        ) : (
+          <ProjectCatalog projects={projects} onSelect={setProjectParam} />
+        )}
       </QueryBoundary>
+
+      <BuildDetailDialog build={openBuild} onClose={() => setOpenBuild(null)} />
     </Page>
   );
 }
