@@ -55,6 +55,12 @@ export function isUsableState(state: string): boolean {
  * for every device profile — the actual AVD name (e.g. "Pixel_3a_API_34...")
  * only lives in `ro.boot.qemu.avd_name`, which real hardware never sets, so
  * it takes priority whenever present.
+ *
+ * The AVD name itself carries API-level/arch/extension-level suffixes
+ * ("Pixel_3a_API_34_extension_level_7_x86_64") that make sense as a unique
+ * AVD identifier but are noise as a *device* name — cropped at the first
+ * "_API_" (present in every AVD Android Studio generates) so the display
+ * name is just the device profile ("Pixel 3a").
  */
 export function resolveDeviceName(params: {
   avdName: string;
@@ -63,7 +69,7 @@ export function resolveDeviceName(params: {
   serial: string;
 }): string {
   const { avdName, model, propsModel, serial } = params;
-  if (avdName) return avdName.replace(/_/g, ' ');
+  if (avdName) return avdName.split(/_API_/i)[0].replace(/_/g, ' ');
   if (model) return model;
   if (propsModel) return propsModel.replace(/_/g, ' ');
   return serial;

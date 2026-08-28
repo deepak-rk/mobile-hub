@@ -63,10 +63,12 @@ describe('isUsableState', () => {
 });
 
 describe('resolveDeviceName', () => {
-  it('prefers the AVD name over the generic stock model on an emulator', () => {
+  it('prefers the AVD name over the generic stock model on an emulator, cropped to the device profile', () => {
     // Real bug: Google's stock system images report ro.product.model as
     // "sdk_gphone64_x86_64" for every device profile, hiding which AVD
-    // ("Pixel 3a", "Pixel 6", ...) is actually running.
+    // ("Pixel 3a", "Pixel 6", ...) is actually running. The full AVD name
+    // also carries API-level/arch noise ("_API_34_extension_level_7_x86_64")
+    // that isn't part of the device's identity, so it's cropped off.
     expect(
       resolveDeviceName({
         avdName: 'Pixel_3a_API_34_extension_level_7_x86_64',
@@ -74,7 +76,13 @@ describe('resolveDeviceName', () => {
         propsModel: 'sdk_gphone64_x86_64',
         serial: 'emulator-5554',
       }),
-    ).toBe('Pixel 3a API 34 extension level 7 x86 64');
+    ).toBe('Pixel 3a');
+  });
+
+  it('crops a simpler AVD name the same way', () => {
+    expect(
+      resolveDeviceName({ avdName: 'Pixel_6_API_33', model: '', propsModel: undefined, serial: 'emulator-5554' }),
+    ).toBe('Pixel 6');
   });
 
   it('falls back to the marketing model on real hardware, where there is no AVD name', () => {
