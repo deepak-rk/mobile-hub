@@ -111,10 +111,16 @@
   margin-top: var(--space-2);
 }
 
-/* Breakdown rows are links to the runs behind the number — underlined on
-   hover only, so a table of them doesn't read as a wall of blue. */
-.rowLink {
-  color: inherit;
+/* Breakdown rows link to the runs behind the number. Tinted rather than left
+   as plain text: styling them like body copy meant nobody could tell they were
+   clickable, which was the actual complaint. Only the identifier column is a
+   link, so one tinted column per table is a signal, not a wall of blue. */
+.rowLink,
+/* The device cell wraps its value in <Mono>, which sets its own colour and
+   would otherwise win — leaving that link looking like plain text while the
+   suite link beside it read as interactive. */
+.rowLink * {
+  color: var(--accent);
   text-decoration: none;
 }
 

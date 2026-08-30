@@ -96,7 +96,9 @@ function PassRateTrend({ points }: { points: TrendPoint[] }) {
   return (
     <div className={styles.chart}>
       <ResponsiveContainer width="100%" height={200}>
-        <LineChart data={points} margin={{ top: 8, right: 8, bottom: 0, left: -20 }}>
+        {/* Right margin holds the last x-axis label, which is centred on the
+            final point and would otherwise be clipped by the container edge. */}
+        <LineChart data={points} margin={{ top: 8, right: 24, bottom: 0, left: -20 }}>
           <CartesianGrid stroke="var(--border-subtle)" vertical={false} />
           <XAxis
             dataKey="label"

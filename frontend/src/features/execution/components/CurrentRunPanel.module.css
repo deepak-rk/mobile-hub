@@ -97,8 +97,17 @@
   gap: var(--space-1);
 }
 
+/*
+ * `min-width: 0` for the same reason the flex children below need it, but on
+ * a grid child — `.list` is a grid, and a grid item's default `min-width: auto`
+ * refuses to shrink below its content just as a flex item's does. Without it
+ * this row stayed as wide as an untruncated "project · suite" string, pushing
+ * the timestamp past the card edge and never letting `.meta`'s ellipsis engage.
+ * Confirmed in a browser against a real run list, not reasoned about.
+ */
 .row {
   border-radius: var(--radius-control);
+  min-width: 0;
 }
 
 .rowLink {
