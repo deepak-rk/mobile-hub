@@ -39,19 +39,18 @@ export const executionRoutes: FastifyPluginAsync = async (app) => {
   await app.register(fastifyStatic, { root: env.EXECUTION_ARTIFACTS_DIR, serve: false });
 
   app.get('/', async (req) => {
-    const { project, status, deviceUdid } = req.query as Record<string, string>;
-    return listExecutionRuns({ project, status, deviceUdid });
+    const { project, status, deviceUdid, suite } = req.query as Record<string, string>;
+    return listExecutionRuns({ project, status, deviceUdid, suite });
   });
 
   /**
    * Selectable project names for the trigger form.
    *
-   * **Stopgap.** The real source is org/project YAML config — a project a team
-   * has declared but never run yet should still be selectable, and this cannot
-   * see one. Distinct values from past runs are used only so the form can stop
-   * being free text today; the contract (`{ projects: string[] }`) is chosen to
-   * match what a config-backed endpoint would return, so swapping the source
-   * later is a one-line change here and nothing in the frontend moves.
+   * Sourced from org/project YAML config, which is the declared truth. Projects
+   * seen only in run history are folded in behind `declared: false` so a run
+   * triggered before its project was declared doesn't vanish from the picker —
+   * and so the caller can say that such a project inherits org defaults rather
+   * than carrying its own automation config.
    *
    * Declared before `/:id` so `projects` is never parsed as a run id.
    */

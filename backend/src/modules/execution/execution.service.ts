@@ -494,11 +494,14 @@ export async function listExecutionRuns(filters: {
   project?: string;
   status?: string;
   deviceUdid?: string;
+  /** Lets an analytics suite breakdown link straight to the runs behind a number. */
+  suite?: string;
 }): Promise<IExecutionRun[]> {
   const query: Record<string, unknown> = {};
   if (filters.project) query.project = filters.project;
   if (filters.status) query.status = filters.status;
   if (filters.deviceUdid) query.deviceUdid = filters.deviceUdid;
+  if (filters.suite) query.suite = filters.suite;
   return ExecutionRun.find(query).sort({ createdAt: -1 });
 }
 

@@ -1,4 +1,6 @@
 import { useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
+import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { createColumnHelper, flexRender, getCoreRowModel, getSortedRowModel, SortingState, useReactTable } from '@tanstack/react-table';
 import {
   Card,
@@ -18,6 +20,8 @@ import {
 } from 'react-design-kit';
 import { icons } from '@/lib/icons';
 import { formatPercent, formatRelative } from 'ts-format-utils';
+import { StatusBadge } from '@/components/ui/StatusBadge';
+import { useExecutionRuns } from '@/features/execution/api/execution.api';
 import { useAnalytics } from '../api/analytics.api';
 import { AnalyticsFilterBar } from '../components/AnalyticsFilterBar';
 import { useAnalyticsFilters } from '../hooks/useAnalyticsFilters';
@@ -71,21 +75,92 @@ function PassRateCell({ passRate, runs }: { passRate: number; runs: number }) {
   );
 }
 
-const suiteColumnHelper = createColumnHelper<SuiteBreakdown>();
-const suiteColumns = [
-  suiteColumnHelper.accessor('suite', { header: 'Suite' }),
-  suiteColumnHelper.accessor('passRate', {
-    header: 'Pass rate',
-    cell: (info) => <PassRateCell passRate={info.getValue()} runs={info.row.original.runs} />,
-  }),
-];
+/**
+ * Pass rate over time for one project/platform.
+ *
+ * Rendered only from two points up: a line through a single aggregate is a dot
+ * with an axis, which reads as insight without being any. Percentages are
+ * plotted on a fixed 0–100 axis so two charts side by side are comparable —
+ * an auto-scaled axis would make 88%–92% look like a collapse.
+ */
+function PassRateTrend({ points }: { points: TrendPoint[] }) {
+  if (points.length < 2) {
+    return (
+      <p className={styles.none}>
+        A trend needs at least two {points.length === 1 ? 'periods' : 'periods'} — one more run window and this fills
+        in.
+      </p>
+    );
+  }
 
-function SuiteBreakdownTable({ rows }: { rows: SuiteBreakdown[] }) {
+  return (
+    <div className={styles.chart}>
+      <ResponsiveContainer width="100%" height={200}>
+        <LineChart data={points} margin={{ top: 8, right: 8, bottom: 0, left: -20 }}>
+          <CartesianGrid stroke="var(--border-subtle)" vertical={false} />
+          <XAxis
+            dataKey="label"
+            tick={{ fill: 'var(--text-tertiary)', fontSize: 11 }}
+            stroke="var(--border-subtle)"
+          />
+          <YAxis
+            domain={[0, 100]}
+            tickFormatter={(v: number) => `${v}%`}
+            tick={{ fill: 'var(--text-tertiary)', fontSize: 11 }}
+            stroke="var(--border-subtle)"
+          />
+          <Tooltip
+            contentStyle={{
+              background: 'var(--surface-raised)',
+              border: '1px solid var(--border-subtle)',
+              borderRadius: 8,
+              color: 'var(--text-primary)',
+            }}
+            formatter={(value: number, _name, entry) => [
+              `${value.toFixed(1)}% · ${(entry.payload as TrendPoint).runs} runs`,
+              'Pass rate',
+            ]}
+          />
+          <Line
+            type="monotone"
+            dataKey="passRate"
+            stroke="var(--accent)"
+            strokeWidth={2}
+            dot={{ r: 3, fill: 'var(--accent)' }}
+          />
+        </LineChart>
+      </ResponsiveContainer>
+    </div>
+  );
+}
+
+const suiteColumnHelper = createColumnHelper<SuiteBreakdown>();
+function makeSuiteColumns(project: string) {
+  return [
+    suiteColumnHelper.accessor('suite', {
+      header: 'Suite',
+      // The number is the question; the runs behind it are the answer. Links
+      // straight to those runs rather than making the reader re-filter by hand.
+      cell: (info) => (
+        <Link className={styles.rowLink} to={`/execution?project=${encodeURIComponent(project)}&suite=${encodeURIComponent(info.getValue())}`}>
+          {info.getValue()}
+        </Link>
+      ),
+    }),
+    suiteColumnHelper.accessor('passRate', {
+      header: 'Pass rate',
+      cell: (info) => <PassRateCell passRate={info.getValue()} runs={info.row.original.runs} />,
+    }),
+  ];
+}
+
+function SuiteBreakdownTable({ rows, project }: { rows: SuiteBreakdown[]; project: string }) {
   const [sorting, setSorting] = useState<SortingState>([{ id: 'passRate', desc: false }]);
   const data = useMemo(() => rows, [rows]);
+  const columns = useMemo(() => makeSuiteColumns(project), [project]);
   const table = useReactTable({
     data,
-    columns: suiteColumns,
+    columns,
     state: { sorting },
     onSortingChange: setSorting,
     getCoreRowModel: getCoreRowModel(),
@@ -128,7 +203,11 @@ const deviceColumnHelper = createColumnHelper<DeviceBreakdown>();
 const deviceColumns = [
   deviceColumnHelper.accessor('deviceUdid', {
     header: 'Device',
-    cell: (info) => <Mono>{info.getValue()}</Mono>,
+    cell: (info) => (
+      <Link className={styles.rowLink} to={`/execution?deviceUdid=${encodeURIComponent(info.getValue())}`}>
+        <Mono>{info.getValue()}</Mono>
+      </Link>
+    ),
   }),
   deviceColumnHelper.accessor('passRate', {
     header: 'Pass rate',
@@ -180,38 +259,132 @@ function DeviceBreakdownTable({ rows }: { rows: DeviceBreakdown[] }) {
   );
 }
 
-function AggregateSection({ aggregate }: { aggregate: AnalyticsAggregate }) {
+/**
+ * All periods for one project/platform, newest first.
+ *
+ * Grouped rather than rendered one section per aggregate: a project with a
+ * week of history previously produced seven near-identical sections, which
+ * buried the comparison the page exists to make. The latest period drives the
+ * headline numbers; the rest become the trend.
+ */
+interface AggregateGroup {
+  key: string;
+  project: string;
+  platform: AnalyticsAggregate['platform'];
+  latest: AnalyticsAggregate;
+  trend: TrendPoint[];
+}
+
+interface TrendPoint {
+  label: string;
+  passRate: number;
+  runs: number;
+}
+
+function groupAggregates(aggregates: AnalyticsAggregate[]): AggregateGroup[] {
+  const groups = new Map<string, AnalyticsAggregate[]>();
+  for (const a of aggregates) {
+    const key = `${a.project}::${a.platform}`;
+    groups.set(key, [...(groups.get(key) ?? []), a]);
+  }
+
+  return [...groups.entries()].map(([key, items]) => {
+    const byDateDesc = [...items].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+    return {
+      key,
+      project: byDateDesc[0].project,
+      platform: byDateDesc[0].platform,
+      latest: byDateDesc[0],
+      // Oldest first so the line reads left-to-right the way time does.
+      trend: [...byDateDesc].reverse().map((a) => ({
+        label: new Date(a.date).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }),
+        passRate: Number((a.passRate * 100).toFixed(1)),
+        runs: a.totalRuns,
+      })),
+    };
+  });
+}
+
+function AggregateSection({ group }: { group: AggregateGroup }) {
+  const { latest } = group;
+  // Scoped to exactly what this section summarises, so the link lands on the
+  // same population the numbers above it were computed from.
+  const runsHref = `/execution?project=${encodeURIComponent(group.project)}`;
+
   return (
     <section className={styles.section}>
       <header className={styles.sectionHead}>
-        <h2 className={styles.sectionTitle}>{aggregate.project}</h2>
-        <span className={styles.platform}>{platformLabel(aggregate.platform)}</span>
-        <span className={styles.computed}>Computed {formatRelative(aggregate.computedAt)}</span>
+        <h2 className={styles.sectionTitle}>{group.project}</h2>
+        <span className={styles.platform}>{platformLabel(group.platform)}</span>
+        <span className={styles.computed}>Computed {formatRelative(latest.computedAt)}</span>
+        <Link className={styles.sectionLink} to={runsHref}>
+          View runs →
+        </Link>
       </header>
 
       <div className={styles.kpis}>
-        <Kpi label="Total runs" value={String(aggregate.totalRuns)} />
-        <Kpi label="Pass rate" value={formatPercent(aggregate.passRate)} tone={passRateTone(aggregate.passRate)} />
-        <Kpi label="Failed" value={String(aggregate.failedRuns)} tone="var(--status-failed)" />
-        <Kpi label="Avg duration" value={formatAvgDuration(aggregate.avgDurationMs)} />
+        <Kpi label="Total runs" value={String(latest.totalRuns)} />
+        <Kpi label="Pass rate" value={formatPercent(latest.passRate)} tone={passRateTone(latest.passRate)} />
+        <Kpi label="Failed" value={String(latest.failedRuns)} tone="var(--status-failed)" />
+        <Kpi label="Avg duration" value={formatAvgDuration(latest.avgDurationMs)} />
       </div>
+
+      <Card>
+        <CardBody>
+          <div className={styles.breakdownTitle}>Pass rate over time</div>
+          <PassRateTrend points={group.trend} />
+        </CardBody>
+      </Card>
 
       <div className={styles.breakdowns}>
         <Card>
           <CardBody>
             <div className={styles.breakdownTitle}>By suite</div>
-            <SuiteBreakdownTable rows={aggregate.bySuite} />
+            <SuiteBreakdownTable rows={latest.bySuite} project={group.project} />
           </CardBody>
         </Card>
 
         <Card>
           <CardBody>
             <div className={styles.breakdownTitle}>By device</div>
-            <DeviceBreakdownTable rows={aggregate.byDevice} />
+            <DeviceBreakdownTable rows={latest.byDevice} />
           </CardBody>
         </Card>
       </div>
     </section>
+  );
+}
+
+/**
+ * The most recent runs behind these aggregates.
+ *
+ * Aggregates answer "how are we doing"; this answers "what just happened",
+ * which is the question someone actually opens this page with after a failure.
+ * Every row links to the run.
+ */
+function RecentRuns({ project }: { project?: string }) {
+  const { data: runs } = useExecutionRuns(project ? { project } : {});
+  const recent = runs?.slice(0, 8) ?? [];
+  if (recent.length === 0) return null;
+
+  return (
+    <Card>
+      <CardBody>
+        <div className={styles.breakdownTitle}>Latest runs</div>
+        <ul className={styles.recentList}>
+          {recent.map((run) => (
+            <li key={run._id}>
+              <Link className={styles.recentRow} to={`/execution/${run._id}`}>
+                <StatusBadge status={run.status} bare />
+                <span className={styles.recentSuite}>{run.suite}</span>
+                <span className={styles.recentMeta}>{run.project}</span>
+                <span className={styles.recentWhen}>{formatRelative(run.endedAt ?? run.createdAt)}</span>
+              </Link>
+            </li>
+          ))}
+        </ul>
+      </CardBody>
+    </Card>
   );
 }
 
@@ -226,6 +399,7 @@ export function AnalyticsPage() {
     refetch,
   } = useAnalytics({ project: project || undefined, platform, window });
   const filtered = project !== '' || platform !== 'all' || window !== 'daily';
+  const groups = useMemo(() => groupAggregates(aggregates ?? []), [aggregates]);
 
   return (
     <Page>
@@ -269,14 +443,11 @@ export function AnalyticsPage() {
         }
       >
         <div className={styles.sections}>
-          {aggregates?.map((a) => (
-            <AggregateSection key={a._id} aggregate={a} />
+          {groups.map((g) => (
+            <AggregateSection key={g.key} group={g} />
           ))}
+          <RecentRuns project={project || undefined} />
         </div>
-        <p className={styles.footnote}>
-          Trend charts arrive once there are multiple days of aggregates to plot — a line through a single point
-          would be noise, not insight.
-        </p>
       </QueryBoundary>
     </Page>
   );
