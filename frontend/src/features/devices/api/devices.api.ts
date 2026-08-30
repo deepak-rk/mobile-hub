@@ -13,11 +13,15 @@ export interface DeviceFilters {
  * them, so filtering there keeps one source of truth for "what matched"
  * instead of fetching everything and hiding rows in the browser.
  */
-export function useDevices(filters: DeviceFilters = {}) {
+export function useDevices(filters: DeviceFilters = {}, options: { refetchInterval?: number } = {}) {
   const params = Object.fromEntries(Object.entries(filters).filter(([, v]) => v && v !== 'all'));
   return useQuery({
     queryKey: ['devices', params],
     queryFn: async () => (await api.get<Device[]>('/devices', { params })).data,
+    // Off by default. Callers that must reflect state this client didn't cause
+    // — a lock released when a run ends, the TTL sweep, another operator —
+    // opt in, because those have no mutation here to invalidate on.
+    refetchInterval: options.refetchInterval,
   });
 }
 

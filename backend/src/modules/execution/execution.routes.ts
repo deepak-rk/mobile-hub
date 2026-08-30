@@ -56,11 +56,20 @@ export const executionRoutes: FastifyPluginAsync = async (app) => {
    * Declared before `/:id` so `projects` is never parsed as a run id.
    */
   app.get('/projects', async () => {
-    // `distinct` is typed as unknown[] here, so the values are narrowed once
-    // rather than asserted — a non-string would otherwise reach localeCompare.
-    const projects = await ExecutionRun.distinct('project');
-    const names = projects.filter((p): p is string => typeof p === 'string' && p.length > 0);
-    return { projects: names.sort((a, b) => a.localeCompare(b)) };
+    // Declared projects are the real answer; past runs are folded in so a
+    // project that predates being declared (or was triggered ad hoc) doesn't
+    // vanish from the picker. `distinct` is typed unknown[], so values are
+    // narrowed rather than asserted.
+    const declared = Object.values(app.config.projects);
+    const historical = await ExecutionRun.distinct('project');
+    const byId = new Map(declared.map((p) => [p.id, { id: p.id, displayName: p.displayName, declared: true }]));
+    for (const name of historical) {
+      if (typeof name === 'string' && name && !byId.has(name)) {
+        byId.set(name, { id: name, displayName: name, declared: false });
+      }
+    }
+    const projects = [...byId.values()].sort((a, b) => a.displayName.localeCompare(b.displayName));
+    return { projects };
   });
 
   app.get('/:id', async (req, reply) => {
@@ -82,7 +91,10 @@ export const executionRoutes: FastifyPluginAsync = async (app) => {
         return reply.status(400).send({ code: 'VALIDATION_ERROR', message: body.error.message });
       }
       try {
-        const run = await triggerExecutionRun({ ...body.data, triggeredBy: req.user.sub }, app.config.automation);
+        // A declared project's own automation block wins over the org default —
+        // that per-project override is the entire point of declaring one.
+        const automation = app.config.projects[body.data.project]?.automation ?? app.config.automation;
+        const run = await triggerExecutionRun({ ...body.data, triggeredBy: req.user.sub }, automation);
         return reply.status(201).send(run);
       } catch (err) {
         if (err instanceof DeviceLockedError) {

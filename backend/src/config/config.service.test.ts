@@ -4,7 +4,7 @@ import * as os from 'os';
 import * as path from 'path';
 import { ConfigError } from 'layered-config-ts';
 import { loadEffectiveConfig } from './config.service';
-import { PLATFORM_DEFAULTS } from './org-config.schema';
+import { PLATFORM_DEFAULTS, resolveProjects } from './org-config.schema';
 
 // config.service.ts imports layered-config-ts through common/dynamic-import,
 // whose `new Function`-wrapped import() is what makes it survive tsc's
@@ -63,5 +63,42 @@ describe('loadEffectiveConfig', () => {
   it('surfaces a ConfigError (from layered-config-ts) on a typo\'d key', async () => {
     const orgPath = writeTmpYaml('features:\n  buidls: false\n'); // typo: buidls
     await expect(loadEffectiveConfig(orgPath, path.join(os.tmpdir(), 'missing.yaml'))).rejects.toThrow(ConfigError);
+  });
+});
+
+describe('project resolution', () => {
+  it('inherits org automation and overrides only what a project declares', () => {
+    const orgAutomation = {
+      framework: 'appium',
+      configPath: 'wdio.conf.js',
+      envFile: '.env',
+      testDir: 'test',
+      repoUrl: 'https://example.com/org-default.git',
+    };
+
+    const resolved = resolveProjects(
+      {
+        // Declares nothing: must still be selectable, fully inheriting.
+        inheritor: {},
+        // Overrides two fields; the rest must survive from the org block.
+        overrider: { displayName: 'Checkout', automation: { testDir: 'e2e', repoUrl: 'https://example.com/own.git' } },
+      },
+      orgAutomation,
+    );
+
+    expect(resolved.inheritor.automation).toEqual(orgAutomation);
+    // A project that doesn't name itself is shown by its id.
+    expect(resolved.inheritor.displayName).toBe('inheritor');
+
+    expect(resolved.overrider.automation.testDir).toBe('e2e');
+    expect(resolved.overrider.automation.repoUrl).toBe('https://example.com/own.git');
+    // Not overridden, so it must still be the org value — the bug this guards
+    // against is a partial override silently blanking its siblings.
+    expect(resolved.overrider.automation.configPath).toBe('wdio.conf.js');
+    expect(resolved.overrider.automation.framework).toBe('appium');
+  });
+
+  it('returns nothing when no projects are declared', () => {
+    expect(resolveProjects(undefined, PLATFORM_DEFAULTS.automation)).toEqual({});
   });
 });

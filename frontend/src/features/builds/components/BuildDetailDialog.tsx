@@ -5,6 +5,8 @@ import { icons, iconSize } from '@/lib/icons';
 import { formatBytes, formatRelative } from 'ts-format-utils';
 import { useAuth } from '@/features/auth/useAuth';
 import { InstallDialog } from '@/features/device-installs/components/InstallDialog';
+import type { ApiError } from '@/services/api';
+import { usePurgeBuild } from '../api/builds.api';
 import type { Build } from '../types';
 import styles from './BuildDetailDialog.module.css';
 
@@ -18,6 +20,8 @@ import styles from './BuildDetailDialog.module.css';
 export function BuildDetailDialog({ build, onClose }: { build: Build | null; onClose: () => void }) {
   const [copied, setCopied] = useState(false);
   const [installOpen, setInstallOpen] = useState(false);
+  const [confirmPurge, setConfirmPurge] = useState(false);
+  const purge = usePurgeBuild();
   const { can } = useAuth();
 
   function copyChecksum() {
@@ -31,7 +35,7 @@ export function BuildDetailDialog({ build, onClose }: { build: Build | null; onC
   return (
     <>
       <Dialog
-        open={build !== null && !installOpen}
+        open={build !== null && !installOpen && !confirmPurge}
         onClose={onClose}
         title={build ? `${build.project} · ${build.version}` : 'Build'}
         actions={
@@ -39,6 +43,15 @@ export function BuildDetailDialog({ build, onClose }: { build: Build | null; onC
             <Button size="sm" variant="ghost" onClick={onClose}>
               Close
             </Button>
+            {/* Only a `ready` build has a local copy to reclaim. Destructive,
+                so it confirms first — and it removes the artifact, not the
+                record, which is why it says "Remove local copy". */}
+            {build?.status === 'ready' && can('operator', 'admin') ? (
+              <Button size="sm" variant="destructive" onClick={() => setConfirmPurge(true)}>
+                <icons.remove size={iconSize.dense} aria-hidden="true" />
+                Remove local copy
+              </Button>
+            ) : null}
             {build?.status === 'ready' && can('operator', 'admin') ? (
               <Button size="sm" onClick={() => setInstallOpen(true)}>
                 Install
@@ -91,6 +104,43 @@ export function BuildDetailDialog({ build, onClose }: { build: Build | null; onC
       ) : null}
       </Dialog>
       {installOpen ? <InstallDialog build={build} onClose={() => setInstallOpen(false)} /> : null}
+
+      <Dialog
+        open={confirmPurge}
+        onClose={() => setConfirmPurge(false)}
+        title="Remove local copy?"
+        actions={
+          <>
+            <Button size="sm" variant="ghost" onClick={() => setConfirmPurge(false)}>
+              Cancel
+            </Button>
+            <Button
+              size="sm"
+              variant="destructive"
+              disabled={purge.isPending}
+              onClick={() =>
+                build &&
+                purge.mutate(build._id, {
+                  onSuccess: () => {
+                    setConfirmPurge(false);
+                    onClose();
+                  },
+                })
+              }
+            >
+              {purge.isPending ? 'Removing…' : 'Remove'}
+            </Button>
+          </>
+        }
+      >
+        <p className={styles.error}>
+          {(purge.error as ApiError | null)?.message ?? ''}
+        </p>
+        <p>
+          Deletes this build&apos;s artifact from disk to reclaim space. The build stays in the catalog and can be
+          fetched again. Refused while an install is still using it.
+        </p>
+      </Dialog>
     </>
   );
 }

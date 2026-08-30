@@ -3,11 +3,18 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { execSync } from 'child_process';
+import { Types } from 'mongoose';
 import { ExecutionRun } from './execution-run.model';
 import { env } from '../../config/env';
 import { PLATFORM_DEFAULTS } from '../../config/org-config.schema';
 import * as devicesService from '../devices/devices.service';
-import { triggerExecutionRun, cancelExecutionRun, recoverOrphanedRuns, DeviceLockedError } from './execution.service';
+import {
+  triggerExecutionRun,
+  cancelExecutionRun,
+  recoverOrphanedRuns,
+  sweepFinishedWorkspaces,
+  DeviceLockedError,
+} from './execution.service';
 
 /**
  * The one property this module exists for: the device lock is released in
@@ -342,5 +349,63 @@ describe('cancelExecutionRun', () => {
     vi.spyOn(ExecutionRun, 'findById').mockResolvedValue(null as never);
 
     expect(await cancelExecutionRun('nope')).toBeNull();
+  });
+});
+
+describe('sweepFinishedWorkspaces', () => {
+  const HOUR = 60 * 60 * 1000;
+
+  function makeWorkspace(id: string, ageMs = 0) {
+    const dir = path.join(tmpDir, id);
+    fs.mkdirSync(path.join(dir, 'repo'), { recursive: true });
+    if (ageMs > 0) {
+      const when = new Date(Date.now() - ageMs);
+      fs.utimesSync(dir, when, when);
+    }
+    return dir;
+  }
+
+  it('removes finished runs, keeps in-flight ones, and never touches the shared cache', async () => {
+    const finished = new Types.ObjectId().toString();
+    const running = new Types.ObjectId().toString();
+    makeWorkspace(finished);
+    makeWorkspace(running);
+    // The node_modules cache lives alongside workspaces and must survive —
+    // it is the thing that makes a second run fast.
+    const cache = path.join(tmpDir, '.cache');
+    fs.mkdirSync(cache, { recursive: true });
+
+    vi.spyOn(ExecutionRun, 'find').mockReturnValue({
+      select: vi.fn().mockResolvedValue([
+        { id: finished, status: 'passed' },
+        { id: running, status: 'running' },
+      ]),
+    } as never);
+
+    const removed = await sweepFinishedWorkspaces();
+
+    expect(removed).toBe(1);
+    expect(fs.existsSync(path.join(tmpDir, finished))).toBe(false);
+    expect(fs.existsSync(path.join(tmpDir, running))).toBe(true);
+    expect(fs.existsSync(cache)).toBe(true);
+  });
+
+  it('reclaims workspaces whose run record no longer exists, but only once they are old', async () => {
+    // The real cause of the backlog on this machine: the database was reset
+    // while the disk was not, leaving workspaces nothing will ever claim.
+    const oldOrphan = new Types.ObjectId().toString();
+    const freshOrphan = new Types.ObjectId().toString();
+    makeWorkspace(oldOrphan, 2 * HOUR);
+    makeWorkspace(freshOrphan);
+
+    vi.spyOn(ExecutionRun, 'find').mockReturnValue({ select: vi.fn().mockResolvedValue([]) } as never);
+
+    const removed = await sweepFinishedWorkspaces();
+
+    expect(removed).toBe(1);
+    expect(fs.existsSync(path.join(tmpDir, oldOrphan))).toBe(false);
+    // A run creates its directory around the same moment as its record, so a
+    // recent recordless workspace may be one starting right now.
+    expect(fs.existsSync(path.join(tmpDir, freshOrphan))).toBe(true);
   });
 });

@@ -76,10 +76,21 @@ export function useRunLog(runId: string | undefined, enabled: boolean) {
  * config-backed endpoint would return, so replacing the source changes nothing
  * here.
  */
+export interface ProjectOption {
+  id: string;
+  displayName: string;
+  /**
+   * Declared in org/project YAML, as opposed to merely seen in run history.
+   * Only a declared project carries its own automation config; an undeclared
+   * one silently falls back to the org defaults, which the picker says out loud.
+   */
+  declared: boolean;
+}
+
 export function useProjects() {
   return useQuery({
     queryKey: ['execution', 'projects'],
-    queryFn: async () => (await api.get<{ projects: string[] }>('/execution/projects')).data.projects,
+    queryFn: async () => (await api.get<{ projects: ProjectOption[] }>('/execution/projects')).data.projects,
   });
 }
 

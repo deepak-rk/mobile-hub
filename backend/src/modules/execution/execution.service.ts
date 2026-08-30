@@ -49,6 +49,13 @@ const runningProcesses = new Map<string, ManagedProcess>();
 const cancelledRuns = new Set<string>();
 
 /**
+ * How long a workspace with no run record must sit untouched before the sweep
+ * treats it as abandoned. Far longer than the gap between a run creating its
+ * directory and its record, so a starting run is never mistaken for junk.
+ */
+const ORPHAN_WORKSPACE_GRACE_MS = 60 * 60 * 1000;
+
+/**
  * "pulling"/"restoring_cache" stay the honest not-implemented stub
  * (root CLAUDE.md / docs/architecture-blueprint.md) for any project whose
  * `automation.repoUrl` isn't configured — building a real clone/cache step
@@ -505,6 +512,62 @@ export async function getExecutionRun(id: string): Promise<IExecutionRun | null>
  * on backend restart" gotcha (the finally-block above handles the first two).
  * Call once at server startup, before accepting traffic.
  */
+/**
+ * Deletes workspaces belonging to runs that are already finished.
+ *
+ * Runs clean up after themselves now, but only since that was built — this
+ * clears the backlog left by every run that finished before it, which on a
+ * developer machine was hundreds of directories each holding a git clone and a
+ * copied `node_modules`. Also catches anything a crash left behind, since a
+ * process killed mid-run never reaches its own `finally`.
+ *
+ * Deliberately conservative: a directory is removed only when it maps to a run
+ * that exists and has ended. An unrecognised directory is left alone rather
+ * than assumed to be junk — `EXECUTIONS_DIR` also holds the shared `.cache`,
+ * which must survive.
+ */
+export async function sweepFinishedWorkspaces(): Promise<number> {
+  if (!fs.existsSync(env.EXECUTIONS_DIR)) return 0;
+
+  const entries = fs.readdirSync(env.EXECUTIONS_DIR, { withFileTypes: true });
+  const candidates = entries
+    .filter((e) => e.isDirectory() && Types.ObjectId.isValid(e.name))
+    .map((e) => e.name);
+  if (candidates.length === 0) return 0;
+
+  const known = await ExecutionRun.find({ _id: { $in: candidates } }).select('_id status');
+  const statusById = new Map(known.map((r) => [r.id as string, r.status]));
+
+  const removable = candidates.filter((id) => {
+    const status = statusById.get(id);
+    if (status) return (['passed', 'failed', 'cancelled'] as RunStatus[]).includes(status);
+
+    // No record at all. Usually the database was reset while the disk was not,
+    // which leaves workspaces nothing will ever claim — the actual cause of the
+    // backlog here. Guarded by age because a run creates its directory around
+    // the same moment as its record, and sweeping a starting run's workspace
+    // would break it; nothing legitimately sits recordless for an hour.
+    const dir = path.join(env.EXECUTIONS_DIR, id);
+    try {
+      return Date.now() - fs.statSync(dir).mtimeMs > ORPHAN_WORKSPACE_GRACE_MS;
+    } catch {
+      return false;
+    }
+  });
+
+  let removed = 0;
+  for (const id of removable) {
+    try {
+      fs.rmSync(path.join(env.EXECUTIONS_DIR, id), { recursive: true, force: true });
+      removed += 1;
+    } catch {
+      // A locked file on Windows just means this one waits for the next boot;
+      // failing startup over reclaimable disk space would be worse.
+    }
+  }
+  return removed;
+}
+
 export async function recoverOrphanedRuns(): Promise<number> {
   const orphaned = await ExecutionRun.find({ status: { $in: ['queued', 'preparing', 'running'] } });
   for (const run of orphaned) {

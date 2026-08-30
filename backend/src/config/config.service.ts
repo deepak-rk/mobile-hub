@@ -1,5 +1,11 @@
 import { parse as parseYaml } from 'yaml';
-import { partialConfigSchema, EffectiveConfig, PLATFORM_DEFAULTS } from './org-config.schema';
+import {
+  partialConfigSchema,
+  EffectiveConfig,
+  PLATFORM_DEFAULTS,
+  RawProjectConfig,
+  resolveProjects,
+} from './org-config.schema';
 import dynamicImport from '../common/dynamic-import';
 import type * as LayeredConfigTs from 'layered-config-ts';
 
@@ -20,10 +26,20 @@ declare module 'fastify' {
  */
 export async function loadEffectiveConfig(orgPath: string, projectPath: string): Promise<EffectiveConfig> {
   const { loadLayeredConfig } = await dynamicImport<typeof LayeredConfigTs>('layered-config-ts');
-  return loadLayeredConfig({
+  const merged = loadLayeredConfig({
     schema: partialConfigSchema,
     defaults: PLATFORM_DEFAULTS,
     layers: [orgPath, projectPath],
     parse: parseYaml,
   });
+
+  // Each project inherits the org's automation block and overrides only what
+  // it declares. Done after the layered merge, not inside it: that merge is
+  // generic over the document, while this is mobile-hub's own rule about one
+  // block inheriting another.
+  // The merge is typed against EffectiveConfig, but until this line `projects`
+  // still holds the raw YAML shape (optional fields, no inherited automation) —
+  // the two only coincide after resolving, which is what this does.
+  const rawProjects = merged.projects as unknown as Record<string, RawProjectConfig> | undefined;
+  return { ...merged, projects: resolveProjects(rawProjects, merged.automation) };
 }

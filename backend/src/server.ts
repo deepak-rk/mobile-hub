@@ -4,7 +4,7 @@ import mongoose from 'mongoose';
 import { env } from './config/env';
 import { loadEffectiveConfig } from './config/config.service';
 import { markStaleHostsOffline, HOST_STALE_CHECK_INTERVAL_MS } from './modules/hosts/hosts.service';
-import { recoverOrphanedRuns } from './modules/execution/execution.service';
+import { recoverOrphanedRuns, sweepFinishedWorkspaces } from './modules/execution/execution.service';
 import {
   computeDailyAggregates,
   computeWeeklyAggregates,
@@ -81,6 +81,15 @@ async function start(): Promise<void> {
   const recovered = await recoverOrphanedRuns();
   if (recovered > 0) {
     app.log.warn(`Recovered ${recovered} execution run(s) left mid-flight by a previous restart`);
+  }
+
+  // Runs clean up their own workspace now, but nothing had cleared the backlog
+  // from before that existed — each one holding a clone plus a copied
+  // node_modules. Ordered after recovery so runs it just marked failed are
+  // swept in the same pass.
+  const swept = await sweepFinishedWorkspaces();
+  if (swept > 0) {
+    app.log.info(`Reclaimed ${swept} finished execution workspace(s)`);
   }
 
   const address = await app.listen({ port: env.API_PORT, host: '0.0.0.0' });

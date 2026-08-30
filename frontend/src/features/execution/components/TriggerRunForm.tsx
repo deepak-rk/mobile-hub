@@ -5,7 +5,7 @@ import type { ApiError } from '@/services/api';
 import { icons, iconSize } from '@/lib/icons';
 import { useAuth } from '@/features/auth/useAuth';
 import { useDevices } from '@/features/devices/api/devices.api';
-import { useTriggerRun } from '../api/execution.api';
+import { useProjects, useTriggerRun } from '../api/execution.api';
 import { useRunPresets } from '../hooks/useRunPresets';
 import styles from './TriggerRunForm.module.css';
 
@@ -27,7 +27,12 @@ export function TriggerRunForm() {
   const location = useLocation();
   const navigate = useNavigate();
   const trigger = useTriggerRun();
-  const { data: devices } = useDevices();
+  // Polled, not fetched once: a device locked by a run that has since finished
+  // must reappear here without the user reloading the page. Lock/unlock done
+  // in this browser already invalidates the query, but a lock released by the
+  // backend — a run ending, or the TTL sweep — has no client event to hang off.
+  const { data: devices } = useDevices(undefined, { refetchInterval: 5000 });
+  const { data: projects } = useProjects();
   const { presets, savePreset, deletePreset } = useRunPresets();
 
   const [project, setProject] = useState('');
@@ -184,7 +189,44 @@ export function TriggerRunForm() {
           </div>
 
           <div className={styles.row}>
-            <Field label="Project" value={project} required onChange={(e) => setProject(e.target.value)} />
+            <div className={styles.field}>
+              <label className={styles.label} htmlFor="project">
+                Project
+              </label>
+              {/* A dropdown once the backend knows of any project, but never a
+                  dropdown with nothing in it: on a fresh install there are no
+                  projects yet, and an empty select would block the very first
+                  run. Free text is the honest fallback there. */}
+              {projects && projects.length > 0 ? (
+                <select
+                  id="project"
+                  className={styles.select}
+                  value={project}
+                  required
+                  onChange={(e) => setProject(e.target.value)}
+                >
+                  <option value="">Select a project…</option>
+                  {projects.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {/* A project seen only in run history isn't configured,
+                          so its automation falls back to org defaults — worth
+                          saying, since that decides whether a repo gets cloned. */}
+                      {p.displayName}
+                      {p.declared ? '' : ' (not configured)'}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <input
+                  id="project"
+                  className={styles.select}
+                  value={project}
+                  required
+                  placeholder="No projects configured yet — type one"
+                  onChange={(e) => setProject(e.target.value)}
+                />
+              )}
+            </div>
             <Field label="Branch" value={branch} required onChange={(e) => setBranch(e.target.value)} />
           </div>
 

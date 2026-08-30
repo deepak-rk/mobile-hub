@@ -3,7 +3,14 @@ import { FastifyPluginAsync, FastifyRequest } from 'fastify';
 import type { WebSocket } from 'ws';
 import type { JwtPayload } from 'fastify-auth-kit';
 import { z } from 'zod';
-import { getBuild, listBuilds, startBuildFetch, triggerBuildFetch } from './builds.service';
+import {
+  BuildNotPurgeableError,
+  getBuild,
+  listBuilds,
+  purgeBuildArtifact,
+  startBuildFetch,
+  triggerBuildFetch,
+} from './builds.service';
 import { subscribeToBuildEvents } from './builds.events';
 import { requireAgentToken } from '../agent-auth/agent-auth';
 
@@ -70,6 +77,27 @@ export const buildsRoutes: FastifyPluginAsync = async (app) => {
 
     const unsubscribe = subscribeToBuildEvents(id, (event) => socket.send(JSON.stringify(event)));
     socket.on('close', unsubscribe);
+  });
+
+  /**
+   * Removes the local artifact, keeping the record.
+   *
+   * DELETE on the build would imply the record goes too; it does not — the
+   * version stays visible in the catalog and can be re-fetched, which is the
+   * same `purged` transition retention already uses.
+   */
+  app.post('/:id/purge', { preHandler: app.requireRole('operator', 'admin') }, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    try {
+      const build = await purgeBuildArtifact(id);
+      if (!build) return reply.status(404).send({ code: 'NOT_FOUND', message: 'Build not found' });
+      return build;
+    } catch (err) {
+      if (err instanceof BuildNotPurgeableError) {
+        return reply.status(409).send({ code: 'BUILD_NOT_PURGEABLE', message: err.message });
+      }
+      throw err;
+    }
   });
 
   app.post(

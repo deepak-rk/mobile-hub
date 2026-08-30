@@ -27,3 +27,27 @@ automation:
   configPath: wdio.conf.js
   envFile: .env
   testDir: test
+
+# Projects the platform knows about, keyed by the same id that lands on an
+# ExecutionRun and a Build — so config and history line up without a mapping
+# table. Declaring one is what puts it in the trigger form's Project dropdown.
+#
+# Every field is optional and inherits from the `automation` block above, so
+# `my-app: {}` is enough to make a project selectable. Declare only what
+# genuinely differs.
+projects:
+  demo-app:
+    displayName: Demo App
+    platform: android
+    automation:
+      # This project has its own repo; everything else (framework, configPath,
+      # envFile, testDir) is inherited from the org defaults above.
+      repoUrl: https://github.com/example/demo-app-automation.git
+
+  checkout:
+    displayName: Checkout
+    platform: ios
+    automation:
+      repoUrl: https://github.com/example/checkout-automation.git
+      testDir: e2e
+      configPath: wdio.ios.conf.js
