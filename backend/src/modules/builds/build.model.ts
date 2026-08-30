@@ -7,6 +7,15 @@ export interface IBuild extends Document {
   artifactUrl: string;
   artifactPath: string | null;
   sizeBytes: number | null;
+  /**
+   * Bytes written so far while `status === 'downloading'`.
+   *
+   * Lives on `Build` rather than reviving the specified-but-dead `InstallJob`
+   * model: one object per build is simpler than two, and `InstallJob` is
+   * already easy to confuse with `InstallRun` (device installs). Meaningless
+   * once the build is `ready` — read it only against `sizeBytes` mid-download.
+   */
+  downloadedBytes: number;
   checksum: string | null;
   checksumAlgorithm: 'sha256';
   status: 'downloading' | 'validating' | 'corrupt' | 'ready' | 'purged';
@@ -26,6 +35,7 @@ const buildSchema = new Schema<IBuild>(
     artifactUrl: { type: String, required: true },
     artifactPath: { type: String, default: null },
     sizeBytes: { type: Number, default: null },
+    downloadedBytes: { type: Number, default: 0 },
     checksum: { type: String, default: null },
     checksumAlgorithm: { type: String, enum: ['sha256'], default: 'sha256' },
     status: {

@@ -1,7 +1,10 @@
 import * as fs from 'fs';
-import { FastifyPluginAsync } from 'fastify';
+import { FastifyPluginAsync, FastifyRequest } from 'fastify';
+import type { WebSocket } from 'ws';
+import type { JwtPayload } from 'fastify-auth-kit';
 import { z } from 'zod';
-import { getBuild, listBuilds, triggerBuildFetch } from './builds.service';
+import { getBuild, listBuilds, startBuildFetch, triggerBuildFetch } from './builds.service';
+import { subscribeToBuildEvents } from './builds.events';
 import { requireAgentToken } from '../agent-auth/agent-auth';
 
 const triggerBody = z.object({
@@ -9,6 +12,9 @@ const triggerBody = z.object({
   platform: z.enum(['android', 'ios']),
   version: z.string().min(1),
   artifactUrl: z.string().url().optional(),
+  // Opt-in: return as soon as the build row exists so the caller can watch
+  // the transfer, instead of blocking the request until the download ends.
+  async: z.boolean().optional(),
 });
 
 export const buildsRoutes: FastifyPluginAsync = async (app) => {
@@ -42,6 +48,30 @@ export const buildsRoutes: FastifyPluginAsync = async (app) => {
       .send(fs.createReadStream(build.artifactPath));
   });
 
+  /**
+   * Live fetch progress for one build. Same `?token=` verification as the
+   * other streams in this app — a browser WS upgrade can't carry an
+   * Authorization header.
+   */
+  app.get('/:id/stream', { websocket: true }, (socket: WebSocket, req: FastifyRequest) => {
+    const { id } = req.params as { id: string };
+    const { token } = req.query as { token?: string };
+
+    if (!token) {
+      socket.close(4001, 'Missing token');
+      return;
+    }
+    try {
+      app.jwt.verify<JwtPayload>(token);
+    } catch {
+      socket.close(4001, 'Invalid token');
+      return;
+    }
+
+    const unsubscribe = subscribeToBuildEvents(id, (event) => socket.send(JSON.stringify(event)));
+    socket.on('close', unsubscribe);
+  });
+
   app.post(
     '/',
     {
@@ -59,6 +89,20 @@ export const buildsRoutes: FastifyPluginAsync = async (app) => {
           .send({ code: 'VALIDATION_ERROR', message: "artifactUrl is required when build.provider is 'url'" });
       }
       try {
+        // Default stays synchronous — the response is the finished, checksummed
+        // build, which is what existing callers (and the E2E suite) rely on.
+        // `async: true` returns as soon as the row exists so a client can watch
+        // the transfer over /:id/stream; awaiting a multi-hundred-MB download
+        // leaves no window to observe progress and risks a request timeout.
+        if (body.data.async) {
+          const { build, completed } = await startBuildFetch(app.config, body.data);
+          completed.catch((err: unknown) => {
+            // runFetch already recorded 'corrupt' and published the failure;
+            // this only stops an unhandled rejection.
+            req.log.error(err, `Background build fetch failed for ${build.id as string}`);
+          });
+          return reply.status(202).send(build);
+        }
         const build = await triggerBuildFetch(app.config, body.data);
         return reply.status(201).send(build);
       } catch (err) {

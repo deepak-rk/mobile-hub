@@ -26,6 +26,7 @@ export type StatusKind =
   | 'ready'
   | 'purged'
   // device install target
+  | 'transferring'
   | 'installing'
   | 'done'
   | 'error'
@@ -78,6 +79,9 @@ export const statusMeta: Record<StatusKind, StatusMeta> = {
   revoked: { label: 'Revoked', token: '--status-cancelled', icon: icons.offline },
 
   // Device install targets
+  // Copying the artifact onto the device — measured in real bytes, unlike
+  // `installing` (dexopt), which is why they are separate statuses.
+  transferring: { label: 'Copying to device', token: '--status-running', icon: icons.downloading, active: true },
   installing: { label: 'Installing', token: '--status-running', icon: icons.running, active: true },
   done: { label: 'Done', token: '--status-passed', icon: icons.passed },
   error: { label: 'Error', token: '--status-failed', icon: icons.failed },

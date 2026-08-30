@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/services/api';
 import type { InstallRun } from '../types';
 
-const IN_FLIGHT: InstallRun['targets'][number]['status'][] = ['queued', 'downloading', 'installing'];
+const IN_FLIGHT: InstallRun['targets'][number]['status'][] = ['queued', 'downloading', 'transferring', 'installing'];
 
 export function isTargetInFlight(status: InstallRun['targets'][number]['status']): boolean {
   return IN_FLIGHT.includes(status);

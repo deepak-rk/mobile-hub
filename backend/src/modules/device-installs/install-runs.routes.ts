@@ -20,7 +20,7 @@ const triggerBody = z.object({
 });
 
 const reportBody = z.object({
-  status: z.enum(['queued', 'downloading', 'installing', 'done', 'error']),
+  status: z.enum(['queued', 'downloading', 'transferring', 'installing', 'done', 'error']),
   progress: z.number().min(0).max(100).optional(),
   error: z.string().optional(),
 });

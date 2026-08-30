@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { InstallRun } from './install-run.model';
+import { Build } from '../builds/build.model';
 import * as buildsService from '../builds/builds.service';
 import * as devicesService from '../devices/devices.service';
 import {
@@ -105,10 +106,37 @@ describe('getPendingInstallsForMachine', () => {
         ],
       },
     ] as never);
+    // The artifact size travels with the pending install so the agent always
+    // has an honest denominator, even when the artifact response carries no
+    // Content-Length (a proxy using chunked encoding drops it).
+    vi.spyOn(Build, 'find').mockReturnValue({
+      select: vi.fn().mockResolvedValue([{ id: 'build-1', sizeBytes: 4242 }]),
+    } as never);
 
     const pending = await getPendingInstallsForMachine('host-1');
 
-    expect(pending).toEqual([{ installRunId: 'run-1', deviceUdid: 'd1', buildId: 'build-1', platform: 'android' }]);
+    expect(pending).toEqual([
+      { installRunId: 'run-1', deviceUdid: 'd1', buildId: 'build-1', platform: 'android', sizeBytes: 4242 },
+    ]);
+  });
+
+  it('sends a null size rather than guessing when the build record has none', async () => {
+    vi.spyOn(InstallRun, 'find').mockResolvedValue([
+      {
+        id: 'run-1',
+        buildId: { toString: () => 'build-1' },
+        platform: 'android',
+        targets: [{ deviceUdid: 'd1', machineId: 'host-1', status: 'queued' }],
+      },
+    ] as never);
+    vi.spyOn(Build, 'find').mockReturnValue({
+      select: vi.fn().mockResolvedValue([{ id: 'build-1', sizeBytes: null }]),
+    } as never);
+
+    const [pending] = await getPendingInstallsForMachine('host-1');
+
+    // The agent must then show indeterminate progress, not a fabricated bar.
+    expect(pending.sizeBytes).toBeNull();
   });
 });
 

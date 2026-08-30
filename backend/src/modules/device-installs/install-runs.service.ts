@@ -1,7 +1,19 @@
 import { getBuild } from '../builds/builds.service';
+import { Build } from '../builds/build.model';
 import { getDevice } from '../devices/devices.service';
 import { InstallRun, IInstallRun, InstallTargetStatus } from './install-run.model';
 import { publishInstallEvent } from './install-runs.events';
+
+/**
+ * Statuses meaning "this device is busy with an install right now".
+ *
+ * Declared once and used by both the Mongo query and the in-memory filter
+ * below: those were two hand-maintained copies of the same list, which is
+ * exactly how adding the `transferring` phase would have silently made a
+ * mid-transfer device read as idle again — the lie `activeInstall` exists to
+ * prevent.
+ */
+const IN_FLIGHT_TARGET_STATUSES: InstallTargetStatus[] = ['queued', 'downloading', 'transferring', 'installing'];
 
 export class BuildNotReadyError extends Error {
   constructor(status: string) {
@@ -98,6 +110,16 @@ export interface PendingInstall {
   deviceUdid: string;
   buildId: string;
   platform: 'android' | 'ios';
+  /**
+   * The artifact's size, straight from the `Build` record.
+   *
+   * The agent could read `Content-Length` off the artifact response instead,
+   * but that header is not guaranteed (a proxy using chunked encoding drops
+   * it), and a missing total means no honest percentage. The hub already
+   * knows the size authoritatively — sending it removes the dependency on a
+   * header entirely rather than degrading when it is absent.
+   */
+  sizeBytes: number | null;
 }
 
 /**
@@ -110,15 +132,26 @@ export interface PendingInstall {
  */
 export async function getPendingInstallsForMachine(machineId: string): Promise<PendingInstall[]> {
   const runs = await InstallRun.find({ 'targets.machineId': machineId, 'targets.status': 'queued' });
+  if (runs.length === 0) return [];
+
+  // One query for every distinct build across all pending runs, rather than a
+  // lookup per target — this runs on every agent heartbeat, so it must not
+  // scale with the number of devices being installed to.
+  const buildIds = [...new Set(runs.map((r) => r.buildId.toString()))];
+  const builds = await Build.find({ _id: { $in: buildIds } }).select('sizeBytes');
+  const sizeByBuildId = new Map(builds.map((b) => [b.id as string, b.sizeBytes]));
+
   const pending: PendingInstall[] = [];
   for (const run of runs) {
+    const buildId = run.buildId.toString();
     for (const target of run.targets) {
       if (target.machineId === machineId && target.status === 'queued') {
         pending.push({
           installRunId: run.id as string,
           deviceUdid: target.deviceUdid,
-          buildId: run.buildId.toString(),
+          buildId,
           platform: run.platform,
+          sizeBytes: sizeByBuildId.get(buildId) ?? null,
         });
       }
     }
@@ -138,13 +171,11 @@ export async function getPendingInstallsForMachine(machineId: string): Promise<P
  * activities.
  */
 export async function getActiveInstallUdids(): Promise<Set<string>> {
-  const runs = await InstallRun.find({ 'targets.status': { $in: ['queued', 'downloading', 'installing'] } });
+  const runs = await InstallRun.find({ 'targets.status': { $in: IN_FLIGHT_TARGET_STATUSES } });
   const udids = new Set<string>();
   for (const run of runs) {
     for (const target of run.targets) {
-      if (target.status === 'queued' || target.status === 'downloading' || target.status === 'installing') {
-        udids.add(target.deviceUdid);
-      }
+      if (IN_FLIGHT_TARGET_STATUSES.includes(target.status)) udids.add(target.deviceUdid);
     }
   }
   return udids;

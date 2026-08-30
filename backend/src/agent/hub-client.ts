@@ -14,9 +14,10 @@ export interface PendingInstall {
   deviceUdid: string;
   buildId: string;
   platform: 'android' | 'ios';
+  sizeBytes: number | null;
 }
 
-export type InstallTargetStatus = 'queued' | 'downloading' | 'installing' | 'done' | 'error';
+export type InstallTargetStatus = 'queued' | 'downloading' | 'transferring' | 'installing' | 'done' | 'error';
 
 export class HubError extends Error {
   constructor(

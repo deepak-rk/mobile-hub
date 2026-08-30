@@ -3,9 +3,22 @@ import { Button, Dialog, ProgressBar } from 'react-design-kit';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { useDevices } from '@/features/devices/api/devices.api';
 import type { Build } from '../../builds/types';
+import type { InstallTarget } from '../types';
 import { useInstallRun, useTriggerInstallRun } from '../api/device-installs.api';
 import { useInstallRunStream } from '../api/useInstallRunStream';
 import styles from './InstallDialog.module.css';
+
+/**
+ * The phases whose progress is a real byte measurement, so a determinate bar
+ * tells the truth. `installing` is deliberately absent: `pm install` exposes
+ * no byte ratio.
+ */
+const MEASURED_PHASES: InstallTarget['status'][] = ['downloading', 'transferring'];
+
+const PHASE_LABELS: Record<string, string> = {
+  downloading: 'Downloading to host',
+  transferring: 'Copying to device',
+};
 
 /**
  * Two phases in one dialog rather than a separate progress page: pick
@@ -80,15 +93,15 @@ export function InstallDialog({ build, onClose }: { build: Build | null; onClose
                 <span className={styles.targetName}>{devices?.find((d) => d.udid === t.deviceUdid)?.name ?? t.deviceUdid}</span>
                 <StatusBadge status={t.status} />
               </div>
-              {/* A determinate bar only while real byte progress is moving.
-                  `adb install` exposes no byte ratio, so the installing phase
-                  shows a label instead of a bar frozen at 100% pretending to
-                  still be working. */}
-              {t.status === 'downloading' && t.progress > 0 ? (
-                <ProgressBar value={t.progress} label={`${t.progress}%`} />
+              {/* A determinate bar only where bytes are genuinely measured:
+                  the HTTP download and the push to the device. `pm install`
+                  does dexopt and exposes no byte ratio, so it shows a label
+                  rather than a bar frozen at 100% pretending to still move. */}
+              {MEASURED_PHASES.includes(t.status) && t.progress > 0 ? (
+                <ProgressBar value={t.progress} label={`${PHASE_LABELS[t.status]} · ${t.progress}%`} />
               ) : null}
-              {t.status === 'downloading' && t.progress === 0 ? (
-                <p className={styles.phase}>Starting download…</p>
+              {MEASURED_PHASES.includes(t.status) && t.progress === 0 ? (
+                <p className={styles.phase}>{PHASE_LABELS[t.status]}…</p>
               ) : null}
               {t.status === 'installing' ? <p className={styles.phase}>Installing on device…</p> : null}
               {t.status === 'error' && t.error ? <p className={styles.error}>{t.error}</p> : null}

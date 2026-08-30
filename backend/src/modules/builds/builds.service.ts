@@ -5,6 +5,7 @@ import { EffectiveConfig } from '../../config/org-config.schema';
 import { env } from '../../config/env';
 import { Build, IBuild } from './build.model';
 import { getBuildProvider } from './providers/get-build-provider';
+import { publishBuildEvent } from './builds.events';
 import { ExecutionRun } from '../execution/execution-run.model';
 
 async function sha256File(filePath: string): Promise<string> {
@@ -31,7 +32,22 @@ export interface TriggerBuildFetchInput {
  * truncation was a real prior failure mode (root CLAUDE.md "Lessons carried in").
  * A build never reaches 'ready' without passing this gate.
  */
-export async function triggerBuildFetch(config: EffectiveConfig, input: TriggerBuildFetchInput): Promise<IBuild> {
+/** How often download progress is persisted + pushed. Matches docs/modules/builds.md's ~1s cadence. */
+const FETCH_PROGRESS_INTERVAL_MS = 1000;
+
+/**
+ * Creates the `Build` row and starts the fetch, returning both so the caller
+ * can decide whether to await completion.
+ *
+ * Split out from `triggerBuildFetch` so progress can be observed at all: while
+ * the fetch was a single awaited call, a caller could not learn the build's id
+ * until the transfer had already finished, which left no window in which to
+ * watch it. See `startBuildFetch` vs `triggerBuildFetch` below.
+ */
+export async function startBuildFetch(
+  config: EffectiveConfig,
+  input: TriggerBuildFetchInput,
+): Promise<{ build: IBuild; completed: Promise<IBuild> }> {
   const build = await Build.create({
     project: input.project,
     platform: input.platform,
@@ -39,22 +55,58 @@ export async function triggerBuildFetch(config: EffectiveConfig, input: TriggerB
     artifactUrl: input.artifactUrl ?? '',
     status: 'downloading',
   });
+  return { build, completed: runFetch(config, input, build) };
+}
 
+/**
+ * Fetches a build and waits for it to finish. Preserves the original
+ * behaviour, and remains the default for `POST /api/builds`.
+ */
+export async function triggerBuildFetch(config: EffectiveConfig, input: TriggerBuildFetchInput): Promise<IBuild> {
+  const { completed } = await startBuildFetch(config, input);
+  return completed;
+}
+
+async function runFetch(
+  config: EffectiveConfig,
+  input: TriggerBuildFetchInput,
+  build: IBuild,
+): Promise<IBuild> {
   const destPath = path.join(env.BUILDS_DIR, build.id as string);
   const provider = getBuildProvider(config.build.provider);
 
   try {
+    // Persisting every chunk would be thousands of writes per artifact; a ~1s
+    // sample is all a progress bar can express anyway.
+    let lastPersistAt = 0;
     const { sourceUrl, sizeBytes } = await provider.fetch(
       { project: input.project, platform: input.platform, version: input.version, artifactUrl: input.artifactUrl },
       destPath,
+      (downloadedBytes, totalBytes) => {
+        const now = Date.now();
+        if (now - lastPersistAt < FETCH_PROGRESS_INTERVAL_MS) return;
+        lastPersistAt = now;
+        // Fire-and-forget: a failed progress write must never fail the fetch.
+        void Build.updateOne(
+          { _id: build._id },
+          { downloadedBytes, ...(totalBytes ? { sizeBytes: totalBytes } : {}) },
+        ).catch(() => {});
+        publishBuildEvent(build.id as string, {
+          type: 'progress',
+          downloadedBytes,
+          totalBytes: totalBytes ?? null,
+        });
+      },
     );
 
     if (sizeBytes <= 0) {
       throw new Error('Fetched artifact is empty (0 bytes)');
     }
 
+    build.downloadedBytes = sizeBytes;
     build.status = 'validating';
     await build.save();
+    publishBuildEvent(build.id as string, { type: 'status', status: 'validating' });
 
     const checksum = await sha256File(destPath);
     const onDiskSize = fs.statSync(destPath).size;
@@ -70,11 +122,17 @@ export async function triggerBuildFetch(config: EffectiveConfig, input: TriggerB
     build.fetchedAt = new Date();
     build.status = 'ready';
     await build.save();
+    publishBuildEvent(build.id as string, { type: 'status', status: 'ready' });
     return build;
   } catch (err) {
     build.status = 'corrupt';
     await build.save();
     if (fs.existsSync(destPath)) fs.rmSync(destPath, { force: true });
+    publishBuildEvent(build.id as string, {
+      type: 'status',
+      status: 'corrupt',
+      error: err instanceof Error ? err.message : String(err),
+    });
     throw err;
   }
 }
