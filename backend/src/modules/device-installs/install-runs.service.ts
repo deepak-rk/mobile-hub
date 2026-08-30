@@ -181,6 +181,59 @@ export async function getActiveInstallUdids(): Promise<Set<string>> {
   return udids;
 }
 
+export interface InstalledDevice {
+  deviceUdid: string;
+  installRunId: string;
+  installedAt: Date | null;
+}
+
+/**
+ * Devices that currently have this build installed.
+ *
+ * "Currently" is the load-bearing word, and it's why this isn't just a filter
+ * for successful targets of this build: a device holds one copy of an app at a
+ * time, so installing a *different* build of the same project replaces this
+ * one. A device is therefore reported only when this build is the most recent
+ * successful install it received for the build's project+platform — otherwise
+ * the UI would keep claiming a device "has" a build that was overwritten days
+ * ago.
+ *
+ * Scoped to project+platform rather than every run because installs of an
+ * unrelated project don't touch this app's package.
+ */
+export async function getInstalledDevicesForBuild(buildId: string): Promise<InstalledDevice[]> {
+  const build = await getBuild(buildId);
+  if (!build) return [];
+
+  // Oldest first, so the last write per device wins and the map ends up
+  // holding each device's most recent successful install.
+  const runs = await InstallRun.find({
+    project: build.project,
+    platform: build.platform,
+    'targets.status': 'done',
+  }).sort({ createdAt: 1 });
+
+  const latestByDevice = new Map<string, { buildId: string; installRunId: string; installedAt: Date | null }>();
+  for (const run of runs) {
+    for (const target of run.targets) {
+      if (target.status !== 'done') continue;
+      latestByDevice.set(target.deviceUdid, {
+        buildId: run.buildId.toString(),
+        installRunId: run.id as string,
+        installedAt: target.endedAt,
+      });
+    }
+  }
+
+  return [...latestByDevice.entries()]
+    .filter(([, latest]) => latest.buildId === buildId)
+    .map(([deviceUdid, latest]) => ({
+      deviceUdid,
+      installRunId: latest.installRunId,
+      installedAt: latest.installedAt,
+    }));
+}
+
 export interface ReportTargetProgressInput {
   status: InstallTargetStatus;
   progress?: number;

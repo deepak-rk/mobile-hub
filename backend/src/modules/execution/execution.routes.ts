@@ -1,7 +1,10 @@
 import * as fs from 'fs';
+import * as path from 'path';
 import { FastifyPluginAsync, FastifyRequest } from 'fastify';
+import fastifyStatic from '@fastify/static';
 import { z } from 'zod';
 import type { WebSocket } from 'ws';
+import { env } from '../../config/env';
 import {
   cancelExecutionRun,
   DeviceLockedError,
@@ -11,6 +14,7 @@ import {
   triggerExecutionRun,
 } from './execution.service';
 import { subscribeToExecutionEvents } from './execution.events';
+import { ExecutionRun } from './execution-run.model';
 import type { JwtPayload } from 'fastify-auth-kit';
 
 const commandSchema = z.object({ command: z.string().min(1), args: z.array(z.string()).default([]) });
@@ -27,9 +31,36 @@ const triggerBody = z.object({
 });
 
 export const executionRoutes: FastifyPluginAsync = async (app) => {
+  // `serve: false` — this registers nothing of its own; it exists only to
+  // decorate `reply.sendFile`, which accepts a per-call root. An Allure report
+  // lives under a different directory for every run, so a plugin with one
+  // fixed root could not serve them. Registered inside this plugin's scope so
+  // the decorator stays local and cannot collide with another module's.
+  await app.register(fastifyStatic, { root: env.EXECUTION_ARTIFACTS_DIR, serve: false });
+
   app.get('/', async (req) => {
     const { project, status, deviceUdid } = req.query as Record<string, string>;
     return listExecutionRuns({ project, status, deviceUdid });
+  });
+
+  /**
+   * Selectable project names for the trigger form.
+   *
+   * **Stopgap.** The real source is org/project YAML config — a project a team
+   * has declared but never run yet should still be selectable, and this cannot
+   * see one. Distinct values from past runs are used only so the form can stop
+   * being free text today; the contract (`{ projects: string[] }`) is chosen to
+   * match what a config-backed endpoint would return, so swapping the source
+   * later is a one-line change here and nothing in the frontend moves.
+   *
+   * Declared before `/:id` so `projects` is never parsed as a run id.
+   */
+  app.get('/projects', async () => {
+    // `distinct` is typed as unknown[] here, so the values are narrowed once
+    // rather than asserted — a non-string would otherwise reach localeCompare.
+    const projects = await ExecutionRun.distinct('project');
+    const names = projects.filter((p): p is string => typeof p === 'string' && p.length > 0);
+    return { projects: names.sort((a, b) => a.localeCompare(b)) };
   });
 
   app.get('/:id', async (req, reply) => {
@@ -83,7 +114,59 @@ export const executionRoutes: FastifyPluginAsync = async (app) => {
         .status(404)
         .send({ code: 'LOG_UNAVAILABLE', message: 'No log file is stored for this run.' });
     }
-    return reply.header('Content-Type', 'text/plain; charset=utf-8').send(fs.createReadStream(run.logPath));
+    // `?download=1` serves the same bytes as an attachment. Done server-side
+    // with Content-Disposition rather than client-side from the fetched text:
+    // a run log is unbounded, and building a Blob from it would hold the whole
+    // file in the tab's memory just to save it. Streaming costs nothing.
+    const { download } = req.query as { download?: string };
+    // Chained rather than called for its side effect: `reply.header()` returns
+    // the reply, which lint reads as a floating promise when discarded.
+    const prepared = download
+      ? reply.header('Content-Disposition', `attachment; filename="run-${id}.log"`)
+      : reply;
+    return prepared.header('Content-Type', 'text/plain; charset=utf-8').send(fs.createReadStream(run.logPath));
+  });
+
+  /**
+   * The Allure report, when the runner produced one.
+   *
+   * `reportPath` is only ever set by `collectAllureReport`, which requires a
+   * real `index.html` — so a 404 here means the run genuinely has no report,
+   * not that serving it failed. The frontend hides the link entirely in that
+   * case rather than offering one that dead-ends.
+   */
+  app.get('/:id/report', async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const run = await getExecutionRun(id);
+    if (!run?.reportPath) {
+      return reply.status(404).send({ code: 'REPORT_UNAVAILABLE', message: 'No report is stored for this run.' });
+    }
+    // Redirect off the caller's own URL rather than a hardcoded prefix — the
+    // `/api/execution` mount point is chosen in app.ts, not here.
+    const base = req.url.split('?')[0].replace(/\/+$/, '');
+    return reply.redirect(`${base}/index.html`);
+  });
+
+  app.get('/:id/report/*', async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const run = await getExecutionRun(id);
+    if (!run?.reportPath) {
+      return reply.status(404).send({ code: 'REPORT_UNAVAILABLE', message: 'No report is stored for this run.' });
+    }
+
+    const relativePath = (req.params as Record<string, string>)['*'] || 'index.html';
+    // An Allure report is a tree of files the hub never inspects, and the
+    // wildcard is attacker-controlled. `send` (inside @fastify/static) rejects
+    // escaping paths itself, but a traversal guard is cheap and this asserts
+    // the property directly instead of trusting a transitive dependency's
+    // behaviour to stay unchanged.
+    const resolved = path.resolve(run.reportPath, relativePath);
+    const root = path.resolve(run.reportPath);
+    if (resolved !== root && !resolved.startsWith(root + path.sep)) {
+      return reply.status(403).send({ code: 'FORBIDDEN', message: 'Path escapes the report directory.' });
+    }
+
+    return reply.sendFile(relativePath, run.reportPath);
   });
 
   app.post('/:id/cancel', { preHandler: app.requireRole('operator', 'admin') }, async (req, reply) => {

@@ -13,7 +13,7 @@ import * as getProviderModule from './providers/get-build-provider';
  * "Lessons carried in": silent truncation was a real prior failure mode), so
  * these exercise real filesystem writes/reads through a fake provider rather
  * than mocking fs away — a mocked checksum would prove nothing. No database
- * is used: `Build.create`/the returned document's `.save()` are stubbed.
+ * is used: the claim upsert and the returned document's `.save()` are stubbed.
  */
 let tmpDir: string;
 let origBuildsDir: string;
@@ -27,6 +27,24 @@ function fakeDoc(overrides: Partial<Record<string, unknown>> = {}) {
   };
   (doc as { save: () => Promise<void> }).save = vi.fn().mockResolvedValue(undefined);
   return doc;
+}
+
+/**
+ * Stands in for the atomic upsert that claims a fetch, simulating the caller
+ * that *wins* the race: a real upsert echoes back the `_id` it just inserted,
+ * and ownership is decided by comparing that to the candidate id. Echoing it
+ * here is what makes the returned doc read as "mine", so the fetch proceeds.
+ *
+ * Mocking `findOneAndUpdate` rather than `create` matters — an unmocked
+ * Mongoose query against no database never settles, which is exactly how these
+ * tests started timing out rather than failing when the claim was introduced.
+ */
+function mockClaimWon(doc: Record<string, unknown>) {
+  return vi.spyOn(Build, 'findOneAndUpdate').mockImplementation(((_filter: unknown, update: unknown) => {
+    const insert = (update as { $setOnInsert?: { _id?: { toString(): string } } }).$setOnInsert;
+    if (insert?._id) doc.id = insert._id.toString();
+    return Promise.resolve(doc) as never;
+  }) as never);
 }
 
 beforeEach(() => {
@@ -55,7 +73,7 @@ describe('triggerBuildFetch', () => {
     });
 
     const doc = fakeDoc();
-    vi.spyOn(Build, 'create').mockResolvedValue(doc as never);
+    mockClaimWon(doc);
 
     const result = await triggerBuildFetch(
       { build: { provider: 'url' } } as never,
@@ -65,7 +83,10 @@ describe('triggerBuildFetch', () => {
     expect(result.status).toBe('ready');
     expect(result.checksum).toBe(expectedChecksum);
     expect(result.sizeBytes).toBe(bytes.length);
-    expect(fs.existsSync(path.join(tmpDir, 'build-1'))).toBe(true);
+    // Keyed off the id the claim actually assigned, not a literal: the artifact
+    // is written to `BUILDS_DIR/<build id>`, and that id now comes from the
+    // upsert rather than being fixed by the fixture.
+    expect(fs.existsSync(path.join(tmpDir, result.id as string))).toBe(true);
   });
 
   it('rejects a 0-byte artifact and marks the build corrupt', async () => {
@@ -74,7 +95,7 @@ describe('triggerBuildFetch', () => {
       fetch: async () => ({ sourceUrl: 'https://example.com/a.apk', sizeBytes: 0 }),
     });
     const doc = fakeDoc();
-    vi.spyOn(Build, 'create').mockResolvedValue(doc as never);
+    mockClaimWon(doc);
 
     await expect(
       triggerBuildFetch({ build: { provider: 'url' } } as never, { project: 'p', platform: 'android', version: '1' }),
@@ -94,14 +115,16 @@ describe('triggerBuildFetch', () => {
       },
     });
     const doc = fakeDoc();
-    vi.spyOn(Build, 'create').mockResolvedValue(doc as never);
+    mockClaimWon(doc);
 
     await expect(
       triggerBuildFetch({ build: { provider: 'url' } } as never, { project: 'p', platform: 'android', version: '1' }),
     ).rejects.toThrow(/size mismatch/i);
 
     expect(doc.status).toBe('corrupt');
-    expect(fs.existsSync(path.join(tmpDir, 'build-1'))).toBe(false);
+    // The partial file is removed, so nothing is left under the claimed id —
+    // asserting the directory is empty catches that regardless of the id.
+    expect(fs.readdirSync(tmpDir)).toHaveLength(0);
   });
 
   it('marks the build corrupt if the provider itself fails', async () => {
@@ -112,7 +135,7 @@ describe('triggerBuildFetch', () => {
       },
     });
     const doc = fakeDoc();
-    vi.spyOn(Build, 'create').mockResolvedValue(doc as never);
+    mockClaimWon(doc);
 
     await expect(
       triggerBuildFetch({ build: { provider: 'url' } } as never, { project: 'p', platform: 'android', version: '1' }),

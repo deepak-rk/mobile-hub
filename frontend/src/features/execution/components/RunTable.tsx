@@ -18,21 +18,36 @@ const columns = [
     header: 'Project',
     cell: (info) => (
       <Link to={`/execution/${info.row.original._id}`} className={styles.link}>
-        <span className={styles.project}>{info.getValue()}</span>
+        <span className={`${styles.project} ${styles.truncate}`} title={info.getValue()}>
+          {info.getValue()}
+        </span>
       </Link>
     ),
   }),
   columnHelper.accessor('suite', {
     header: 'Suite',
-    cell: (info) => <span className={styles.suite}>{info.getValue()}</span>,
+    cell: (info) => (
+      <span className={styles.suite} title={info.getValue()}>
+        {info.getValue()}
+      </span>
+    ),
   }),
   columnHelper.accessor('branch', {
     header: 'Branch',
+    cell: (info) => (
+      <span className={styles.truncate} title={info.getValue()}>
+        {info.getValue()}
+      </span>
+    ),
   }),
   columnHelper.accessor('deviceUdid', {
     header: 'Device',
     enableSorting: false,
-    cell: (info) => <Mono>{info.getValue()}</Mono>,
+    cell: (info) => (
+      <Mono className={styles.truncate} title={info.getValue()}>
+        {info.getValue()}
+      </Mono>
+    ),
   }),
   columnHelper.accessor((run) => formatDurationBetween(run.startedAt, run.endedAt), {
     id: 'duration',

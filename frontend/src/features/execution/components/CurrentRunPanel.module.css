@@ -12,6 +12,14 @@
   color: var(--text-primary);
 }
 
+/*
+ * This panel sits in a fixed 360px column (RunListPage's .triggerLayout), so
+ * every value in it is a candidate for overflow — a project or suite name has
+ * no length limit, and a UDID is long by nature. Flex children default to
+ * min-width:auto, which refuses to shrink below their content and pushes the
+ * row past the card instead of truncating; `min-width: 0` is what allows the
+ * ellipsis below to actually engage.
+ */
 .summary {
   display: flex;
   align-items: center;
@@ -20,6 +28,27 @@
   font-size: var(--text-sm);
   color: var(--text-secondary);
   margin-bottom: var(--space-3);
+  min-width: 0;
+}
+
+.summaryName {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/*
+ * The UDID keeps its own share rather than being squeezed to nothing: it is
+ * what identifies *which* device this run holds, so a truncated project name
+ * is the better thing to lose first.
+ */
+.summaryDevice {
+  flex: none;
+  max-width: 45%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .stages {
@@ -36,6 +65,19 @@
   gap: var(--space-2);
   font-size: var(--text-sm);
   color: var(--text-secondary);
+  min-width: 0;
+}
+
+/* The icon must not be squeezed away when the label truncates beside it. */
+.stage svg {
+  flex: none;
+}
+
+.stageName {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .viewLink {
@@ -66,6 +108,16 @@
   padding: var(--space-2) var(--space-2);
   border-radius: var(--radius-control);
   color: inherit;
+  min-width: 0;
+}
+
+/*
+ * The status badge carries the row's primary meaning, so it keeps its full
+ * width and the project/suite text is what gives way. Without this the badge
+ * compresses into an unreadable sliver before the text ever truncates.
+ */
+.rowLink > :first-child {
+  flex: none;
 }
 .rowLink:hover {
   background: var(--bg-hover);

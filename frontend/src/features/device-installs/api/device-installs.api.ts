@@ -21,6 +21,26 @@ export function useInstallRun(installRunId: string | undefined, livePush = false
   });
 }
 
+export interface InstalledDevice {
+  deviceUdid: string;
+  installRunId: string;
+  installedAt: string | null;
+}
+
+/**
+ * Devices that currently hold this build — "currently" meaning this build was
+ * the last one successfully installed on them for its project, since a later
+ * install of the same app replaces it. Derived entirely from install history;
+ * the hub never asks the device what it is running.
+ */
+export function useInstalledDevices(buildId: string | undefined) {
+  return useQuery({
+    queryKey: ['device-installs', 'builds', buildId, 'devices'],
+    queryFn: async () => (await api.get<InstalledDevice[]>(`/device-installs/builds/${buildId}/devices`)).data,
+    enabled: Boolean(buildId),
+  });
+}
+
 export interface TriggerInstallRunInput {
   buildId: string;
   deviceUdids: string[];

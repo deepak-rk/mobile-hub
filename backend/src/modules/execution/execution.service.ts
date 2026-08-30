@@ -193,33 +193,77 @@ async function runCommand(
   return managed.result;
 }
 
-/** package-lock.json when present (the actually-locked tree), else package.json, else no cache is possible. */
-function findCacheableManifest(repoDir: string): string | null {
-  const lockfile = path.join(repoDir, 'package-lock.json');
-  if (fs.existsSync(lockfile)) return lockfile;
-  const manifest = path.join(repoDir, 'package.json');
-  return fs.existsSync(manifest) ? manifest : null;
+/**
+ * Lockfiles worth hashing, in a fixed order so the key is deterministic
+ * regardless of directory-listing order. All present ones contribute — a repo
+ * that carries two is unusual, but silently picking one would make the key
+ * depend on which name happened to sort first.
+ */
+const LOCKFILE_NAMES = ['package-lock.json', 'yarn.lock', 'pnpm-lock.yaml'] as const;
+
+/**
+ * All four inputs `docs/modules/execution.md` requires: package.json, every
+ * lockfile present, the platform, and the Node version.
+ *
+ * Hashing the lockfile alone — what this did before — is called out in that
+ * spec as a *confirmed* collision source in the prior reference
+ * implementation, not a theoretical one: a lockfile can be regenerated with
+ * identical content after a meaningful `package.json` change (a moved
+ * dependency, a changed script, a bumped engines range), and it may not be
+ * committed at all. Platform and Node version matter because `node_modules`
+ * contains compiled native addons — restoring a linux/Node-20 tree onto
+ * win32/Node-22 produces a cache "hit" that fails at require time, which is
+ * far worse than a miss.
+ *
+ * Lockfile *names* are hashed alongside their contents so switching package
+ * managers can't collide on identical content.
+ *
+ * Changing this formula orphans every existing cache directory: old keys
+ * simply stop matching, the next run reports a miss and repopulates under the
+ * new key. That is correct and safe — a stale entry is never served — but the
+ * orphaned directories are not reclaimed, since nothing purges the cache yet
+ * (the spec defers that to a maintenance task).
+ *
+ * Exported for testing: this is the part that actually breaks, and its failure
+ * mode is a silently wrong cache hit rather than a visible error.
+ */
+export function computeCacheKey(
+  repoDir: string,
+  platform: string = process.platform,
+  nodeVersion: string = process.version,
+): string | null {
+  const manifestPath = path.join(repoDir, 'package.json');
+  // No package.json means this isn't a Node project we know how to cache.
+  // Returning null is honest; guessing a key would cache an unknown tree.
+  if (!fs.existsSync(manifestPath)) return null;
+
+  const parts: string[] = [fs.readFileSync(manifestPath, 'utf8')];
+  for (const name of LOCKFILE_NAMES) {
+    const lockPath = path.join(repoDir, name);
+    if (fs.existsSync(lockPath)) parts.push(name, fs.readFileSync(lockPath, 'utf8'));
+  }
+  parts.push(platform, nodeVersion);
+
+  return crypto.createHash('sha256').update(parts.join('\n')).digest('hex');
 }
 
 /**
- * Thin, honest node_modules cache keyed by a hash of the repo's lockfile (or
- * package.json if no lockfile exists). A hit copies straight into
- * `repoDir/node_modules`; a miss is NOT an error — it is the legitimate
- * first-run state, logged plainly rather than silently claimed as a hit.
- * `saveCacheIfMissing` populates the cache after a successful `setup` so the
- * *next* run with the same lockfile hash gets a real hit.
+ * Thin, honest node_modules cache keyed by `computeCacheKey` above. A hit
+ * copies straight into `repoDir/node_modules`; a miss is NOT an error — it is
+ * the legitimate first-run state, logged plainly rather than silently claimed
+ * as a hit. `saveCacheIfMissing` populates the cache after a successful
+ * `setup` so the *next* run with the same key gets a real hit.
  */
 async function restoreCache(
   run: IExecutionRun,
   repoDir: string,
   logStream: fs.WriteStream,
 ): Promise<{ cacheDir: string | null }> {
-  const manifest = findCacheableManifest(repoDir);
-  const cacheKey = manifest ? crypto.createHash('sha256').update(fs.readFileSync(manifest)).digest('hex') : null;
+  const cacheKey = computeCacheKey(repoDir);
   run.cacheKey = cacheKey;
 
   if (!cacheKey) {
-    const line = 'restoring_cache: no package.json/package-lock.json found — nothing to key a cache on\n';
+    const line = 'restoring_cache: no package.json found — nothing to key a cache on\n';
     logStream.write(line);
     publishExecutionEvent(run.id as string, { type: 'log', line });
     return { cacheDir: null };
@@ -235,6 +279,63 @@ async function restoreCache(
 
   if (hit) await fs.promises.cp(cacheDir, path.join(repoDir, 'node_modules'), { recursive: true });
   return { cacheDir };
+}
+
+/** The directory name a runner's Allure reporter writes, per docs/modules/execution.md. */
+const ALLURE_REPORT_DIRNAME = 'allure-report';
+
+/**
+ * Adopts an Allure report the *runner* produced, if there is one.
+ *
+ * Mobile Hub deliberately does not generate reports — that needs a real
+ * automation runner, which doesn't exist here yet. What it can honestly do is
+ * notice a report a command already wrote and keep it. Until now `reportPath`
+ * was declared on the model and written by nothing, so even a run that emitted
+ * a perfectly good report had nowhere to show it.
+ *
+ * **Ordering matters and is the whole reason this is called from `finally`
+ * before the workspace is removed.** The runner writes the report inside the
+ * workspace, and the workspace is deleted at the end of every run — so a
+ * report left where the runner put it is destroyed by the same cleanup that
+ * keeps the disk bounded. Copying it under `artifactsPath` first is what makes
+ * the two compatible, exactly as `run.log` already is.
+ *
+ * Runs on every terminal path, including failures: a failed run is precisely
+ * when a report is most useful.
+ */
+async function collectAllureReport(run: IExecutionRun, logStream: fs.WriteStream): Promise<void> {
+  // Runs predating durable artifacts have no artifactsPath, and there is
+  // nowhere safe to put a report for them.
+  if (!run.artifactsPath) return;
+
+  // The runner's cwd is the checkout when a repo was cloned and the workspace
+  // root otherwise, so the report lands in one of two places.
+  const candidates = [
+    path.join(run.workspacePath, 'repo', ALLURE_REPORT_DIRNAME),
+    path.join(run.workspacePath, ALLURE_REPORT_DIRNAME),
+  ];
+  // index.html, not just the directory: an empty or half-written folder is not
+  // a report, and linking to one would be the dead-button case the UI avoids.
+  const source = candidates.find((dir) => fs.existsSync(path.join(dir, 'index.html')));
+  if (!source) return;
+
+  const dest = path.join(run.artifactsPath, ALLURE_REPORT_DIRNAME);
+  try {
+    await fs.promises.cp(source, dest, { recursive: true });
+    run.reportPath = dest;
+    const line = `report: kept the Allure report the runner produced (${dest})\n`;
+    logStream.write(line);
+    publishExecutionEvent(run.id as string, { type: 'log', line });
+  } catch (err) {
+    // Best-effort, same reasoning as workspace cleanup below: failing to keep
+    // a report must not turn a passing run into a failed one. reportPath stays
+    // null, so the UI simply hides the link rather than offering a 404.
+    const line = `report: found an Allure report but could not keep it: ${
+      err instanceof Error ? err.message : String(err)
+    }\n`;
+    logStream.write(line);
+    publishExecutionEvent(run.id as string, { type: 'log', line });
+  }
 }
 
 async function saveCacheIfMissing(repoDir: string, cacheDir: string | null): Promise<void> {
@@ -337,6 +438,11 @@ async function runExecution(
     // An exception in the orchestrator itself is infrastructure by definition.
     await failRun(run, 'infra');
   } finally {
+    // Before `run.save()` so `reportPath` is persisted by it, and before the
+    // workspace is removed below — the report lives inside the workspace until
+    // this copies it out. Both orderings are load-bearing.
+    await collectAllureReport(run, logStream);
+
     run.endedAt = new Date();
     await run.save();
     logStream.end();

@@ -51,7 +51,7 @@ export function CurrentRunPanel({ latestCurrentRun, recentHistory }: CurrentRunP
             <li key={run._id} className={styles.row}>
               <Link to={`/execution/${run._id}`} className={styles.rowLink}>
                 <StatusBadge status={run.status} bare />
-                <span className={styles.meta}>
+                <span className={styles.meta} title={`${run.project} · ${run.suite}`}>
                   {run.project} · {run.suite}
                 </span>
                 <span className={styles.time}>{formatRelative(run.createdAt)}</span>
@@ -81,11 +81,15 @@ function LiveRunCard({ runId, fallback }: { runId: string; fallback: ExecutionRu
           <span className={styles.title}>Current run</span>
           <StatusBadge status={active.status} />
         </div>
+        {/* `title` keeps the untruncated value reachable — the panel's column
+            is narrow enough that a long project or suite name will be clipped. */}
         <div className={styles.summary}>
-          <span>
+          <span className={styles.summaryName} title={`${active.project} · ${active.suite}`}>
             {active.project} · {active.suite}
           </span>
-          <Mono>{active.deviceUdid}</Mono>
+          <Mono className={styles.summaryDevice} title={active.deviceUdid}>
+            {active.deviceUdid}
+          </Mono>
         </div>
         <ol className={styles.stages}>
           {active.stages.map((stage) => {
@@ -93,7 +97,7 @@ function LiveRunCard({ runId, fallback }: { runId: string; fallback: ExecutionRu
             return (
               <li key={stage.name} className={styles.stage} style={{ color: stageColor(stage.status) }}>
                 <Icon size={iconSize.dense} aria-hidden="true" />
-                <span>{STAGE_LABELS[stage.name]}</span>
+                <span className={styles.stageName}>{STAGE_LABELS[stage.name]}</span>
               </li>
             );
           })}

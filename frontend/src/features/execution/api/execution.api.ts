@@ -67,6 +67,22 @@ export function useRunLog(runId: string | undefined, enabled: boolean) {
   });
 }
 
+/**
+ * Projects selectable on the trigger form.
+ *
+ * Backed today by the distinct projects of past runs, which is a stopgap the
+ * backend route documents: a project declared in config but never run yet
+ * cannot appear. The `{ projects: string[] }` shape is deliberately what a
+ * config-backed endpoint would return, so replacing the source changes nothing
+ * here.
+ */
+export function useProjects() {
+  return useQuery({
+    queryKey: ['execution', 'projects'],
+    queryFn: async () => (await api.get<{ projects: string[] }>('/execution/projects')).data.projects,
+  });
+}
+
 export interface TriggerRunInput {
   machineId: string;
   deviceUdid: string;

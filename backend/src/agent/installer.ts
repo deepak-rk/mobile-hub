@@ -91,6 +91,111 @@ async function pushToDevice(
 }
 
 /**
+ * Parses `pm list packages [--show-versioncode]` into name -> version code.
+ *
+ * Exported for testing: this is the part that actually breaks, since the
+ * output shape varies by Android version and a misparse would make every
+ * package look changed (or none). Version code is `null` when the device's
+ * `pm` is too old for `--show-versioncode` (added in API 28), which callers
+ * must treat as "unknown", not "unchanged".
+ */
+export function parsePackageList(stdout: string): Map<string, string | null> {
+  const packages = new Map<string, string | null>();
+  for (const line of stdout.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith('package:')) continue;
+    // `package:com.example.app versionCode:42` — the version suffix is absent
+    // on older devices, and an APK path can appear instead with `-f`, which
+    // this never passes.
+    const [nameToken, ...rest] = trimmed.slice('package:'.length).split(/\s+/);
+    if (!nameToken) continue;
+    const versionToken = rest.find((t) => t.startsWith('versionCode:'));
+    packages.set(nameToken, versionToken ? versionToken.slice('versionCode:'.length) : null);
+  }
+  return packages;
+}
+
+/**
+ * Which package an install actually changed, by diffing the package table
+ * either side of it.
+ *
+ * There is no dependency-free way to read a package name out of an APK — the
+ * manifest inside is binary AXML and `aapt` is not guaranteed present — so the
+ * device is asked instead. A package that is newly present, or whose version
+ * code moved, is positively identified as the one just installed.
+ *
+ * Returns null when nothing changed, which is a real and common case rather
+ * than a failure: `pm install -r` reinstalling the *same* version of an
+ * already-present package leaves the table identical. That is indistinguishable
+ * here from "nothing happened", so it is reported as unknown rather than
+ * guessed at — see the caller for what it does with that.
+ */
+export function identifyInstalledPackage(
+  before: Map<string, string | null>,
+  after: Map<string, string | null>,
+): string | null {
+  const changed: string[] = [];
+  for (const [name, version] of after) {
+    if (!before.has(name)) {
+      changed.push(name);
+      continue;
+    }
+    const previous = before.get(name) ?? null;
+    // Both null means the device can't report version codes at all; that is
+    // not evidence of a change.
+    if (version !== null && previous !== null && version !== previous) changed.push(name);
+  }
+  // More than one changed means something else installed concurrently, so no
+  // single candidate can be attributed to this run.
+  return changed.length === 1 ? changed[0] : null;
+}
+
+async function listInstalledPackages(adbPath: string, deviceUdid: string): Promise<Map<string, string | null>> {
+  try {
+    const { stdout } = await run(
+      adbPath,
+      ['-s', deviceUdid, 'shell', 'pm', 'list', 'packages', '--show-versioncode'],
+      { timeout: ADB_SHORT_TIMEOUT_MS },
+    );
+    return parsePackageList(stdout);
+  } catch {
+    // `--show-versioncode` is API 28+; fall back to names only rather than
+    // losing the new-package signal entirely on an older device.
+    try {
+      const { stdout } = await run(adbPath, ['-s', deviceUdid, 'shell', 'pm', 'list', 'packages'], {
+        timeout: ADB_SHORT_TIMEOUT_MS,
+      });
+      return parsePackageList(stdout);
+    } catch {
+      // A device that won't list packages can't be verified against; an empty
+      // map makes `identifyInstalledPackage` return null, which the caller
+      // reports as unverified rather than as success.
+      return new Map();
+    }
+  }
+}
+
+/**
+ * Confirms the package the install just changed is genuinely installed.
+ *
+ * `pm install` printing `Success` says the transaction was accepted; asking
+ * the package manager where the app now lives is what proves it is really
+ * there. Throws when a positively-identified package has no path, which is the
+ * one case that is unambiguously a failed install reported as a success — the
+ * reference platform had no such check and this one should not inherit that.
+ */
+async function verifyPackageInstalled(adbPath: string, deviceUdid: string, packageName: string): Promise<void> {
+  const { stdout } = await run(adbPath, ['-s', deviceUdid, 'shell', 'pm', 'path', packageName], {
+    timeout: ADB_SHORT_TIMEOUT_MS,
+  });
+  if (!/^package:/m.test(stdout)) {
+    throw new Error(
+      `pm install reported success but ${packageName} has no installed path on ${deviceUdid} — the install did not take`,
+    );
+  }
+}
+
+/**
  * Downloads one build artifact and installs it onto the device that requested
  * it, reporting status back to the hub at each step.
  *
@@ -137,6 +242,10 @@ export async function runInstall(
     const onPush = throttledReporter(hub, installRunId, deviceUdid, 'transferring');
     await pushToDevice(adbPath, deviceUdid, destPath, remotePath, localSize, onPush);
 
+    // Snapshotted before the install so the diff afterwards can name the
+    // package that changed — the APK itself cannot be asked without aapt.
+    const packagesBefore = await listInstalledPackages(adbPath, deviceUdid);
+
     // dexopt has no byte ratio, so progress deliberately stops moving here and
     // the phase label carries the meaning instead. Inventing a rising number
     // through this phase would be the same class of lie the byte counting
@@ -150,6 +259,18 @@ export async function runInstall(
     if (!/^Success/m.test(stdout)) {
       throw new Error(`pm install did not report success: ${stdout.trim() || '(no output)'}`);
     }
+
+    // `Success` means the transaction was accepted; this asks the package
+    // manager whether the app is actually there. Only a positively identified
+    // package can be checked — a same-version reinstall leaves the package
+    // table untouched and so cannot be attributed to this run. That case is
+    // left unverified rather than passed off as verified, because a check that
+    // silently no-ops is worse than no check: it reads as a guarantee.
+    const installedPackage = identifyInstalledPackage(
+      packagesBefore,
+      await listInstalledPackages(adbPath, deviceUdid),
+    );
+    if (installedPackage) await verifyPackageInstalled(adbPath, deviceUdid, installedPackage);
 
     await hub.reportInstallProgress(installRunId, deviceUdid, { status: 'done', progress: 100 });
   } catch (err) {

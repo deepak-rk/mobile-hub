@@ -14,6 +14,9 @@ export type StreamState = 'idle' | 'connecting' | 'live' | 'reconnecting' | 'clo
 /** Cap retained log lines — a chatty run must not grow the DOM without bound. */
 const MAX_LOG_LINES = 2000;
 
+/** Statuses at which a run has released its device lock (execution.service.ts's `finally`). */
+const TERMINAL_RUN_STATUSES = ['passed', 'failed', 'cancelled'];
+
 function readToken(): string | null {
   try {
     return localStorage.getItem(TOKEN_STORAGE_KEY);
@@ -65,6 +68,17 @@ export function useRunStream(runId: string | undefined, enabled = true) {
       } else {
         void queryClient.invalidateQueries({ queryKey: ['runs', runId] });
         void queryClient.invalidateQueries({ queryKey: ['runs'] });
+
+        // A run holds its device's lock for its whole life and releases it on
+        // any terminal status. That release happens entirely in the backend,
+        // so nothing on the client knew to re-read the device list: the
+        // trigger form kept excluding a device that had already been freed
+        // until someone reloaded the page. Lock/unlock *mutations* already
+        // invalidate this key; a run ending is the same event with no mutation
+        // behind it, which is exactly the case that was missing.
+        if (parsed.type === 'status' && TERMINAL_RUN_STATUSES.includes(parsed.status)) {
+          void queryClient.invalidateQueries({ queryKey: ['devices'] });
+        }
       }
     },
     [queryClient, runId],

@@ -1,4 +1,5 @@
-import { Link } from 'react-router-dom';
+import { useState } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
 import {
   Button,
   Card,
@@ -11,17 +12,17 @@ import {
   Page,
   PageHeader,
   QueryBoundary,
-  Summary,
 } from 'react-design-kit';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { icons, iconSize } from '@/lib/icons';
 import { formatRelative, shortId } from 'ts-format-utils';
 import { useDevices } from '../api/devices.api';
 import { DeviceFilterBar } from '../components/DeviceFilterBar';
-import { InventorySummary } from '../components/InventorySummary';
 import { FilterChips } from '../components/FilterChips';
 import { useDeviceFilters } from '../hooks/useDeviceFilters';
-import { countBy, isOfflineStatus } from '../lib/deviceCounts';
+import { MULTI_VIEW_MAX } from '../hooks/useMultiViewSelection';
+import { isOfflineStatus } from '../lib/deviceCounts';
+import { displayModel } from '../lib/deviceLabels';
 import type { Device } from '../types';
 import styles from './DevicesPage.module.css';
 
@@ -31,6 +32,9 @@ const CONNECTION_LABELS: Record<Device['connectionType'], string> = {
   simulator: 'Simulator',
   emulator: 'Emulator',
 };
+
+/** Multi-view is only meaningful with something to compare against. */
+const MULTI_VIEW_MIN = 2;
 
 /**
  * Execution locks carry a reason of `execution:<runId>`. Surfacing that raw
@@ -59,57 +63,137 @@ function LockLine({ device }: { device: Device }) {
   );
 }
 
-function DeviceCard({ device }: { device: Device }) {
-  return (
-    <Card interactive>
-      <CardBody>
-        <div className={styles.head}>
+function DeviceCard({
+  device,
+  selectable,
+  selected,
+  selectionFull,
+  onToggle,
+}: {
+  device: Device;
+  selectable: boolean;
+  selected: boolean;
+  selectionFull: boolean;
+  onToggle: (udid: string) => void;
+}) {
+  const offline = isOfflineStatus(device.status);
+  const model = displayModel(device);
+  // Offline devices can't be captured at all, so they're never selectable and
+  // never offered a live action — the backend would refuse either way.
+  const disabled = selectable && offline;
+
+  const body = (
+    <CardBody>
+      <div className={styles.head}>
+        {selectable ? (
+          <input
+            type="checkbox"
+            className={styles.selectBox}
+            checked={selected}
+            disabled={disabled || (!selected && selectionFull)}
+            onChange={() => onToggle(device.udid)}
+            aria-label={`Select ${device.name} for multi-view`}
+          />
+        ) : (
           <span className={styles.deviceIcon}>
             <icons.device size={iconSize.control} aria-hidden="true" />
           </span>
+        )}
+        {selectable ? (
+          <span className={styles.name}>{device.name}</span>
+        ) : (
           <Link to={`/devices/${device.udid}`} className={styles.name}>
             {device.name}
           </Link>
-          {/* An install holds no lock, so `status` stays idle through one —
-              shown alongside rather than replacing it, because both are true
-              at once and the device really is unlocked. */}
-          {device.activeInstall ? <StatusBadge status="installing" /> : null}
-          <StatusBadge status={device.status} />
-        </div>
+        )}
+        {/* An install holds no lock, so `status` stays idle through one —
+            shown alongside rather than replacing it, because both are true
+            at once and the device really is unlocked. */}
+        {device.activeInstall ? <StatusBadge status="installing" /> : null}
+        <StatusBadge status={device.status} />
+      </div>
 
-        <Meta>
-          <span>
-            {device.platform === 'ios' ? 'iOS' : 'Android'} {device.osVersion}
-          </span>
-          <MetaSep />
-          <span>{device.model}</span>
-          <MetaSep />
-          <span>{CONNECTION_LABELS[device.connectionType]}</span>
-        </Meta>
+      <Meta>
+        <span>
+          {device.platform === 'ios' ? 'iOS' : 'Android'} {device.osVersion}
+        </span>
+        {/* Suppressed for emulators, whose "model" is a system-image id that
+            repeats nothing useful next to the name. */}
+        {model ? (
+          <>
+            <MetaSep />
+            <span>{model}</span>
+          </>
+        ) : null}
+        <MetaSep />
+        <span>{CONNECTION_LABELS[device.connectionType]}</span>
+      </Meta>
 
-        <LockLine device={device} />
+      <LockLine device={device} />
 
-        <div className={styles.footer}>
-          <span className={styles.udid}>
-            <span className={styles.footerLabel}>UDID</span>
-            <Mono className={styles.udidValue}>{device.udid}</Mono>
-          </span>
-          <span className={styles.host}>
-            <icons.host size={iconSize.dense} aria-hidden="true" />
-            {device.machineId}
-          </span>
-        </div>
+      <div className={styles.footer}>
+        <span className={styles.udid}>
+          <span className={styles.footerLabel}>UDID</span>
+          <Mono className={styles.udidValue}>{device.udid}</Mono>
+        </span>
+        <span className={styles.host}>
+          <icons.host size={iconSize.dense} aria-hidden="true" />
+          {device.machineId}
+        </span>
+      </div>
 
-        <div className={styles.seen}>Last seen {formatRelative(device.lastSeenAt)}</div>
-      </CardBody>
+      <div className={styles.cardFooterRow}>
+        <span className={styles.seen}>Last seen {formatRelative(device.lastSeenAt)}</span>
+        {/* An explicit, labelled action: the whole card being a link to the
+            viewer was not discoverable. Navigation only — the viewer page
+            decides whether to open a capture, so the grid never starts one. */}
+        {!selectable && !offline ? (
+          <Link to={`/devices/${device.udid}`} className={styles.liveAction}>
+            <Button size="sm" variant="secondary">
+              <icons.stream size={iconSize.control} aria-hidden="true" />
+              View live
+            </Button>
+          </Link>
+        ) : null}
+      </div>
+    </CardBody>
+  );
+
+  if (!selectable) return <Card interactive>{body}</Card>;
+
+  return (
+    <Card className={selected ? styles.cardSelected : undefined}>
+      <label className={`${styles.selectLabel} ${disabled ? styles.selectLabelDisabled : ''}`}>{body}</label>
     </Card>
   );
 }
 
 export function DevicesPage() {
+  const navigate = useNavigate();
   const { status, setStatus, platform, setPlatform } = useDeviceFilters();
   const { data: devices, isPending, error, refetch } = useDevices({ status, platform });
   const filtered = status !== 'all' || platform !== 'all';
+
+  // Selection lives here rather than in the URL: the multi-view *page* owns
+  // the `udids` param, and mirroring it while still picking would leave two
+  // writers for one piece of state.
+  const [picking, setPicking] = useState(false);
+  const [selected, setSelected] = useState<string[]>([]);
+
+  function toggle(udid: string) {
+    setSelected((prev) =>
+      prev.includes(udid)
+        ? prev.filter((u) => u !== udid)
+        : prev.length < MULTI_VIEW_MAX
+          ? [...prev, udid]
+          : prev,
+    );
+  }
+
+  function cancelPicking() {
+    setPicking(false);
+    setSelected([]);
+  }
 
   // Only split live/offline when the user isn't already asking for offline
   // devices specifically — collapsing the very thing they filtered for would
@@ -118,27 +202,71 @@ export function DevicesPage() {
   const liveDevices = splitOffline ? (devices ?? []).filter((d) => !isOfflineStatus(d.status)) : (devices ?? []);
   const offlineDevices = splitOffline ? (devices ?? []).filter((d) => isOfflineStatus(d.status)) : [];
 
+  const cardProps = {
+    selectable: picking,
+    selectionFull: selected.length >= MULTI_VIEW_MAX,
+    onToggle: toggle,
+  };
+
   return (
     <Page>
       <PageHeader
         title="Devices"
         subtitle="Every device reported by a connected host, with its current lock state."
-        actions={
-          <Link to="/devices/multi-view">
-            <Button size="sm" variant="secondary">
+      />
+
+      {/* One control row: the chips already carry per-status counts and are
+          actionable, so a separate summary strip above them was the same
+          numbers twice and pushed the grid below the fold. Multi-view sits
+          here rather than in the page header because it acts on this list. */}
+      <div className={styles.toolbar}>
+        {devices && devices.length > 0 ? (
+          <FilterChips
+            devices={devices}
+            status={status}
+            setStatus={setStatus}
+            platform={platform}
+            setPlatform={setPlatform}
+          />
+        ) : (
+          <span />
+        )}
+        <div className={styles.toolbarRight}>
+          <DeviceFilterBar
+            status={status}
+            onStatusChange={setStatus}
+            platform={platform}
+            onPlatformChange={setPlatform}
+          />
+          {picking ? (
+            <Button size="sm" variant="ghost" onClick={cancelPicking}>
+              Cancel
+            </Button>
+          ) : (
+            <Button size="sm" variant="secondary" onClick={() => setPicking(true)}>
               <icons.stream size={iconSize.control} aria-hidden="true" />
               Multi-view
             </Button>
-          </Link>
-        }
-      />
+          )}
+        </div>
+      </div>
 
-      {devices && devices.length > 0 ? <InventorySummary devices={devices} /> : null}
-
-      <DeviceFilterBar status={status} onStatusChange={setStatus} platform={platform} onPlatformChange={setPlatform} />
-
-      {devices && devices.length > 0 ? (
-        <FilterChips devices={devices} status={status} setStatus={setStatus} platform={platform} setPlatform={setPlatform} />
+      {picking ? (
+        <div className={styles.pickBar} role="status">
+          <span className={styles.pickHint}>
+            Select {MULTI_VIEW_MIN}–{MULTI_VIEW_MAX} online devices · {selected.length}/{MULTI_VIEW_MAX} selected
+          </span>
+          <Button
+            size="sm"
+            disabled={selected.length < MULTI_VIEW_MIN}
+            onClick={() => navigate(`/devices/multi-view?udids=${selected.join(',')}`)}
+            title={
+              selected.length < MULTI_VIEW_MIN ? `Pick at least ${MULTI_VIEW_MIN} devices to compare` : undefined
+            }
+          >
+            View {selected.length} device{selected.length === 1 ? '' : 's'}
+          </Button>
+        </div>
       ) : null}
 
       <QueryBoundary
@@ -172,7 +300,12 @@ export function DevicesPage() {
         {liveDevices.length > 0 ? (
           <Grid>
             {liveDevices.map((device) => (
-              <DeviceCard key={device._id} device={device} />
+              <DeviceCard
+                key={device._id}
+                device={device}
+                selected={selected.includes(device.udid)}
+                {...cardProps}
+              />
             ))}
           </Grid>
         ) : offlineDevices.length > 0 ? (
@@ -187,21 +320,15 @@ export function DevicesPage() {
             </summary>
             <Grid className={styles.offlineGrid}>
               {offlineDevices.map((device) => (
-                <DeviceCard key={device._id} device={device} />
+                <DeviceCard
+                  key={device._id}
+                  device={device}
+                  selected={selected.includes(device.udid)}
+                  {...cardProps}
+                />
               ))}
             </Grid>
           </details>
-        ) : null}
-
-        {devices && devices.length > 0 ? (
-          <Summary
-            items={[
-              { label: 'total', value: devices.length },
-              { label: 'idle', value: countBy(devices, 'idle') },
-              { label: 'in use', value: countBy(devices, 'in-use') },
-              { label: 'offline', value: countBy(devices, 'offline') },
-            ]}
-          />
         ) : null}
       </QueryBoundary>
     </Page>

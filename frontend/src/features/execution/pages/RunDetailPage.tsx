@@ -21,6 +21,17 @@ const FAILURE_KIND_LABELS: Record<string, string> = {
   precondition: 'Precondition — the run never started (not counted in pass rate)',
 };
 
+/**
+ * Artifact links are plain `<a>` elements, not axios calls: the report is a
+ * static HTML tree the browser must load in its own right, and the log
+ * download is a stream the browser should save without the tab buffering it.
+ * Both need the same origin axios uses — the `/api` prefix is always appended,
+ * never replaced (see services/api.ts).
+ */
+function artifactUrl(runId: string, suffix: string): string {
+  return `${import.meta.env.VITE_API_URL ?? ''}/api/execution/${runId}/${suffix}`;
+}
+
 export function RunDetailPage() {
   const { runId } = useParams<{ runId: string }>();
   const { can } = useAuth();
@@ -36,6 +47,11 @@ export function RunDetailPage() {
   // sat on "Waiting for output…" forever despite the log existing on disk.
   const { data: storedLog } = useRunLog(runId, streamState !== 'live' && logLines.length === 0);
   const lines = logLines.length > 0 ? logLines : storedLog ? [storedLog] : [];
+  // Only offer the download once something has proven a log exists: either the
+  // stored copy came back, or lines are arriving live (which means the file is
+  // being written right now). A run whose log fetch 404s shows no control at
+  // all, rather than a link that fails when clicked.
+  const hasStoredLog = Boolean(storedLog) || logLines.length > 0;
   const cancel = useCancelRun(runId ?? '');
 
   // Cancel is only meaningful while the run is non-terminal, and only for
@@ -49,6 +65,27 @@ export function RunDetailPage() {
         subtitle={runId}
         actions={
           <>
+            {/* Both artifact controls are hidden, never disabled, when the
+                artifact does not exist — offering a link that 404s is the
+                dead-button case the guidelines forbid. `reportPath` is only
+                set for a report with a real index.html, and the log link waits
+                for the same fetch that feeds the viewer below. */}
+            {run?.reportPath && runId ? (
+              <a href={artifactUrl(runId, 'report')} target="_blank" rel="noreferrer">
+                <Button size="sm" variant="secondary">
+                  <icons.analytics size={iconSize.control} aria-hidden="true" />
+                  Open report
+                </Button>
+              </a>
+            ) : null}
+            {hasStoredLog && runId ? (
+              <a href={artifactUrl(runId, 'logs?download=1')} download>
+                <Button size="sm" variant="ghost">
+                  <icons.downloading size={iconSize.control} aria-hidden="true" />
+                  Download log
+                </Button>
+              </a>
+            ) : null}
             {showCancel ? (
               <Button
                 size="sm"

@@ -92,9 +92,81 @@
 }
 
 .seen {
-  margin-top: var(--space-2);
   font-size: var(--text-xs);
   color: var(--text-disabled);
+}
+
+/* One row for every list control, so the grid starts near the top of the
+   viewport instead of below a stack of summary chrome. */
+.toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  margin-bottom: var(--space-3);
+}
+
+.toolbarRight {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.pickBar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  padding: var(--space-2) var(--space-3);
+  margin-bottom: var(--space-3);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--surface-raised);
+}
+
+.pickHint {
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+}
+
+.cardFooterRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-top: var(--space-2);
+}
+
+.liveAction {
+  text-decoration: none;
+  flex: none;
+}
+
+.selectBox {
+  width: 16px;
+  height: 16px;
+  flex: none;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+/* The whole card is the hit target while picking, so the label wraps the body
+   rather than sitting beside the checkbox. */
+.selectLabel {
+  display: block;
+  cursor: pointer;
+}
+
+.selectLabelDisabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.cardSelected {
+  border-color: var(--accent);
 }
 
 .lock {

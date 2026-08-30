@@ -52,4 +52,32 @@ const buildSchema = new Schema<IBuild>(
 
 buildSchema.index({ project: 1, platform: 1, version: 1 });
 
+/**
+ * At most one in-flight fetch per (project, platform, version).
+ *
+ * This is what makes `startBuildFetch`'s upsert genuinely atomic rather than
+ * merely usually-atomic: MongoDB only guarantees that concurrent upserts can't
+ * both insert when a unique index covers the query fields. Without it two
+ * requests arriving in the same tick would each download the whole artifact
+ * and leave duplicate rows for one logical build.
+ *
+ * Partial, so it constrains only rows that are actually being fetched right
+ * now. A `corrupt` row must not block a retry, and repeated `ready` rows for a
+ * version are a legitimate re-fetch, so neither is covered.
+ *
+ * Note `validating` is deliberately outside the filter: `partialFilterExpression`
+ * is restricted to simple predicates, and covering both states would need `$in`
+ * — supported only on newer servers. The unguarded window is the checksum of an
+ * already-downloaded local file, so the worst case is one redundant download,
+ * never a corrupted artifact.
+ */
+buildSchema.index(
+  { project: 1, platform: 1, version: 1 },
+  {
+    unique: true,
+    partialFilterExpression: { status: 'downloading' },
+    name: 'one_inflight_fetch_per_version',
+  },
+);
+
 export const Build = model<IBuild>('Build', buildSchema);

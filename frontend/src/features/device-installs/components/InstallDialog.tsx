@@ -4,7 +4,7 @@ import { StatusBadge } from '@/components/ui/StatusBadge';
 import { useDevices } from '@/features/devices/api/devices.api';
 import type { Build } from '../../builds/types';
 import type { InstallTarget } from '../types';
-import { useInstallRun, useTriggerInstallRun } from '../api/device-installs.api';
+import { useInstallRun, useInstalledDevices, useTriggerInstallRun } from '../api/device-installs.api';
 import { useInstallRunStream } from '../api/useInstallRunStream';
 import styles from './InstallDialog.module.css';
 
@@ -32,6 +32,10 @@ export function InstallDialog({ build, onClose }: { build: Build | null; onClose
   const [installRunId, setInstallRunId] = useState<string | null>(null);
 
   const { data: devices } = useDevices({ platform: build?.platform });
+  const { data: installedDevices } = useInstalledDevices(build?._id);
+  // Undefined while unknown, so the UI can distinguish "none" from "not
+  // loaded yet" rather than rendering a confident zero.
+  const installedUdids = installedDevices ? new Set(installedDevices.map((d) => d.deviceUdid)) : undefined;
   const trigger = useTriggerInstallRun();
 
   const { state: streamState } = useInstallRunStream(installRunId ?? undefined);
@@ -112,6 +116,16 @@ export function InstallDialog({ build, onClose }: { build: Build | null; onClose
         <>
           <p className={styles.hint}>
             {devices?.length ? `${build.platform === 'ios' ? 'iOS' : 'Android'} devices` : 'No matching devices found.'}
+            {/* Only stated once it is actually known — a bare "0 devices"
+                while the query is still in flight would read as a fact. */}
+            {installedUdids ? (
+              <span className={styles.installedCount}>
+                {' · '}
+                {installedUdids.size === 0
+                  ? 'not installed anywhere yet'
+                  : `installed on ${installedUdids.size} device${installedUdids.size === 1 ? '' : 's'}`}
+              </span>
+            ) : null}
           </p>
           <ul className={styles.deviceList}>
             {(devices ?? []).map((d) => (
@@ -124,6 +138,9 @@ export function InstallDialog({ build, onClose }: { build: Build | null; onClose
                     onChange={() => toggle(d.udid)}
                   />
                   <span className={styles.deviceName}>{d.name}</span>
+                  {/* Reinstalling is legitimate (a rebuild under the same
+                      version), so this informs rather than disables. */}
+                  {installedUdids?.has(d.udid) ? <span className={styles.installedTag}>installed</span> : null}
                   <StatusBadge status={d.status} bare />
                 </label>
               </li>

@@ -7,6 +7,7 @@ import {
   IncompatibleDeviceError,
   UnknownDeviceError,
   getInstallRun,
+  getInstalledDevicesForBuild,
   listInstallRuns,
   reportTargetProgress,
   triggerInstallRun,
@@ -29,6 +30,19 @@ export const installRunsRoutes: FastifyPluginAsync = async (app) => {
   app.get('/', async (req) => {
     const { project, deviceUdid } = req.query as Record<string, string>;
     return listInstallRuns({ project, deviceUdid });
+  });
+
+  /**
+   * Devices that currently hold this build. Registered before `/:id` so the
+   * literal `builds` segment can't be read as an install-run id.
+   *
+   * Lives here rather than under `/api/builds` because the answer comes
+   * entirely from install-run history — the `Build` record itself knows
+   * nothing about which devices received it.
+   */
+  app.get('/builds/:buildId/devices', async (req) => {
+    const { buildId } = req.params as { buildId: string };
+    return getInstalledDevicesForBuild(buildId);
   });
 
   app.get('/:id', async (req, reply) => {

@@ -1,5 +1,22 @@
+/*
+ * Every text column here holds a value with no length bound — project, suite
+ * and branch names are user-supplied, and a UDID is long by nature. The
+ * surrounding table already scrolls horizontally, but without a per-cell cap a
+ * single long branch name stretches one column until the rest are unreadable.
+ * Capping and truncating keeps the row scannable; `title` keeps the full value
+ * one hover away, so nothing is actually lost.
+ */
+.truncate {
+  display: block;
+  max-width: 22ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .link {
   display: block;
+  min-width: 0;
 }
 
 .project {
@@ -15,4 +32,12 @@
   padding: 2px var(--space-2);
   border-radius: var(--radius-control);
   background: var(--bg-hover);
+  /* inline-block so the pill's own background clips with the ellipsis rather
+     than painting past it. */
+  display: inline-block;
+  max-width: 22ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: bottom;
 }

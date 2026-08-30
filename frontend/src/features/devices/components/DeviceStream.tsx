@@ -83,14 +83,15 @@ export function DeviceStream({ device }: { device: Device }) {
   const { user } = useAuth();
   const location = useLocation();
   const [protocol, setProtocol] = useState<StreamProtocol>('mjpeg');
-  // The capture only starts on the host once a viewer actually attaches
-  // (streaming.service.ts's whole design), but the WS itself used to open
-  // the instant this page loaded — watching a device was never something a
-  // visitor opted into. Gating it behind a click matches that backend
-  // invariant on the frontend too, and avoids spending a capture slot (see
-  // the per-host Android stream cap) on a tab nobody is actually looking at.
-  const [started, setStarted] = useState(false);
   const isOffline = device.status === 'offline' || device.status === 'unreachable';
+  // Opening a device's own page IS the intent to watch it, so requiring a
+  // second click was pure friction. The cost that made this opt-in still
+  // stands — one adb capture process per device, host CPU, a per-host cap —
+  // so the expensive parts are unchanged: the grid never starts a capture
+  // (its card only navigates), an offline device is never dialled, and
+  // navigating away detaches the viewer exactly as before. What's gone is
+  // only the extra click once a human has already asked for this device.
+  const [started, setStarted] = useState(!isOffline);
   // Not gated on `user`: the hook reports 'unauthenticated' when there's no
   // token, which the banner shows as "Sign in to view". Gating here instead
   // would leave it reading "Not streaming", which wrongly implies the device
@@ -124,6 +125,20 @@ export function DeviceStream({ device }: { device: Device }) {
           />
           {banner.text}
         </span>
+        {/* Always visible while a capture is running, and in the header rather
+            than below the fold: the stream now starts on its own, so stopping
+            it must be the most obvious control on the panel. */}
+        {started ? (
+          <Button size="sm" variant="destructive" onClick={() => setStarted(false)}>
+            <icons.cancelled size={iconSize.control} aria-hidden="true" />
+            Stop live view
+          </Button>
+        ) : !isOffline && user ? (
+          <Button size="sm" onClick={() => setStarted(true)}>
+            <icons.stream size={iconSize.control} aria-hidden="true" />
+            Start live view
+          </Button>
+        ) : null}
       </div>
 
       <div className={styles.protocolToggle}>
@@ -179,9 +194,9 @@ export function DeviceStream({ device }: { device: Device }) {
               </>
             ) : !started ? (
               <>
-                <div className={styles.placeholderTitle}>Live view is off</div>
+                <div className={styles.placeholderTitle}>Live view stopped</div>
                 <p className={styles.placeholderBody}>
-                  Starts a capture on the host — nothing is spent watching a page nobody has opened this on.
+                  The capture on the host was released. Start it again whenever you need it.
                 </p>
                 <Button size="sm" onClick={() => setStarted(true)}>
                   <icons.stream size={iconSize.control} aria-hidden="true" />
@@ -218,11 +233,6 @@ export function DeviceStream({ device }: { device: Device }) {
         )}
       </div>
 
-      {started ? (
-        <Button size="sm" variant="ghost" onClick={() => setStarted(false)} className={styles.stopWatching}>
-          Stop watching
-        </Button>
-      ) : null}
     </div>
   );
 }

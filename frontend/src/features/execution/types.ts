@@ -24,6 +24,12 @@ export interface ExecutionRun {
    * on runs predating this field.
    */
   failureKind: 'test' | 'infra' | 'precondition' | null;
+  /**
+   * Where the run's Allure report was kept, or `null` when the runner produced
+   * none. Only ever set for a report that really has an `index.html`, so the
+   * UI can treat non-null as "this link works" and hide the control otherwise.
+   */
+  reportPath: string | null;
   stages: RunStage[];
   startedAt: string | null;
   endedAt: string | null;
