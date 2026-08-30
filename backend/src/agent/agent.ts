@@ -1,5 +1,6 @@
 import { DeviceDiscovery, DiscoveredDevice } from './device-discovery';
-import { HubClient, HostCapabilities } from './hub-client';
+import { HubClient, HostCapabilities, PendingInstall } from './hub-client';
+import { runInstall } from './installer';
 
 export interface AgentOptions {
   machineId: string;
@@ -31,6 +32,11 @@ export class DeviceAgent {
   private timer: ReturnType<typeof setTimeout> | null = null;
   private running = false;
   private consecutiveFailures = 0;
+  // Keyed by `${installRunId}:${deviceUdid}` — the same pending target can
+  // reappear on consecutive heartbeat responses until the hub sees a
+  // non-'queued' report for it, so this guards against starting it twice
+  // while the first attempt is still in flight.
+  private readonly inFlightInstalls = new Set<string>();
 
   constructor(private readonly opts: AgentOptions) {}
 
@@ -44,16 +50,36 @@ export class DeviceAgent {
 
     // Heartbeat first: a host with zero devices must still show as online,
     // otherwise an empty lab looks like a dead agent.
-    await this.opts.hub.heartbeat({
+    const { pendingInstalls } = await this.opts.hub.heartbeat({
       machineId: this.opts.machineId,
       hostname: this.opts.hostname,
       os: this.opts.os,
       agentVersion: this.opts.agentVersion,
       capabilities: this.opts.capabilities,
     });
+    this.startPendingInstalls(pendingInstalls);
 
     const { upserted, markedOffline } = await this.opts.hub.syncDevices(this.opts.machineId, devices);
     return { devices, upserted, markedOffline };
+  }
+
+  /**
+   * Kicks off any newly-seen pending installs in the background — NOT
+   * awaited, so a large APK download can't stall the next discover/heartbeat
+   * cycle (which must keep running regardless of how long an install takes).
+   */
+  private startPendingInstalls(pendingInstalls: PendingInstall[]): void {
+    for (const pending of pendingInstalls) {
+      const key = `${pending.installRunId}:${pending.deviceUdid}`;
+      if (this.inFlightInstalls.has(key)) continue;
+      this.inFlightInstalls.add(key);
+
+      void runInstall(this.opts.hub, pending)
+        .catch((err: unknown) => {
+          this.log('error', `install ${key} failed: ${err instanceof Error ? err.message : String(err)}`);
+        })
+        .finally(() => this.inFlightInstalls.delete(key));
+    }
   }
 
   async start(): Promise<void> {

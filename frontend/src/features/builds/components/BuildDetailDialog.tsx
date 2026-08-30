@@ -3,18 +3,22 @@ import { Button, DescriptionList, Dialog, Mono } from 'react-design-kit';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { icons, iconSize } from '@/lib/icons';
 import { formatBytes, formatRelative } from 'ts-format-utils';
+import { useAuth } from '@/features/auth/useAuth';
+import { InstallDialog } from '@/features/device-installs/components/InstallDialog';
 import type { Build } from '../types';
 import styles from './BuildDetailDialog.module.css';
 
 /**
  * Build detail (drill-down level 3) — the real `Build` metadata a table row
  * abbreviates: the full sha256 (the row only shows a shortened one), the
- * on-disk path, and the source URL. Deliberately "View" only — mobile-hub has
- * no install pipeline (docs/TODO.md "Stubs & placeholders"), so there is no
- * Install action here, not even a disabled one.
+ * on-disk path, and the source URL. Install is only offered once the build
+ * is `ready` and only to callers who can trigger one (frontend/CLAUDE.md:
+ * hide the action rather than render a disabled control that 403s).
  */
 export function BuildDetailDialog({ build, onClose }: { build: Build | null; onClose: () => void }) {
   const [copied, setCopied] = useState(false);
+  const [installOpen, setInstallOpen] = useState(false);
+  const { can } = useAuth();
 
   function copyChecksum() {
     if (!build?.checksum) return;
@@ -25,16 +29,24 @@ export function BuildDetailDialog({ build, onClose }: { build: Build | null; onC
   }
 
   return (
-    <Dialog
-      open={build !== null}
-      onClose={onClose}
-      title={build ? `${build.project} · ${build.version}` : 'Build'}
-      actions={
-        <Button size="sm" variant="ghost" onClick={onClose}>
-          Close
-        </Button>
-      }
-    >
+    <>
+      <Dialog
+        open={build !== null && !installOpen}
+        onClose={onClose}
+        title={build ? `${build.project} · ${build.version}` : 'Build'}
+        actions={
+          <>
+            <Button size="sm" variant="ghost" onClick={onClose}>
+              Close
+            </Button>
+            {build?.status === 'ready' && can('operator', 'admin') ? (
+              <Button size="sm" onClick={() => setInstallOpen(true)}>
+                Install
+              </Button>
+            ) : null}
+          </>
+        }
+      >
       {build ? (
         <>
           <div className={styles.head}>
@@ -77,6 +89,8 @@ export function BuildDetailDialog({ build, onClose }: { build: Build | null; onC
           />
         </>
       ) : null}
-    </Dialog>
+      </Dialog>
+      {installOpen ? <InstallDialog build={build} onClose={() => setInstallOpen(false)} /> : null}
+    </>
   );
 }

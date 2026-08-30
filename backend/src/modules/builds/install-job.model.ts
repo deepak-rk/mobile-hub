@@ -1,5 +1,21 @@
 import { Schema, model, Document, Types } from 'mongoose';
 
+/**
+ * @deprecated Written by nothing, read by nothing — dead code as of 2026-08-29.
+ *
+ * Specified in docs/modules/builds.md to track an artifact **download to the
+ * hub** with ~1s progress updates pushed over a WebSocket. That progress
+ * pipeline was never built; `triggerBuildFetch` reports status on the `Build`
+ * record instead.
+ *
+ * **Do not confuse this with `InstallRun`** (modules/device-installs), which is
+ * live, and tracks installing a ready artifact **onto devices**. Two things
+ * called "install job" is exactly how a future change wires progress to the
+ * wrong collection — the reason this warning exists rather than a silent stub.
+ *
+ * Either implement the download-progress pipeline here or delete this model;
+ * do not extend it to mean device installs.
+ */
 export interface IInstallJob extends Document {
   buildId: Types.ObjectId;
   project: string;

@@ -2,6 +2,7 @@ import { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 import { listHosts, getHost, upsertHeartbeat } from './hosts.service';
 import { requireAgentToken } from '../agent-auth/agent-auth';
+import { getPendingInstallsForMachine } from '../device-installs/install-runs.service';
 
 const heartbeatBody = z.object({
   machineId: z.string().min(1),
@@ -35,7 +36,11 @@ export const hostsRoutes: FastifyPluginAsync = async (app) => {
       });
     }
     const host = await upsertHeartbeat(body.data);
-    return host;
+    // Piggybacks on the existing 10s poll cycle rather than opening a second
+    // one — the agent-polls-for-pending-installs decision this session
+    // deliberately avoids inventing any new hub->agent transport.
+    const pendingInstalls = await getPendingInstallsForMachine(body.data.machineId);
+    return { ...host.toObject(), pendingInstalls };
   });
 
   app.get('/:machineId', async (req, reply) => {

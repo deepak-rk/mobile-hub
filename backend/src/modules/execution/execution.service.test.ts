@@ -2,8 +2,10 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import { execSync } from 'child_process';
 import { ExecutionRun } from './execution-run.model';
 import { env } from '../../config/env';
+import { PLATFORM_DEFAULTS } from '../../config/org-config.schema';
 import * as devicesService from '../devices/devices.service';
 import { triggerExecutionRun, cancelExecutionRun, recoverOrphanedRuns, DeviceLockedError } from './execution.service';
 
@@ -22,6 +24,8 @@ import { triggerExecutionRun, cancelExecutionRun, recoverOrphanedRuns, DeviceLoc
  */
 let tmpDir: string;
 let origExecDir: string;
+let artifactsDir: string;
+let origArtifactsDir: string;
 
 function fakeRunDoc(overrides: Partial<Record<string, unknown>> = {}) {
   const doc: Record<string, unknown> = {
@@ -34,7 +38,10 @@ function fakeRunDoc(overrides: Partial<Record<string, unknown>> = {}) {
       { name: 'execute', status: 'pending' },
     ],
     workspacePath: path.join(tmpDir, 'run-1'),
-    logPath: path.join(tmpDir, 'run-1', 'run.log'),
+    // Mirrors the real split: the log lives under the artifacts root, NOT
+    // inside the workspace, which is deleted when the run ends.
+    artifactsPath: path.join(artifactsDir, 'run-1'),
+    logPath: path.join(artifactsDir, 'run-1', 'run.log'),
     deviceUdid: 'd1',
     triggeredBy: 'user-1',
     ...overrides,
@@ -57,26 +64,41 @@ function waitForReleaseLock() {
 
 beforeEach(() => {
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mh-exec-test-'));
+  // Deliberately a sibling of the workspace root, not a child — the whole
+  // point of the split is that wiping one cannot touch the other.
+  artifactsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mh-exec-artifacts-'));
   origExecDir = env.EXECUTIONS_DIR;
+  origArtifactsDir = env.EXECUTION_ARTIFACTS_DIR;
   env.EXECUTIONS_DIR = tmpDir;
+  env.EXECUTION_ARTIFACTS_DIR = artifactsDir;
 });
 
-afterEach(async () => {
-  env.EXECUTIONS_DIR = origExecDir;
-  // The log write stream's fd can still be closing when this runs (its
-  // .end() in runExecution's finally block is async) — Windows won't let a
-  // directory be removed while a file inside it has an open handle. rmSync
-  // itself has no retry option, so retry the call a few times rather than
-  // race it once.
+/**
+ * The log write stream's fd can still be closing when cleanup runs (its
+ * `.end()` in runExecution's finally block is async) — Windows won't remove a
+ * directory while a file inside it has an open handle. `rmSync` has no retry
+ * option, so retry rather than race it once.
+ *
+ * Now used for the artifacts root too, not just the workspace: that root holds
+ * `run.log`, i.e. it is *more* exposed to this race than the workspace ever was.
+ */
+async function rmWithRetry(dir: string): Promise<void> {
   for (let attempt = 0; attempt < 5; attempt++) {
     try {
-      fs.rmSync(tmpDir, { recursive: true, force: true });
-      break;
+      fs.rmSync(dir, { recursive: true, force: true });
+      return;
     } catch (err) {
       if (attempt === 4) throw err;
       await new Promise((r) => setTimeout(r, 50));
     }
   }
+}
+
+afterEach(async () => {
+  env.EXECUTIONS_DIR = origExecDir;
+  env.EXECUTION_ARTIFACTS_DIR = origArtifactsDir;
+  await rmWithRetry(artifactsDir);
+  await rmWithRetry(tmpDir);
   vi.restoreAllMocks();
 });
 
@@ -217,6 +239,95 @@ describe('recoverOrphanedRuns', () => {
 
     expect(await recoverOrphanedRuns()).toBe(0);
     expect(releaseLock).not.toHaveBeenCalled();
+  });
+});
+
+describe('pulling / restoring_cache with a real automation.repoUrl configured', () => {
+  function initGitRepo(dir: string): void {
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ name: 'demo-app' }));
+    execSync('git init -q -b main', { cwd: dir });
+    execSync('git config user.email test@example.com', { cwd: dir });
+    execSync('git config user.name Test', { cwd: dir });
+    execSync('git add -A', { cwd: dir });
+    execSync('git commit -q -m init', { cwd: dir });
+  }
+
+  it('clones a real repo, then reuses the node_modules cache on a second run with the same lockfile hash', async () => {
+    const repoSource = path.join(tmpDir, 'source-repo');
+    initGitRepo(repoSource);
+    const automation = { ...PLATFORM_DEFAULTS.automation, repoUrl: repoSource };
+
+    // --- Run 1: no cache exists yet ---
+    const doc1 = fakeRunDoc({ id: 'run-1', workspacePath: path.join(tmpDir, 'run-1'), artifactsPath: path.join(artifactsDir, 'run-1'), logPath: path.join(artifactsDir, 'run-1', 'run.log') });
+    vi.spyOn(ExecutionRun, 'create').mockResolvedValueOnce(doc1 as never);
+    vi.spyOn(devicesService, 'acquireLock').mockResolvedValue({} as never);
+    let released = waitForReleaseLock();
+
+    await triggerExecutionRun(
+      {
+        ...baseInput,
+        // 'installing' stands in for a real `npm ci` here — it just drops a
+        // marker file into node_modules so the cache-save path has something
+        // real to persist, without this test depending on network access.
+        setup: { command: 'node', args: ['-e', "require('fs').mkdirSync('node_modules'); require('fs').writeFileSync('node_modules/marker.txt', 'hit')"] },
+        run: { command: 'node', args: ['-e', 'process.exit(0)'] },
+      },
+      automation,
+    );
+    await released;
+
+    expect(doc1.status).toBe('passed');
+    const pulling1 = (doc1.stages as { name: string; status: string }[]).find((s) => s.name === 'pulling');
+    const cache1 = (doc1.stages as { name: string; status: string }[]).find((s) => s.name === 'restoring_cache');
+    expect(pulling1?.status).toBe('done');
+    expect(cache1?.status).toBe('done');
+    expect(doc1.cacheKey).toMatch(/^[a-f0-9]{64}$/); // sha256 of package.json — a real hash was computed
+    // The workspace is deleted when a run ends (it holds a full clone plus a
+    // copied node_modules), so the clone is gone by now — but the *log* must
+    // survive, because it lives under artifactsPath outside that tree. This
+    // pair is the whole point of separating the two directories: before the
+    // split, "clean up the workspace" and "serve a finished run's log" could
+    // not both be true.
+    expect(fs.existsSync(path.join(tmpDir, 'run-1', 'repo', 'package.json'))).toBe(false);
+    expect(fs.existsSync(doc1.logPath as string)).toBe(true);
+    // The clone really did happen — the cache it populated proves it, since a
+    // cache entry can only exist if a real repo was checked out and installed.
+    expect(fs.existsSync(path.join(tmpDir, '.cache', doc1.cacheKey as string, 'marker.txt'))).toBe(true);
+
+    // --- Run 2: same repoUrl/branch => same lockfile hash => should hit the cache run 1 saved ---
+    const doc2 = fakeRunDoc({ id: 'run-2', workspacePath: path.join(tmpDir, 'run-2'), artifactsPath: path.join(artifactsDir, 'run-2'), logPath: path.join(artifactsDir, 'run-2', 'run.log') });
+    vi.spyOn(ExecutionRun, 'create').mockResolvedValueOnce(doc2 as never);
+    released = waitForReleaseLock();
+
+    await triggerExecutionRun(
+      { ...baseInput, run: { command: 'node', args: ['-e', 'process.exit(0)'] } }, // no setup this time
+      automation,
+    );
+    await released;
+
+    expect(doc2.status).toBe('passed');
+    // Restored from run 1's cache, not created by a setup step (none was
+    // given). Asserted from the run's own durable log rather than the
+    // workspace, which no longer exists by the time the run ends — and this
+    // doubles as proof that the log genuinely survives workspace cleanup,
+    // which is what makes serving a finished run's output possible at all.
+    const run2Log = fs.readFileSync(doc2.logPath as string, 'utf8');
+    expect(run2Log).toContain(`cache hit (${doc1.cacheKey as string})`);
+  });
+
+  it('leaves the not-implemented stub in place when automation.repoUrl is unset', async () => {
+    const doc = fakeRunDoc();
+    vi.spyOn(ExecutionRun, 'create').mockResolvedValue(doc as never);
+    vi.spyOn(devicesService, 'acquireLock').mockResolvedValue({} as never);
+    const released = waitForReleaseLock();
+
+    // No second argument — matches every real call site before this feature existed.
+    await triggerExecutionRun({ ...baseInput, run: { command: 'node', args: ['-e', 'process.exit(0)'] } });
+    await released;
+
+    expect(doc.status).toBe('passed');
+    expect(fs.existsSync(path.join(tmpDir, 'run-1', 'repo'))).toBe(false);
   });
 });
 

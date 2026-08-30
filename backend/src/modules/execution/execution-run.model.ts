@@ -4,6 +4,24 @@ export type StageName = 'pulling' | 'restoring_cache' | 'installing' | 'execute'
 export type StageStatus = 'pending' | 'running' | 'done' | 'error' | 'skipped';
 export type RunStatus = 'queued' | 'preparing' | 'running' | 'passed' | 'failed' | 'cancelled';
 
+/**
+ * Why a `failed` run failed — orthogonal to `status`, because "the test
+ * failed" and "we never got as far as running the test" are different facts
+ * that were previously stored identically.
+ *
+ *  - `test`         the suite itself reported failure (nonzero exit from the
+ *                   execute stage). The only kind attributable to the app.
+ *  - `infra`        the hub's own plumbing broke — clone failed, dependency
+ *                   install failed, a process wouldn't spawn, a timeout.
+ *  - `precondition` the run never started at all (e.g. the device was already
+ *                   locked). Nothing was executed.
+ *
+ * `null` on any run that is not `failed`. Analytics computes pass rate over
+ * `passed` + `failed{kind:'test'}` only, so infrastructure noise cannot make a
+ * healthy app look unstable.
+ */
+export type FailureKind = 'test' | 'infra' | 'precondition';
+
 export interface IStage {
   name: StageName;
   status: StageStatus;
@@ -21,9 +39,14 @@ export interface IExecutionRun extends Document {
   suite: string;
   triggeredBy: string;
   status: RunStatus;
+  /** Set only when `status === 'failed'`. See FailureKind. */
+  failureKind: FailureKind | null;
   stages: IStage[];
+  /** Ephemeral working directory — deleted when the run ends. */
   workspacePath: string;
   cacheKey: string | null;
+  /** Durable per-run artifact directory; survives workspace cleanup. */
+  artifactsPath: string;
   logPath: string;
   reportPath: string | null;
   startedAt: Date | null;
@@ -58,9 +81,13 @@ const executionRunSchema = new Schema<IExecutionRun>(
       default: 'queued',
       index: true,
     },
+    failureKind: { type: String, enum: ['test', 'infra', 'precondition'], default: null },
     stages: { type: [stageSchema], default: [] },
     workspacePath: { type: String, required: true },
     cacheKey: { type: String, default: null },
+    // Not `required` — runs created before durable artifacts existed have no
+    // value, and back-filling a path that was never written would be a lie.
+    artifactsPath: { type: String, default: '' },
     logPath: { type: String, required: true },
     reportPath: { type: String, default: null },
     startedAt: { type: Date, default: null },

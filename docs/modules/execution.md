@@ -1,6 +1,10 @@
 # Module: Automation Execution
 
-**Status:** planned — no code written.
+**Status:** partially built — **this document is the spec, not a description of what exists.**
+
+Built and verified: the stage machine, real `git clone` (`pulling`) and a `node_modules` cache (`restoring_cache`) when `automation.repoUrl` is set, command execution, atomic device locking with guaranteed release, cancellation, orphan recovery on restart, and live stage/log push.
+
+**Not built, or built differently from what's written below** — Allure reports, run-time `env` injection, `framework`-based runner dispatch, the propChain baton pattern, workspace cleanup, queue-with-backoff, SSE log transport, and the exact cache-key formula. `docs/TODO.md` § "Spec & reference drift" holds the authoritative line-by-line diff; keep it, not this header, current.
 **Blueprint ref:** [architecture-blueprint.md §4 (ExecutionRun), §6 (pipeline), §12c](../architecture-blueprint.md)
 **Competitive context:** [competitive-analysis.md §4c, §4e](../competitive-analysis.md)
 

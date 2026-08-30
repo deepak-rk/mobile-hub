@@ -70,6 +70,10 @@ function DeviceCard({ device }: { device: Device }) {
           <Link to={`/devices/${device.udid}`} className={styles.name}>
             {device.name}
           </Link>
+          {/* An install holds no lock, so `status` stays idle through one —
+              shown alongside rather than replacing it, because both are true
+              at once and the device really is unlocked. */}
+          {device.activeInstall ? <StatusBadge status="installing" /> : null}
           <StatusBadge status={device.status} />
         </div>
 

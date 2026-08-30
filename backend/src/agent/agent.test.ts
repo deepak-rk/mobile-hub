@@ -6,7 +6,7 @@ import type { DeviceDiscovery } from './device-discovery';
 
 function fakeHub(overrides: Partial<HubClient> = {}) {
   return {
-    heartbeat: vi.fn().mockResolvedValue(undefined),
+    heartbeat: vi.fn().mockResolvedValue({ pendingInstalls: [] }),
     syncDevices: vi.fn().mockResolvedValue({ upserted: 0, markedOffline: 0 }),
     ...overrides,
   } as unknown as HubClient & { heartbeat: ReturnType<typeof vi.fn>; syncDevices: ReturnType<typeof vi.fn> };

@@ -15,7 +15,27 @@ interface RunFacts {
   deviceUdid: string;
   suite: string;
   status: 'passed' | 'failed' | 'cancelled';
+  /** Why a `failed` run failed. See FailureKind in execution-run.model.ts. */
+  failureKind: 'test' | 'infra' | 'precondition' | null;
   durationMs: number | null; // null when startedAt was never set (e.g. failed before start)
+}
+
+/**
+ * Whether a run says anything about the application under test.
+ *
+ * A run rejected because the device was already locked, or killed by a backend
+ * restart, never exercised the app — counting it against pass rate makes a
+ * healthy suite look unstable purely from lab contention. Only `passed` and a
+ * genuine `test` failure are attributable.
+ *
+ * Runs predating `failureKind` have it `null`; those are treated as `test`
+ * failures, preserving the historical numbers rather than silently restating
+ * past reports.
+ */
+function isTestAttributable(r: RunFacts): boolean {
+  if (r.status === 'passed') return true;
+  if (r.status === 'failed') return r.failureKind === 'test' || r.failureKind === null;
+  return false; // cancelled: a human stopped it, not a verdict on the app
 }
 
 function utcDayStart(date: Date): Date {
@@ -55,8 +75,15 @@ function summarize(
   const cancelled = runs.filter((r) => r.status === 'cancelled').length;
   const durations = runs.filter((r) => r.durationMs !== null).map((r) => r.durationMs as number);
 
-  const groupRate = (group: RunFacts[]): number =>
-    group.length === 0 ? 0 : group.filter((r) => r.status === 'passed').length / group.length;
+  // Counts stay honest about everything that happened (totalRuns/failedRuns
+  // still include infra and precondition failures — hiding them would make
+  // lab problems invisible). Only the *rate* narrows to attributable runs.
+  const attributable = runs.filter(isTestAttributable);
+
+  const groupRate = (group: RunFacts[]): number => {
+    const scorable = group.filter(isTestAttributable);
+    return scorable.length === 0 ? 0 : scorable.filter((r) => r.status === 'passed').length / scorable.length;
+  };
 
   const byDeviceMap = new Map<string, RunFacts[]>();
   const bySuiteMap = new Map<string, RunFacts[]>();
@@ -70,7 +97,7 @@ function summarize(
     passedRuns: passed,
     failedRuns: failed,
     cancelledRuns: cancelled,
-    passRate: runs.length === 0 ? 0 : passed / runs.length,
+    passRate: attributable.length === 0 ? 0 : passed / attributable.length,
     avgDurationMs:
       durations.length === 0 ? 0 : Math.round(durations.reduce((a, b) => a + b, 0) / durations.length),
     byDevice: [...byDeviceMap.entries()].map(([deviceUdid, group]) => ({
@@ -181,6 +208,7 @@ async function computeAggregates(
     deviceUdid: run.deviceUdid,
     suite: run.suite,
     status: run.status as RunFacts['status'],
+    failureKind: run.failureKind ?? null,
     durationMs:
       run.startedAt && run.endedAt ? run.endedAt.getTime() - run.startedAt.getTime() : null,
   }));

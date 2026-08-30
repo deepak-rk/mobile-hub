@@ -3,12 +3,23 @@ import { Button, Card, CardBody, DescriptionList, Mono, Page, PageHeader, QueryB
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { icons, iconSize } from '@/lib/icons';
 import { formatDurationBetween, formatRelative } from 'ts-format-utils';
-import { isInFlight, useCancelRun, useExecutionRun } from '../api/execution.api';
+import { isInFlight, useCancelRun, useExecutionRun, useRunLog } from '../api/execution.api';
 import { useRunStream } from '../api/useRunStream';
 import { LogViewer } from '../components/LogViewer';
 import { useAuth } from '@/features/auth/useAuth';
 import { STAGE_LABELS, stageColor, stageIcon } from '../lib/stageMeta';
 import styles from './RunDetailPage.module.css';
+
+/**
+ * Reads back what the backend recorded about *why* a run failed. Phrased so
+ * the distinction is obvious to someone triaging: only 'test' is a verdict on
+ * the application; the other two say the run never got a fair chance.
+ */
+const FAILURE_KIND_LABELS: Record<string, string> = {
+  test: 'Test failure — the suite reported failures',
+  infra: 'Infrastructure — the run could not complete (not counted in pass rate)',
+  precondition: 'Precondition — the run never started (not counted in pass rate)',
+};
 
 export function RunDetailPage() {
   const { runId } = useParams<{ runId: string }>();
@@ -19,6 +30,12 @@ export function RunDetailPage() {
   // output..." that wrongly implies output might still arrive.
   const { state: streamState, logLines } = useRunStream(runId);
   const { data: run, isPending, error, refetch } = useExecutionRun(runId, streamState === 'live');
+
+  // Fall back to the stored log whenever the live stream isn't carrying this
+  // run's output — which is every already-finished run. Without this the panel
+  // sat on "Waiting for output…" forever despite the log existing on disk.
+  const { data: storedLog } = useRunLog(runId, streamState !== 'live' && logLines.length === 0);
+  const lines = logLines.length > 0 ? logLines : storedLog ? [storedLog] : [];
   const cancel = useCancelRun(runId ?? '');
 
   // Cancel is only meaningful while the run is non-terminal, and only for
@@ -87,7 +104,7 @@ export function RunDetailPage() {
                   })}
                 </ol>
 
-                <LogViewer lines={logLines} streamState={streamState} />
+                <LogViewer lines={lines} streamState={streamState} />
               </CardBody>
             </Card>
 
@@ -99,6 +116,12 @@ export function RunDetailPage() {
                 <DescriptionList
                   items={[
                     { term: 'Project', value: run.project },
+                    // Only meaningful on a failure, and worth showing there:
+                    // "the device was busy" and "the tests failed" look
+                    // identical without it.
+                    ...(run.status === 'failed' && run.failureKind
+                      ? [{ term: 'Failure', value: FAILURE_KIND_LABELS[run.failureKind] }]
+                      : []),
                     { term: 'Branch', value: <Mono>{run.branch}</Mono> },
                     { term: 'Suite', value: <Mono>{run.suite}</Mono> },
                     {

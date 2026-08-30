@@ -1,3 +1,4 @@
+import * as fs from 'fs';
 import { FastifyPluginAsync, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import type { WebSocket } from 'ws';
@@ -50,7 +51,7 @@ export const executionRoutes: FastifyPluginAsync = async (app) => {
         return reply.status(400).send({ code: 'VALIDATION_ERROR', message: body.error.message });
       }
       try {
-        const run = await triggerExecutionRun({ ...body.data, triggeredBy: req.user.sub });
+        const run = await triggerExecutionRun({ ...body.data, triggeredBy: req.user.sub }, app.config.automation);
         return reply.status(201).send(run);
       } catch (err) {
         if (err instanceof DeviceLockedError) {
@@ -60,6 +61,30 @@ export const executionRoutes: FastifyPluginAsync = async (app) => {
       }
     },
   );
+
+  /**
+   * The run's log as stored on disk.
+   *
+   * The WebSocket below only carries lines emitted while a client is watching,
+   * so reopening a finished run showed an empty "Waiting for output…" panel
+   * forever even though the whole log was sitting on disk. This serves that
+   * file, which is why it now lives under `artifactsPath` rather than inside
+   * the workspace that gets deleted when a run ends.
+   */
+  app.get('/:id/logs', async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const run = await getExecutionRun(id);
+    if (!run) return reply.status(404).send({ code: 'NOT_FOUND', message: 'Execution run not found' });
+
+    // Runs from before durable artifacts existed kept their log inside the
+    // workspace; say so plainly rather than 404ing as if the run never had one.
+    if (!run.logPath || !fs.existsSync(run.logPath)) {
+      return reply
+        .status(404)
+        .send({ code: 'LOG_UNAVAILABLE', message: 'No log file is stored for this run.' });
+    }
+    return reply.header('Content-Type', 'text/plain; charset=utf-8').send(fs.createReadStream(run.logPath));
+  });
 
   app.post('/:id/cancel', { preHandler: app.requireRole('operator', 'admin') }, async (req, reply) => {
     const { id } = req.params as { id: string };

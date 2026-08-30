@@ -1,0 +1,73 @@
+import { describe, it, expect, vi, afterEach } from 'vitest';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
+import { Readable } from 'stream';
+import { HubClient } from './hub-client';
+
+/**
+ * `downloadArtifact`'s byte counting, which exists because the progress it
+ * feeds was previously a lie: the response was piped straight to disk with no
+ * counting, so `InstallTarget.progress` only ever carried 0 and 100 while the
+ * UI rendered a determinate bar from it.
+ */
+afterEach(() => {
+  vi.restoreAllMocks();
+});
+
+function mockArtifactResponse(body: Buffer, headers: Record<string, string>) {
+  vi.stubGlobal(
+    'fetch',
+    vi.fn().mockResolvedValue({
+      ok: true,
+      body: Readable.toWeb(Readable.from([body.subarray(0, 40), body.subarray(40)])),
+      headers: { get: (k: string) => headers[k.toLowerCase()] ?? null },
+    }),
+  );
+}
+
+describe('HubClient.downloadArtifact', () => {
+  const dest = path.join(os.tmpdir(), `mh-artifact-${Date.now()}.bin`);
+
+  afterEach(() => {
+    fs.rmSync(dest, { force: true });
+  });
+
+  it('writes the artifact and reports cumulative bytes against the total', async () => {
+    const body = Buffer.alloc(100, 7);
+    mockArtifactResponse(body, { 'content-length': '100' });
+    const seen: Array<[number, number | null]> = [];
+
+    await new HubClient('http://hub', 'tok').downloadArtifact('build-1', dest, (got, total) =>
+      seen.push([got, total]),
+    );
+
+    expect(fs.statSync(dest).size).toBe(100);
+    // Cumulative, not per-chunk, and monotonic — a bar that goes backwards is
+    // as wrong as one that never moves.
+    expect(seen).toEqual([
+      [40, 100],
+      [100, 100],
+    ]);
+  });
+
+  it('reports a null total when the server sends no Content-Length', async () => {
+    // The caller must then leave progress alone rather than inventing a
+    // percentage it cannot compute.
+    mockArtifactResponse(Buffer.alloc(60, 1), {});
+    const totals: Array<number | null> = [];
+
+    await new HubClient('http://hub').downloadArtifact('build-1', dest, (_got, total) => totals.push(total));
+
+    expect(totals.every((t) => t === null)).toBe(true);
+    expect(fs.statSync(dest).size).toBe(60);
+  });
+
+  it('still downloads correctly with no progress callback supplied', async () => {
+    mockArtifactResponse(Buffer.alloc(75, 3), { 'content-length': '75' });
+
+    await new HubClient('http://hub').downloadArtifact('build-1', dest);
+
+    expect(fs.statSync(dest).size).toBe(75);
+  });
+});

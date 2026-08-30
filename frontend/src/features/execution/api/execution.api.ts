@@ -48,6 +48,25 @@ export function useExecutionRun(runId: string | undefined, livePush = false) {
   });
 }
 
+/**
+ * The run's stored log file.
+ *
+ * The WS stream only carries lines emitted while connected, so a finished run
+ * (or one opened after the fact) has nothing to show without this. Fetched
+ * only when the socket isn't live, so an in-flight run keeps using the stream
+ * and doesn't double-render the same lines.
+ */
+export function useRunLog(runId: string | undefined, enabled: boolean) {
+  return useQuery({
+    queryKey: ['runs', runId, 'logs'],
+    queryFn: async () => (await api.get<string>(`/execution/${runId}/logs`)).data,
+    enabled: Boolean(runId) && enabled,
+    // A missing log is a real answer ("this run stored none"), not a transient
+    // failure worth retrying.
+    retry: false,
+  });
+}
+
 export interface TriggerRunInput {
   machineId: string;
   deviceUdid: string;

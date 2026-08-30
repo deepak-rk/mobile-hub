@@ -2,6 +2,7 @@ import { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 import { acquireLock, getDevice, listDevices, releaseLock, renewLock, syncDevices } from './devices.service';
 import { requireAgentToken } from '../agent-auth/agent-auth';
+import { getActiveInstallUdids } from '../device-installs/install-runs.service';
 
 const syncBody = z.object({
   machineId: z.string().min(1),
@@ -20,7 +21,18 @@ const syncBody = z.object({
 export const devicesRoutes: FastifyPluginAsync = async (app) => {
   app.get('/', async (req) => {
     const { platform, status, machineId } = req.query as Record<string, string>;
-    return listDevices({ platform, status, machineId });
+    const [devices, installing] = await Promise.all([
+      listDevices({ platform, status, machineId }),
+      getActiveInstallUdids(),
+    ]);
+    // `activeInstall` is derived per request rather than stored on the device:
+    // installs take no lock, so a device's own record legitimately says
+    // nothing about them, and duplicating that state onto the device would
+    // just create a second thing to keep in sync. See getActiveInstallUdids.
+    return devices.map((d) => ({
+      ...(d.toObject() as Record<string, unknown>),
+      activeInstall: installing.has(d.udid),
+    }));
   });
 
   app.post('/sync', { preHandler: requireAgentToken }, async (req, reply) => {

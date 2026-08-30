@@ -1,6 +1,22 @@
 # Module: Live Device Streaming
 
-**Status:** planned — no code written.
+**Status:** built, with significant drift — **this document is the spec, not a description of what exists.**
+
+Built and verified: the `CaptureSource` adapter interface, Android MJPEG and H264 sources, the shared-capture invariant (one capture per host+device+protocol, N viewers, verified live), viewer registry and idle teardown, `retryKey` restart signalling, the per-host Android cap, and error propagation to attached viewers.
+
+**Known deviations — all real, none yet fixed** (audit 2026-08-29):
+
+| Spec | Reality | Status |
+|---|---|---|
+| Frames are resized + JPEG-compressed, served as `multipart/x-mixed-replace` to a native `<img>` | Full **PNG** (`screencap -p`, ~0.5 MB/frame) pushed over **WebSocket** into a blob URL | **must-fix** — this is most of why live view feels heavier than the reference implementation |
+| Capture runs **on the agent**, beside the device | `adb` is spawned by the **hub backend** (`modules/streaming/sources/*`); the agent does discovery and installs only | **must-fix** — this silently limits the farm to devices attached to the hub's own machine. A device on a remote agent host cannot be streamed at all. |
+| Dedicated stream port (`STREAM_WS_PORT`) to dodge the 6-connections-per-origin ceiling | Unified onto the main API origin; the config was deliberately removed | **accepted** — a deliberate later decision, not drift. Re-measure contention before reversing it. |
+| Tab-visibility pause | Not implemented; the 10-min idle grace applies to *zero viewers*, not a backgrounded tab | **temporary** |
+| Newest-frame-wins backpressure | Frames are not dropped for a slow consumer | **temporary** |
+| iOS simulator capture + cap | Interfaces exist; nothing populates them (no Mac). The cap's `isSimulator` write-path bug was fixed 2026-08-29. | **blocked** on hardware |
+| H264 | Capture and relay work; browser playback is unverified and appears blocked by emulator encoder non-conformance | **blocked** on hardware |
+
+Note the module is named `mjpeg` throughout while actually emitting PNG — the name describes the intended design above, not current behaviour.
 **Blueprint ref:** [architecture-blueprint.md §4 (StreamSession), §12a](../architecture-blueprint.md)
 **Competitive context:** [competitive-analysis.md §4a, §4d](../competitive-analysis.md)
 

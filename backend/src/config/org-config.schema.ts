@@ -62,6 +62,10 @@ const automationConfigSchema = z
     configPath: z.string().optional(),
     envFile: z.string().optional(),
     testDir: z.string().optional(),
+    // Unset by default: execution.service.ts's pulling/restoring_cache stages
+    // stay the existing honest not-implemented stub until an org opts in by
+    // setting this — no behavior change for anyone who hasn't configured it.
+    repoUrl: z.string().optional(),
   })
   .strict();
 
@@ -87,7 +91,7 @@ export interface EffectiveConfig {
     retention: { keepPerGroup: number; olderThanDays: number | null };
   };
   devices: { lockTtlMinutes: number | null };
-  automation: { framework: string; configPath: string; envFile: string; testDir: string };
+  automation: { framework: string; configPath: string; envFile: string; testDir: string; repoUrl: string | null };
 }
 
 export const PLATFORM_DEFAULTS: EffectiveConfig = {
@@ -103,5 +107,5 @@ export const PLATFORM_DEFAULTS: EffectiveConfig = {
   // 45 min: long enough for someone actively testing on a device, short
   // enough that a crashed/forgotten client doesn't hold it all day.
   devices: { lockTtlMinutes: 45 },
-  automation: { framework: 'appium', configPath: 'wdio.conf.js', envFile: '.env', testDir: 'test' },
+  automation: { framework: 'appium', configPath: 'wdio.conf.js', envFile: '.env', testDir: 'test', repoUrl: null },
 };

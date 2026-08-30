@@ -10,7 +10,15 @@ const envSchema = z.object({
   MONGODB_URI: z.string().min(1, 'MONGODB_URI is required'),
   JWT_SECRET: z.string().min(32, 'JWT_SECRET must be at least 32 characters'),
   API_PORT: z.coerce.number().int().positive().default(3000),
+  // Ephemeral per-run working directory: git checkout, restored node_modules,
+  // scratch files. Deleted when the run ends.
   EXECUTIONS_DIR: z.string().default(path.join(os.homedir(), 'mobile-hub-executions')),
+  // Durable per-run artifacts: run.log, and later the Allure report. Kept
+  // after the run so history stays readable. Deliberately a separate root
+  // from EXECUTIONS_DIR — they had the same lifetime before, which made
+  // "delete the workspace when the run ends" and "serve a finished run's log"
+  // mutually exclusive requirements.
+  EXECUTION_ARTIFACTS_DIR: z.string().default(path.join(os.homedir(), 'mobile-hub-artifacts')),
   BUILDS_DIR: z.string().default(path.join(os.homedir(), 'mobile-hub-builds')),
   // Global request cap per IP. The default suits a small lab; a busy one
   // (many hosts heartbeating every 10s, several browsers polling, an E2E

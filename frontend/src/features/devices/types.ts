@@ -18,4 +18,12 @@ export interface Device {
   lock: DeviceLock | null;
   isLocallyReachable: boolean;
   lastSeenAt: string;
+  /**
+   * An install is in flight on this device right now.
+   *
+   * Derived server-side per request, not stored: installs deliberately take no
+   * device lock, so `status` stays `idle` throughout one. Without this flag a
+   * device being actively reinstalled looked free to grab.
+   */
+  activeInstall?: boolean;
 }

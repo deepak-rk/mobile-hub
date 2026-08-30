@@ -8,6 +8,9 @@ Compare what you actually built against what was stated:
 
 - Does it match root `CLAUDE.md`'s locked decisions and "Do this, not that" rules, and the relevant package `CLAUDE.md`?
 - Does it match `docs/architecture-blueprint.md` for anything that touches an area it covers (schema shape, config model, provider interfaces)?
+- **If the module has a `docs/modules/<name>.md`, diff the implementation against it now** — field by field for anything that document specifies concretely (formulas, transports, interfaces, file layout, API paths). Record every deviation with a reason: a deviation with a stated reason is a decision, one without is drift. Update that file's status header too — a spec still reading "planned — no code written" on a built module misleads the next session into treating it as a future plan. (Added 2026-08-29 after ~12 unrecorded deviations were found in `execution` alone, including one the spec had explicitly warned against — see `LESSONS.md`.)
+- Where a spec or `CLAUDE.md` states a *rationale* — especially "this exact shortcut caused a real incident before" — treat it as a hard constraint, not background context.
+- **Update the affected rows in `docs/SOURCE_FEATURE_TRACEABILITY.md`.** That file is the only place recording whether a reference capability was *deliberately* dropped versus quietly lost. A module spec can be diffed against the code and still be missing a requirement that was dropped while the spec was being written — this catches that layer. A row moves to DONE only when verified against running code, same bar as `TODO.md`'s ✅.
 - Did anything creep in that wasn't asked for — an abstraction the task didn't need, a dependency not discussed, a refactor bundled into an unrelated change?
 - Did you duplicate a pattern that already exists elsewhere in the repo instead of reusing it?
 
@@ -33,3 +36,5 @@ If something drifted, fix it now or flag it to the user — don't let it quietly
 ## 5. Checklist sync
 
 - Update `TODO.md` so it reflects reality before you stop — this is the last step, not a separate task to remember later.
+- **Then search `TODO.md` for older statements about the same capability and reconcile them in the same change.** Adding a new true row while an older, now-false row survives is worse than either alone: a future session reads both and cannot tell which is current. Useful searches: the feature's own name, plus `planned`, `no code written`, `not built`, `deliberately not`, `deferred`. (Added 2026-08-29 — an external review found exactly this contradiction pattern surviving the previous round's cleanup.)
+- A tracker describes **current truth**. Keep superseded history only where it is explicitly labelled as superseded.

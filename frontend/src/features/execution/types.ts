@@ -17,6 +17,13 @@ export interface ExecutionRun {
   suite: string;
   triggeredBy: string;
   status: RunStatus;
+  /**
+   * Why a `failed` run failed — mirrors FailureKind in the backend's
+   * execution-run.model.ts. Only `'test'` is attributable to the application;
+   * the other two are excluded from pass rate. `null` on non-failed runs and
+   * on runs predating this field.
+   */
+  failureKind: 'test' | 'infra' | 'precondition' | null;
   stages: RunStage[];
   startedAt: string | null;
   endedAt: string | null;

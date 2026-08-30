@@ -1,6 +1,20 @@
 # Module: Analytics & Reporting
 
-**Status:** planned — no code written (targeted for V2, possible V1 pull-forward).
+**Status:** partially built — **this document is the spec, not a description of what exists.**
+
+Built and verified: daily and weekly pre-aggregation (`AnalyticsAggregate`), `byDevice`/`bySuite` breakdowns, hourly recompute scheduling, the filtered read API, and a frontend KPI strip with URL-synced filters.
+
+**Known deviations** (audit 2026-08-29):
+
+| Spec | Reality | Status |
+|---|---|---|
+| Pass rate reflects test outcomes | **Fixed 2026-08-29.** Runs now carry `failureKind` (`test`/`infra`/`precondition`), and pass rate is computed over attributable runs only — a device-locked rejection or a backend restart no longer drags a healthy suite's rate down. Totals still count every run, so lab problems stay visible. | **accepted** |
+| Suite `flakiness` = variation in pass rate across a window | Still hardcoded `0`. Genuinely blocked on something upstream: `suite` is free-typed text, so `smoke` / `Smoke` / `@smoke` are three different suites and any variance figure computed over them would be noise. Needs canonical suite identity (`SuiteProvider`) first. | **must-fix, ordered behind SuiteProvider** |
+| Platform attribution per run | Joined from the **current** `Device` record at aggregation time, so deleting a device retroactively changes historical numbers. Should be snapshotted onto `ExecutionRun` at creation. | **must-fix** |
+| Weekly window selectable in the UI | Backend computes it; the frontend has no `window` selector, so it cannot be asked for. | **temporary** |
+| Trend charts, failure-reason panel, device utilisation | Not built. Recharts is the chosen library — do not add a second one. | **temporary** |
+| Journey / time-window correlation | Deliberately not built; correlate by run id only. | **superseded** |
+| No realtime | Hourly aggregation, by design. | **accepted** |
 **Blueprint ref:** [architecture-blueprint.md §4 (AnalyticsAggregate), §5 (AnalyticsService), §12d](../architecture-blueprint.md)
 **Competitive context:** [competitive-analysis.md §4f](../competitive-analysis.md)
 

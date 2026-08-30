@@ -25,6 +25,10 @@ export type StatusKind =
   | 'corrupt'
   | 'ready'
   | 'purged'
+  // device install target
+  | 'installing'
+  | 'done'
+  | 'error'
   // host
   | 'online'
   // agent credential
@@ -72,6 +76,11 @@ export const statusMeta: Record<StatusKind, StatusMeta> = {
   // Agent credentials
   active: { label: 'Active', token: '--status-passed', icon: icons.credential },
   revoked: { label: 'Revoked', token: '--status-cancelled', icon: icons.offline },
+
+  // Device install targets
+  installing: { label: 'Installing', token: '--status-running', icon: icons.running, active: true },
+  done: { label: 'Done', token: '--status-passed', icon: icons.passed },
+  error: { label: 'Error', token: '--status-failed', icon: icons.failed },
 };
 
 export function getStatusMeta(status: string): StatusMeta {

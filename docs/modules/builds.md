@@ -1,6 +1,10 @@
 # Module: Builds Library
 
-**Status:** planned — no code written.
+**Status:** partially built — **this document is the spec, not a description of what exists.**
+
+Built and verified: the `Build` model, the `BuildProvider` interface with a working `url` adapter (which also accepts `file://`), the streamed-checksum integrity gate that `status: 'ready'` depends on, retention/GC, and artifact byte-serving for the agent.
+
+**Not built, or built differently from what's written below** — `BuildProvider.listBuilds()` (so there is no build *discovery*, only what someone POSTs), the `InstallJob` progress/WS pipeline (the model is written by nothing), the concurrent-fetch race guard, and the Nexus/S3/webhook adapters. Note that installing a build *onto a device* is a separate module (`device-installs`) built 2026-08-29, not the `InstallJob` described here. `docs/TODO.md` § "Spec & reference drift" holds the authoritative diff.
 **Blueprint ref:** [architecture-blueprint.md §4 (Build, InstallJob), §11 (BuildProviderRegistry), §12b](../architecture-blueprint.md)
 **Competitive context:** [competitive-analysis.md §4g, §4h](../competitive-analysis.md)
 

@@ -1,6 +1,8 @@
+import * as fs from 'fs';
 import { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 import { getBuild, listBuilds, triggerBuildFetch } from './builds.service';
+import { requireAgentToken } from '../agent-auth/agent-auth';
 
 const triggerBody = z.object({
   project: z.string().min(1),
@@ -20,6 +22,24 @@ export const buildsRoutes: FastifyPluginAsync = async (app) => {
     const build = await getBuild(id);
     if (!build) return reply.status(404).send({ code: 'NOT_FOUND', message: 'Build not found' });
     return build;
+  });
+
+  // Agent-authenticated, not user-authenticated: the device agent fetches
+  // the artifact bytes directly, on behalf of no particular user. Streams
+  // rather than buffers — build artifacts run to hundreds of MB.
+  app.get('/:id/artifact', { preHandler: requireAgentToken }, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const build = await getBuild(id);
+    if (!build) return reply.status(404).send({ code: 'NOT_FOUND', message: 'Build not found' });
+    if (build.status !== 'ready' || !build.artifactPath) {
+      return reply.status(409).send({ code: 'BUILD_NOT_READY', message: `Build is '${build.status}', not 'ready'` });
+    }
+    const stat = fs.statSync(build.artifactPath);
+    return reply
+      .header('Content-Type', 'application/octet-stream')
+      .header('Content-Length', stat.size)
+      .header('Content-Disposition', `attachment; filename="${build.id as string}"`)
+      .send(fs.createReadStream(build.artifactPath));
   });
 
   app.post(
