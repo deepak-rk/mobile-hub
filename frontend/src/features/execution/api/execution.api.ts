@@ -101,7 +101,11 @@ export interface TriggerRunInput {
   branch: string;
   suite: string;
   setup?: { command: string; args: string[] };
-  run: { command: string; args: string[] };
+  /**
+   * Omit to use the project's configured run command. Only a project with no
+   * automation config still requires one, which the backend rejects clearly.
+   */
+  run?: { command: string; args: string[] };
 }
 
 export function useTriggerRun() {

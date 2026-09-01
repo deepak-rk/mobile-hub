@@ -16,6 +16,20 @@ export function useBuilds() {
  * catalog and can be fetched again. The backend refuses (409) while an install
  * is still reading the file.
  */
+/**
+ * Downloads a purged build's artifact again from the source on its record.
+ * The counterpart to purge — without it, reclaiming space was one-way.
+ */
+export function useRefetchBuild() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (buildId: string) => (await api.post<Build>(`/builds/${buildId}/refetch`)).data,
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['builds'] });
+    },
+  });
+}
+
 export function usePurgeBuild() {
   const qc = useQueryClient();
   return useMutation({

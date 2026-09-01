@@ -75,6 +75,11 @@ export function TriggerRunForm() {
     );
   }
 
+  // A declared project carries its own automation config, so the backend can
+  // build the commands. One known only from run history cannot, and still
+  // needs a command typed in.
+  const configuredProject = projects?.find((p) => p.id === project)?.declared ?? false;
+
   // Only devices that can actually take a run — the backend rejects a locked
   // device with 409, so offering one would just produce a confusing failure.
   const availableDevices = devices?.filter((d) => !d.lock && d.status !== 'offline' && d.status !== 'unreachable');
@@ -108,11 +113,11 @@ export function TriggerRunForm() {
     e.preventDefault();
     setFormError(null);
 
+    // No longer required: a configured project declares how it installs and
+    // runs, and the backend derives both. Only a project that declares nothing
+    // still needs a command typed here, and the backend says so with a 400
+    // naming the two ways out.
     const run = parseCommand(runCmd);
-    if (!run) {
-      setFormError('A run command is required.');
-      return;
-    }
     const device = devices?.find((d) => d.udid === deviceUdid);
     if (!device) {
       setFormError('Select a device.');
@@ -127,7 +132,9 @@ export function TriggerRunForm() {
         branch: branch.trim(),
         suite: suite.trim(),
         setup: parseCommand(setupCmd) ?? undefined,
-        run,
+        // Omitted rather than sent empty, so the backend falls back to the
+        // project's configured command instead of being handed nothing.
+        run: run ?? undefined,
       },
       { onSuccess: (created) => navigate(`/execution/${created._id}`) },
     );
@@ -259,18 +266,21 @@ export function TriggerRunForm() {
           </div>
 
           <Field
-            label="Setup command"
+            label="Setup command (override)"
             value={setupCmd}
-            placeholder="npm ci"
-            hint="Optional. Runs before the suite, in the run's workspace."
+            placeholder={configuredProject ? 'From project config' : 'npm ci'}
+            hint="Leave blank to use the project's configured install step."
             onChange={(e) => setSetupCmd(e.target.value)}
           />
           <Field
-            label="Run command"
+            label="Run command (override)"
             value={runCmd}
-            placeholder="npx wdio run wdio.conf.js"
-            required
-            hint="Executed directly — not through a shell, so pipes and redirects won't work."
+            placeholder={configuredProject ? 'From project config' : 'npx wdio run wdio.conf.js'}
+            hint={
+              configuredProject
+                ? "Leave blank — this project's framework and config file decide how the suite runs."
+                : 'This project is not configured, so a command is required. Executed directly, not through a shell.'
+            }
             onChange={(e) => setRunCmd(e.target.value)}
           />
 

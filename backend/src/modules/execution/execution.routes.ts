@@ -14,6 +14,11 @@ import {
   triggerExecutionRun,
 } from './execution.service';
 import { subscribeToExecutionEvents } from './execution.events';
+import {
+  resolveInstallCommand,
+  resolveRunCommand,
+  UnsupportedFrameworkError,
+} from './automation-commands';
 import { ExecutionRun } from './execution-run.model';
 import type { JwtPayload } from 'fastify-auth-kit';
 
@@ -26,8 +31,11 @@ const triggerBody = z.object({
   project: z.string().min(1),
   branch: z.string().min(1),
   suite: z.string().min(1),
+  // Both optional now: a configured project already declares how it installs
+  // and runs, so making the operator retype it was the config not being used.
+  // Supplying them still wins, for a one-off that differs from the config.
   setup: commandSchema.optional(),
-  run: commandSchema,
+  run: commandSchema.optional(),
 });
 
 export const executionRoutes: FastifyPluginAsync = async (app) => {
@@ -93,11 +101,23 @@ export const executionRoutes: FastifyPluginAsync = async (app) => {
         // A declared project's own automation block wins over the org default —
         // that per-project override is the entire point of declaring one.
         const automation = app.config.projects[body.data.project]?.automation ?? app.config.automation;
-        const run = await triggerExecutionRun({ ...body.data, triggeredBy: req.user.sub }, automation);
+        // Config decides how to install and run unless this trigger overrode it.
+        const setup = body.data.setup ?? resolveInstallCommand(automation) ?? undefined;
+        const runCommand = body.data.run ?? resolveRunCommand(automation, body.data.suite);
+
+        const run = await triggerExecutionRun(
+          { ...body.data, setup, run: runCommand, triggeredBy: req.user.sub },
+          automation,
+        );
         return reply.status(201).send(run);
       } catch (err) {
         if (err instanceof DeviceLockedError) {
           return reply.status(409).send({ code: 'DEVICE_LOCKED', message: err.message });
+        }
+        // Nothing was configured and nothing was supplied — a 400 naming both
+        // ways out, rather than a run that fails later with a vaguer reason.
+        if (err instanceof UnsupportedFrameworkError) {
+          return reply.status(400).send({ code: 'NO_RUN_COMMAND', message: err.message });
         }
         throw err;
       }

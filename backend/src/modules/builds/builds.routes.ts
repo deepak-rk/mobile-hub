@@ -8,6 +8,7 @@ import {
   getBuild,
   listBuilds,
   purgeBuildArtifact,
+  refetchBuild,
   startBuildFetch,
   triggerBuildFetch,
 } from './builds.service';
@@ -97,6 +98,39 @@ export const buildsRoutes: FastifyPluginAsync = async (app) => {
         return reply.status(409).send({ code: 'BUILD_NOT_PURGEABLE', message: err.message });
       }
       throw err;
+    }
+  });
+
+  /**
+   * Re-downloads a purged build's artifact from its original source.
+   *
+   * A purged build keeps its record — project, version and the URL it came
+   * from — so getting the file back needs no new input. Without this, "remove
+   * local copy" was effectively permanent and the dialog's promise that it
+   * "can be fetched again" was untrue.
+   */
+  app.post('/:id/refetch', { preHandler: app.requireRole('operator', 'admin') }, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const build = await getBuild(id);
+    if (!build) return reply.status(404).send({ code: 'NOT_FOUND', message: 'Build not found' });
+    if (build.status === 'ready') {
+      return reply.status(409).send({ code: 'ALREADY_READY', message: 'This build is already on disk.' });
+    }
+    if (!build.artifactUrl) {
+      // Nothing records where it came from, so there is nowhere to fetch from.
+      return reply
+        .status(409)
+        .send({ code: 'NO_SOURCE', message: 'This build has no source URL to re-fetch from.' });
+    }
+
+    try {
+      const refetched = await refetchBuild(app.config, build);
+      return refetched;
+    } catch (err) {
+      req.log.error(err, 'Build re-fetch failed');
+      return reply
+        .status(502)
+        .send({ code: 'BUILD_FETCH_FAILED', message: err instanceof Error ? err.message : 'Build re-fetch failed' });
     }
   });
 

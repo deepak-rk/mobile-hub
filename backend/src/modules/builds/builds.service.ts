@@ -308,6 +308,33 @@ async function purgeArtifact(build: IBuild): Promise<void> {
   await build.save();
 }
 
+/**
+ * Re-downloads an existing build's artifact from the source already on its
+ * record, reusing the same integrity gate a first fetch goes through.
+ *
+ * Reuses the existing row rather than creating a new one: the version's
+ * identity, and anything referencing it, must survive a purge/refetch cycle —
+ * a second row would make the same build appear twice in the catalog.
+ */
+export async function refetchBuild(config: EffectiveConfig, build: IBuild): Promise<IBuild> {
+  build.status = 'downloading';
+  build.downloadedBytes = 0;
+  build.purgedAt = null;
+  await build.save();
+  publishBuildEvent(build.id as string, { type: 'status', status: 'downloading' });
+
+  return runFetch(
+    config,
+    {
+      project: build.project,
+      platform: build.platform,
+      version: build.version,
+      artifactUrl: build.artifactUrl,
+    },
+    build,
+  );
+}
+
 export class BuildNotPurgeableError extends Error {
   constructor(message: string) {
     super(message);

@@ -6,7 +6,7 @@ import { formatBytes, formatRelative } from 'ts-format-utils';
 import { useAuth } from '@/features/auth/useAuth';
 import { InstallDialog } from '@/features/device-installs/components/InstallDialog';
 import type { ApiError } from '@/services/api';
-import { usePurgeBuild } from '../api/builds.api';
+import { usePurgeBuild, useRefetchBuild } from '../api/builds.api';
 import type { Build } from '../types';
 import styles from './BuildDetailDialog.module.css';
 
@@ -22,6 +22,7 @@ export function BuildDetailDialog({ build, onClose }: { build: Build | null; onC
   const [installOpen, setInstallOpen] = useState(false);
   const [confirmPurge, setConfirmPurge] = useState(false);
   const purge = usePurgeBuild();
+  const refetch = useRefetchBuild();
   const { can } = useAuth();
 
   function copyChecksum() {
@@ -50,6 +51,14 @@ export function BuildDetailDialog({ build, onClose }: { build: Build | null; onC
               <Button size="sm" variant="destructive" onClick={() => setConfirmPurge(true)}>
                 <icons.remove size={iconSize.dense} aria-hidden="true" />
                 Remove local copy
+              </Button>
+            ) : null}
+            {/* The way back from a purge. Offered only when there is a source
+                recorded to fetch from, so it can never be a button that fails. */}
+            {build && build.status !== 'ready' && build.artifactUrl && can('operator', 'admin') ? (
+              <Button size="sm" disabled={refetch.isPending} onClick={() => refetch.mutate(build._id)}>
+                <icons.downloading size={iconSize.dense} aria-hidden="true" />
+                {refetch.isPending ? 'Downloading…' : 'Download again'}
               </Button>
             ) : null}
             {build?.status === 'ready' && can('operator', 'admin') ? (

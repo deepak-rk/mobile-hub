@@ -56,6 +56,9 @@ const deviceConfigSchema = z
   })
   .strict();
 
+/** A command as argv, never a shell string — nothing here is shell-interpreted. */
+const commandSchema = z.object({ command: z.string().min(1), args: z.array(z.string()).default([]) }).strict();
+
 const automationConfigSchema = z
   .object({
     framework: z.string().optional(),
@@ -66,6 +69,12 @@ const automationConfigSchema = z
     // stay the existing honest not-implemented stub until an org opts in by
     // setting this — no behavior change for anyone who hasn't configured it.
     repoUrl: z.string().optional(),
+    // Explicit commands, for a project whose framework this platform can't
+    // build an invocation for, or one that simply wants something else. When
+    // unset they are derived from `framework`/`configPath` — see
+    // modules/execution/automation-commands.ts.
+    install: commandSchema.optional(),
+    run: commandSchema.optional(),
   })
   .strict();
 
@@ -117,12 +126,20 @@ export interface EffectiveConfig {
   projects: Record<string, ProjectConfig>;
 }
 
+export interface AutomationCommand {
+  command: string;
+  args: string[];
+}
+
 export interface AutomationConfig {
   framework: string;
   configPath: string;
   envFile: string;
   testDir: string;
   repoUrl: string | null;
+  /** Overrides the command derived from `framework`; null means derive it. */
+  install: AutomationCommand | null;
+  run: AutomationCommand | null;
 }
 
 export interface ProjectConfig {
@@ -185,7 +202,16 @@ export const PLATFORM_DEFAULTS: EffectiveConfig = {
   // 45 min: long enough for someone actively testing on a device, short
   // enough that a crashed/forgotten client doesn't hold it all day.
   devices: { lockTtlMinutes: 45 },
-  automation: { framework: 'appium', configPath: 'wdio.conf.js', envFile: '.env', testDir: 'test', repoUrl: null },
+  automation: {
+    framework: 'appium',
+    configPath: 'wdio.conf.js',
+    envFile: '.env',
+    testDir: 'test',
+    repoUrl: null,
+    // Derived from framework/configPath unless an org declares otherwise.
+    install: null,
+    run: null,
+  },
   // No projects until an org declares them. The trigger form falls back to
   // free text in that case rather than offering an empty dropdown.
   projects: {},

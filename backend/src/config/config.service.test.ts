@@ -74,6 +74,8 @@ describe('project resolution', () => {
       envFile: '.env',
       testDir: 'test',
       repoUrl: 'https://example.com/org-default.git',
+      install: null,
+      run: null,
     };
 
     const resolved = resolveProjects(
