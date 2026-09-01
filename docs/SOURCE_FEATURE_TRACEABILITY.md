@@ -94,9 +94,10 @@ The reviews were *right* about everything I could verify that wasn't stale — i
 | **Allure: collect / generate / serve** | **REIMPLEMENT** | ✅ `reportPath` is declared on the interface *and* the schema and **written by nothing**; no `/report` route; `@fastify/static` installed and unused. Two-stage loss: the reference generated the report *and* extracted a summary; the spec reduced it to "runner generates, hub serves"; the implementation did neither. |
 | **`testSummary` extraction** (total/passed/failed/broken/skipped) | **REIMPLEMENT** | ✅ Absent everywhere. **This is the sharpest finding in the external reviews.** Run-level and test-case-level pass rates answer different questions: a run with 143/145 passing is *0%* at run level and *98.6%* at test level. `failureKind` (shipped) fixed infra-vs-test contamination but not this — a suite where 1 of 200 tests flakes still looks identical to one where all 200 fail. |
 | **`automation.env` injection** | **REIMPLEMENT** | ✅ Not built. Needs real security design: secret *references* not inline ciphertext, allow-listed child env (supervisor already defaults to no inheritance), redaction from logs. This workspace has already seen a child leak its inherited env into a crash log. |
-| **`automation.install` as a declared step** | **REIMPLEMENT** | ✅ Not built. Today a caller typing `npm ci` in `setup` silently wipes the restored cache, defeating the whole cache. |
-| **`automation.framework` / `configPath` / `envFile` / `testDir`** | **REIMPLEMENT** | ✅ **Confirmed inert** — only `repoUrl` is read anywhere in the codebase. *A config key that is accepted and ignored is worse than one that doesn't exist: it creates false confidence.* |
-| **`SuiteProvider` — real suite discovery** | **REIMPLEMENT** | ✅ `suite` is free text selecting nothing. Also **blocks trustworthy flakiness**: `smoke` / `Smoke` / `@smoke` are three suites, so variance across them is noise. Canonical suite identity first. |
+| **`automation.install` as a declared step** | **DONE** 2026-09-01 | ✅ Declared in config, defaulting to `npm ci` for known frameworks. The cache tension is now explicit rather than accidental: `npm ci` deletes `node_modules` and so discards a restored cache, which is why a project wanting the cache to count declares `install: npm install`. That tradeoff is the org’s, so it is a config key. |
+| **`automation.framework` / `configPath` / `testDir`** | **DONE** 2026-09-01 | ✅ Were inert — only `repoUrl` was read, which is why operators still typed `npm ci` and `npx wdio run …` by hand. `framework` + `configPath` now build both commands (`automation-commands.ts`); `testDir` drives suite discovery. Verified live: a trigger carrying no commands at all cloned, cached, installed and ran. |
+| `automation.envFile` | **REIMPLEMENT** | ✅ Still inert. The runner loads its own `.env` today, so consuming this properly means deciding what the hub injects — which belongs with `automation.env` below, not on its own. |
+| **`SuiteProvider` — real suite discovery** | **DONE** 2026-09-01 | ✅ `SuiteProvider` + `CucumberSuiteProvider` read `.feature` files under the configured `testDir` (statically — never importing the checkout). Offers tags and feature files; shallow checkout cached between calls. Live-verified: three real features discovered from the automation repo with their Gherkin titles, surfaced as a dropdown. **Still open for flakiness**: suite ids are now stable and real, but nothing yet prevents the same logical suite being addressed as both a tag and a feature path. |
 | Entity / tag as real run inputs | **REIMPLEMENT** | Downstream of `SuiteProvider`. |
 | Searchable branch picker + last-commit metadata | **ADAPT** | `git ls-remote --heads` when `repoUrl` is set. No vendor Graph API. |
 | **Appium orchestration** | **REIMPLEMENT** | ✅ Zero Appium awareness — no session, capabilities, WebDriver protocol, or server lifecycle. **The boundary between "command runner with device locking" and "mobile test farm."** Gates Allure and `testSummary` being anything real. Sibling repos `appium-server-setup` / `wdio-mobile-appium-automation` are the integration input. |
@@ -188,8 +189,8 @@ Sequenced by: *lies and safety gaps first, then unblocking chains, then features
 
 ### P3 — the real product loop (each unblocks the next)
 
-12. **`automation.install` + secure `automation.env`** (secret refs, allow-listed env, redaction).
-13. **`SuiteProvider`** → canonical suite identity → entity/tag as real inputs → branch picker.
+12. ~~**`automation.install`**~~ **done 2026-09-01.** Still open: **secure `automation.env`** — secret references rather than inline ciphertext, an allow-listed child environment, redaction from logs. The supervisor already defaults to no env inheritance, which is the hard half.
+13. ~~**`SuiteProvider`**~~ **done 2026-09-01** for Cucumber/WDIO. Still open downstream: **canonical suite identity** (a tag and a feature path can name overlapping sets, so flakiness across them is not yet trustworthy), entity/tag as first-class inputs, and a branch picker via `git ls-remote --heads`.
 14. **Appium orchestration** — the boundary between command runner and test farm.
 15. **`testSummary` extraction** from Allure results → test-case-level analytics, failure-reason aggregation.
 16. **`BuildProvider.listBuilds()`** + build provenance → then changelog with the reference's safeguards.
@@ -211,3 +212,17 @@ This file has exactly one failure mode: going stale, which is the disease it was
 
 - `docs/SELF_REVIEW.md` § 1 requires updating a row here whenever a module with a `docs/modules/*.md` changes.
 - A row moves to **DONE** only when verified against running code — the same bar `TODO.md` uses for ✅, for the same reason (three separate "status outran reality" incidents are already recorded in `LESSONS.md`).
+
+---
+
+## Open items found while building the above (2026-09-01)
+
+Recorded when noticed rather than left to be rediscovered.
+
+| Item | Why it matters |
+|---|---|
+| **Config only loads at boot** | Editing `mobilehub.*.yaml` needs a backend restart. Hit repeatedly during verification, and an operator declaring a project will hit it too. A reload endpoint or a watch is small; the trap is any cached derivation (like `projects`) going stale with it. |
+| **Analytics' project filter is still free text** | The trigger form has a real dropdown now, so the two disagree about whether projects are an enumerable thing. |
+| **Suite identity is not canonical** | A tag and a feature path can select overlapping sets, so `bySuite` aggregation counts them as unrelated suites. Flakiness stays untrustworthy until one logical suite has one id. |
+| **Appium is still not orchestrated** | The derived `npx wdio run …` needs a server already listening. Everything up to the runner now works from config, which makes this the single remaining gap between "runs a command" and "runs a mobile test". |
+| **`sdk_gphone64_x86_64` on the device detail page** | Suppressed on cards as noise; kept under an explicit "Model" label on the detail page. Open question rather than a defect — awaiting a call on whether it earns its place there. |
