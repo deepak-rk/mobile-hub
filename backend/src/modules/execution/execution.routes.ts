@@ -19,6 +19,7 @@ import {
   resolveRunCommand,
   UnsupportedFrameworkError,
 } from './automation-commands';
+import { discoverSuites, SuiteDiscoveryError } from './suites/suites.service';
 import { ExecutionRun } from './execution-run.model';
 import type { JwtPayload } from 'fastify-auth-kit';
 
@@ -77,6 +78,36 @@ export const executionRoutes: FastifyPluginAsync = async (app) => {
     }
     const projects = [...byId.values()].sort((a, b) => a.displayName.localeCompare(b.displayName));
     return { projects };
+  });
+
+  /**
+   * Runnable suites for a project, read from its automation repo.
+   *
+   * Also declared before `/:id`, for the same reason `projects` is.
+   * `?refresh=1` bypasses the cache, for when someone just pushed a suite.
+   */
+  app.get('/projects/:projectId/suites', async (req, reply) => {
+    const { projectId } = req.params as { projectId: string };
+    const { refresh } = req.query as { refresh?: string };
+    const project = app.config.projects[projectId];
+    if (!project) {
+      return reply
+        .status(404)
+        .send({ code: 'PROJECT_NOT_CONFIGURED', message: `No project '${projectId}' is declared in config.` });
+    }
+
+    try {
+      const suites = await discoverSuites(projectId, project.automation, { refresh: Boolean(refresh) });
+      return { suites };
+    } catch (err) {
+      if (err instanceof SuiteDiscoveryError) {
+        // 200 with an explanation, not an error status: "we can't list suites
+        // for this project" is a normal state the form handles by falling back
+        // to a text field, not a failure of the request.
+        return { suites: [], unavailable: err.message };
+      }
+      throw err;
+    }
   });
 
   app.get('/:id', async (req, reply) => {

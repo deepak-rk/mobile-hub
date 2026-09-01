@@ -94,6 +94,35 @@ export function useProjects() {
   });
 }
 
+export interface DiscoveredSuite {
+  id: string;
+  name: string;
+  kind: 'tag' | 'feature';
+  file?: string;
+  fileCount?: number;
+}
+
+/**
+ * Suites this project can actually run, read from its automation repo.
+ *
+ * `unavailable` is a normal answer, not an error: a project with no repo, or
+ * one whose framework has no discovery adapter, simply can't be enumerated —
+ * the form falls back to a text field and says why.
+ */
+export function useSuites(projectId: string | undefined) {
+  return useQuery({
+    queryKey: ['execution', 'suites', projectId],
+    queryFn: async () =>
+      (await api.get<{ suites: DiscoveredSuite[]; unavailable?: string }>(`/execution/projects/${projectId}/suites`))
+        .data,
+    enabled: Boolean(projectId),
+    // Discovery clones or fetches a repo; re-running it because a component
+    // remounted would make the form feel broken.
+    staleTime: 5 * 60_000,
+    retry: false,
+  });
+}
+
 export interface TriggerRunInput {
   machineId: string;
   deviceUdid: string;

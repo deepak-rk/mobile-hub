@@ -5,7 +5,7 @@ import type { ApiError } from '@/services/api';
 import { icons, iconSize } from '@/lib/icons';
 import { useAuth } from '@/features/auth/useAuth';
 import { useDevices } from '@/features/devices/api/devices.api';
-import { useProjects, useTriggerRun } from '../api/execution.api';
+import { useProjects, useSuites, useTriggerRun } from '../api/execution.api';
 import { useRunPresets } from '../hooks/useRunPresets';
 import styles from './TriggerRunForm.module.css';
 
@@ -46,6 +46,19 @@ export function TriggerRunForm() {
   const [presetDialogOpen, setPresetDialogOpen] = useState(false);
   const [presetName, setPresetName] = useState('');
 
+  // A declared project carries its own automation config, so the backend can
+  // build the commands. One known only from run history cannot, and still
+  // needs a command typed in.
+  const configuredProject = projects?.find((p) => p.id === project)?.declared ?? false;
+  // Above the early returns below, not beside the field it feeds: hooks must
+  // run in the same order on every render, and the sign-in and role guards
+  // return before that point.
+  const { data: suiteData, isFetching: suitesLoading } = useSuites(configuredProject ? project : undefined);
+  const suites = suiteData?.suites;
+  const suiteHint = suitesLoading
+    ? 'Reading suites from the automation repo…'
+    : (suiteData?.unavailable ?? (suites && suites.length === 0 ? 'No suites found in the repo — type one.' : ''));
+
   if (!user) {
     return (
       <Card>
@@ -74,11 +87,6 @@ export function TriggerRunForm() {
       </Card>
     );
   }
-
-  // A declared project carries its own automation config, so the backend can
-  // build the commands. One known only from run history cannot, and still
-  // needs a command typed in.
-  const configuredProject = projects?.find((p) => p.id === project)?.declared ?? false;
 
   // Only devices that can actually take a run — the backend rejects a locked
   // device with 409, so offering one would just produce a confusing failure.
@@ -238,7 +246,41 @@ export function TriggerRunForm() {
           </div>
 
           <div className={styles.row}>
-            <Field label="Suite" value={suite} required onChange={(e) => setSuite(e.target.value)} />
+            <div className={styles.field}>
+              <label className={styles.label} htmlFor="suite">
+                Suite
+              </label>
+              {/* A dropdown once the project's repo has been read. Falls back
+                  to free text when it can't be — no repo configured, an
+                  unknown framework, or a repo that simply has no feature
+                  files — with the reason shown rather than an empty select. */}
+              {suites && suites.length > 0 ? (
+                <select
+                  id="suite"
+                  className={styles.select}
+                  value={suite}
+                  required
+                  onChange={(e) => setSuite(e.target.value)}
+                >
+                  <option value="">Select a suite…</option>
+                  {suites.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.kind === 'tag' ? `${s.name} · ${s.fileCount ?? 0} features` : s.name}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <input
+                  id="suite"
+                  className={styles.select}
+                  value={suite}
+                  required
+                  placeholder={project ? 'Type a suite name' : 'Pick a project first'}
+                  onChange={(e) => setSuite(e.target.value)}
+                />
+              )}
+              {suiteHint ? <span className={styles.hint}>{suiteHint}</span> : null}
+            </div>
             <div className={styles.field}>
               <label className={styles.label} htmlFor="device">
                 Device ({availableDevices?.length ?? 0})
