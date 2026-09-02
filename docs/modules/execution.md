@@ -2,9 +2,9 @@
 
 **Status:** partially built — **this document is the spec, not a description of what exists.**
 
-Built and verified: the stage machine, real `git clone` (`pulling`) and a `node_modules` cache (`restoring_cache`) when `automation.repoUrl` is set, command execution, atomic device locking with guaranteed release, cancellation, orphan recovery on restart, and live stage/log push.
+Built and verified: the stage machine, real `git clone` (`pulling`) and a `node_modules` cache (`restoring_cache`) when `automation.repoUrl` is set, command execution, atomic device locking with guaranteed release, cancellation, orphan recovery on restart, live stage/log push, workspace cleanup, **Appium server orchestration** (per-device servers on persisted ports, adopt-don't-replace), **config-derived install and run commands** from `framework` + `configPath`, **`automation.env` injection** into an allow-listed, value-redacted child environment, real suite discovery, and **test-case-level results** parsed from the runner's Allure output.
 
-**Not built, or built differently from what's written below** — Allure reports, run-time `env` injection, `framework`-based runner dispatch, the propChain baton pattern, workspace cleanup, queue-with-backoff, SSE log transport, and the exact cache-key formula. `docs/TODO.md` § "Spec & reference drift" holds the authoritative line-by-line diff; keep it, not this header, current.
+**Not built, or built differently from what's written below** — Allure report *generation* (a report the runner writes is kept, but nothing here runs `allure generate`; since 2026-09-02 the raw results are parsed directly, so this costs no data), the propChain baton pattern (recorded accepted deviation), queue-with-backoff, SSE log transport, and the exact cache-key formula. **Corrected 2026-09-02:** this line also listed run-time `env` injection, `framework`-based runner dispatch, and workspace cleanup, all of which have since been built. `docs/TODO.md` § "Spec & reference drift" holds the authoritative line-by-line diff; keep it, not this header, current.
 **Blueprint ref:** [architecture-blueprint.md §4 (ExecutionRun), §6 (pipeline), §12c](../architecture-blueprint.md)
 **Competitive context:** [competitive-analysis.md §4c, §4e](../competitive-analysis.md)
 

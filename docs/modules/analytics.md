@@ -2,16 +2,16 @@
 
 **Status:** partially built — **this document is the spec, not a description of what exists.**
 
-Built and verified: daily and weekly pre-aggregation (`AnalyticsAggregate`), `byDevice`/`bySuite` breakdowns, hourly recompute scheduling, the filtered read API, and a frontend KPI strip with URL-synced filters.
+Built and verified: daily and weekly pre-aggregation (`AnalyticsAggregate`), `byDevice`/`bySuite` breakdowns, real per-suite flakiness, hourly recompute scheduling, the filtered read API, and a frontend KPI strip with URL-synced filters including a project dropdown and a daily/weekly window selector. Test-case-level counts (`totalTests`/`passedTests`/`testPassRate`) land since 2026-09-02, parsed from each run's Allure results.
 
 **Known deviations** (audit 2026-08-29):
 
 | Spec | Reality | Status |
 |---|---|---|
 | Pass rate reflects test outcomes | **Fixed 2026-08-29.** Runs now carry `failureKind` (`test`/`infra`/`precondition`), and pass rate is computed over attributable runs only — a device-locked rejection or a backend restart no longer drags a healthy suite's rate down. Totals still count every run, so lab problems stay visible. | **accepted** |
-| Suite `flakiness` = variation in pass rate across a window | Still hardcoded `0`. Genuinely blocked on something upstream: `suite` is free-typed text, so `smoke` / `Smoke` / `@smoke` are three different suites and any variance figure computed over them would be noise. Needs canonical suite identity (`SuiteProvider`) first. | **must-fix, ordered behind SuiteProvider** |
+| Suite `flakiness` = variation in pass rate across a window | **Computed for real since 2026-08-30** — stddev of the suite's daily pass rate over a trailing window, not the hardcoded `0` this row claimed until 2026-09-02. The upstream problem it named is still half-true, though: `SuiteProvider` (2026-09-01) made suite ids real and stable, so `smoke`/`Smoke`/`@smoke` is no longer the failure mode — but a Cucumber **tag** and a **feature path** can still select overlapping sets, so one logical suite can be counted as two. Trustworthy only once suite identity is canonical. | **computed; correctness still ordered behind canonical suite identity** |
 | Platform attribution per run | Joined from the **current** `Device` record at aggregation time, so deleting a device retroactively changes historical numbers. Should be snapshotted onto `ExecutionRun` at creation. | **must-fix** |
-| Weekly window selectable in the UI | Backend computes it; the frontend has no `window` selector, so it cannot be asked for. | **temporary** |
+| Weekly window selectable in the UI | **Fixed 2026-08-30** — the frontend has a Daily/Weekly selector, URL-synced with the other filters. This row survived as false until 2026-09-02; two external reviews repeated the claim from it. | **accepted** |
 | Trend charts, failure-reason panel, device utilisation | Not built. Recharts is the chosen library — do not add a second one. | **temporary** |
 | Journey / time-window correlation | Deliberately not built; correlate by run id only. | **superseded** |
 | No realtime | Hourly aggregation, by design. | **accepted** |
@@ -50,7 +50,14 @@ Surface actionable test health data: pass rates, run volume trends, flakiness sc
   passedRuns: number,
   failedRuns: number,
   cancelledRuns: number,
-  passRate: number,               // 0–1
+  passRate: number,               // 0–1, run level
+  // Test-case level, added 2026-09-02. Summed over the runs in this bucket
+  // that produced Allure results — a different question from passRate above:
+  // a run with 143/145 passing is one failed run and 143 passed tests.
+  totalTests: number,
+  passedTests: number,
+  testPassRate: number,           // 0–1; 0 both when everything failed and
+  runsWithTestResults: number,    // when nothing reported — this tells them apart
   avgDurationMs: number,
   byDevice: [
     {
