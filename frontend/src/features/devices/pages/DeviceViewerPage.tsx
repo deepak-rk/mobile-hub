@@ -16,6 +16,7 @@ import { useDevice } from '../api/devices.api';
 import { LockControls } from '../components/LockControls';
 import { DeviceStream, StreamStopButton } from '../components/DeviceStream';
 import { AppiumCapabilities } from '../components/AppiumCapabilities';
+import { modelDetail } from '../lib/deviceLabels';
 import { useAuth } from '@/features/auth/useAuth';
 import styles from './DeviceViewerPage.module.css';
 
@@ -23,6 +24,7 @@ export function DeviceViewerPage() {
   const { udid } = useParams<{ udid: string }>();
   const { data: device, isPending, error, refetch } = useDevice(udid);
   const { user } = useAuth();
+  const model = device ? modelDetail(device) : null;
 
   return (
     <Page>
@@ -69,7 +71,11 @@ export function DeviceViewerPage() {
                       term: 'Platform',
                       value: `${device.platform === 'ios' ? 'iOS' : 'Android'} ${device.osVersion}`,
                     },
-                    { term: 'Model', value: device.model },
+                    // Spread rather than a fixed row: an emulator's "model" is
+                    // a system image id, so it gets that label instead of a
+                    // false one, and a model that only repeats the name is
+                    // dropped entirely.
+                    ...(model ? [model] : []),
                     { term: 'Connection', value: device.connectionType },
                     { term: 'Reachable', value: device.isLocallyReachable ? 'Yes' : 'No' },
                     { term: 'Last seen', value: formatRelative(device.lastSeenAt) },

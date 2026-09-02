@@ -29,3 +29,22 @@ export function displayModel(device: Pick<Device, 'model' | 'name' | 'connection
   if (device.connectionType === 'emulator' || device.connectionType === 'simulator') return null;
   return model;
 }
+
+/**
+ * The same string for the device *detail* page, where hiding it is the wrong
+ * call — this is the diagnostic view, and "which system image is this AVD
+ * running" is a real question someone opens this page to answer.
+ *
+ * So the fix here is the label, not the value: `sdk_gphone64_x86_64` under a
+ * term reading "Model" is simply false, because it names an image rather than a
+ * product. Returns null only when the string genuinely says nothing.
+ */
+export function modelDetail(
+  device: Pick<Device, 'model' | 'name' | 'connectionType'>,
+): { term: string; value: string } | null {
+  const model = device.model?.trim();
+  if (!model || model.toLowerCase() === 'unknown') return null;
+  if (normalize(model) === normalize(device.name)) return null;
+  const emulated = device.connectionType === 'emulator' || device.connectionType === 'simulator';
+  return { term: emulated ? 'System image' : 'Model', value: model };
+}

@@ -158,3 +158,31 @@ export function useCancelRun(runId: string) {
     },
   });
 }
+
+export interface ConfigReloadResult {
+  reloaded: boolean;
+  projects: { added: string[]; removed: string[]; total: number };
+}
+
+/**
+ * Re-reads the org/project YAML on the hub.
+ *
+ * Lives beside the project query because that is the only place its effect is
+ * visible: config was boot-only, so declaring a project meant restarting the
+ * backend — which drops every live log stream and device capture with it.
+ * Invalidates the project list on success so the dropdown updates without a
+ * page reload, which is the whole point of the button.
+ */
+export function useReloadConfig() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async () => (await api.post<ConfigReloadResult>('/config/reload', {})).data,
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['execution', 'projects'] });
+      // A changed automation repo changes what suites exist, so the cached
+      // suite lists are stale too — they are keyed per project, hence the
+      // prefix rather than one key.
+      void qc.invalidateQueries({ queryKey: ['execution', 'suites'] });
+    },
+  });
+}

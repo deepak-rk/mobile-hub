@@ -66,6 +66,48 @@
   color: var(--text-tertiary);
 }
 
+/* Same size and weight as .hint, only recoloured: a failed reload is still a
+   hint about this field, not a form-level error, and .error's filled block
+   would overstate it. */
+.hintError {
+  font-size: var(--text-xs);
+  color: var(--status-failed);
+}
+
+/* Puts a control on the label's baseline without it reading as a second
+   field. `space-between` rather than a margin so the label keeps its own
+   alignment when the action is hidden for non-admins. */
+.labelRow {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.inlineAction {
+  border: none;
+  background: none;
+  padding: 0;
+  font-size: var(--text-xs);
+  color: var(--accent);
+  cursor: pointer;
+}
+
+.inlineAction:hover:not(:disabled) {
+  text-decoration: underline;
+}
+
+.inlineAction:disabled {
+  color: var(--text-tertiary);
+  cursor: default;
+}
+
+.inlineAction:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: var(--radius-control);
+}
+
 .error {
   padding: var(--space-3);
   border-radius: var(--radius-control);

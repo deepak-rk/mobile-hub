@@ -127,8 +127,12 @@ async function start(): Promise<void> {
 
   // Keeps BUILDS_DIR from growing forever — see builds.service.ts's
   // runBuildGc doc comment for the retention policy itself.
+  // `app.config`, not the boot-time `config` local: config is reloadable at
+  // runtime (POST /api/config/reload), and an interval closing over the
+  // original object would keep sweeping to a retention policy the operator
+  // already changed — the exact stale-derivation trap docs/TODO.md flagged.
   const buildGcInterval = setInterval(() => {
-    runBuildGc(config)
+    runBuildGc(app.config)
       .then(({ purged, failures }) => {
         if (purged > 0) app.log.info(`Build GC purged ${purged} old build artifact(s)`);
         for (const f of failures) app.log.error(`Build GC failed to remove ${f.buildId}: ${f.reason}`);
@@ -142,7 +146,7 @@ async function start(): Promise<void> {
   // whose holder crashed or walked away while the device kept heartbeating,
   // so it never went offline and that sweep never touched it.
   const deviceLockSweepInterval = setInterval(() => {
-    releaseExpiredLocks(config.devices.lockTtlMinutes)
+    releaseExpiredLocks(app.config.devices.lockTtlMinutes)
       .then((released) => {
         if (released > 0) app.log.info(`Released ${released} expired device lock(s)`);
       })

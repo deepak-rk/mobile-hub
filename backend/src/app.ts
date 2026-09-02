@@ -46,7 +46,20 @@ export async function buildApp(config: EffectiveConfig): Promise<FastifyInstance
   void app.register(cors, { origin: env.NODE_ENV === 'development' ? true : false });
   void app.register(rateLimit, { max: env.RATE_LIMIT_MAX, timeWindow: env.RATE_LIMIT_WINDOW });
 
-  app.decorate('config', config);
+  // A getter/setter pair, not a plain value, so POST /api/config/reload can
+  // actually swap it. Fastify gives each registered plugin an encapsulated
+  // instance that inherits decorators through the prototype chain, so a plain
+  // `app.config = next` inside the config plugin would define an own property
+  // on *that* scope and shadow it — the reload would look like it worked while
+  // builds and execution kept reading the config from boot. Assignment walks
+  // the prototype chain to this setter instead, so every scope sees one value.
+  let current = config;
+  app.decorate('config', {
+    getter: () => current,
+    setter: (next: EffectiveConfig) => {
+      current = next;
+    },
+  });
   // Default null so a request that never reaches requireAgentToken still
   // has a defined value, not undefined.
   app.decorateRequest('agentMachineId', null);

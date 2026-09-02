@@ -5,7 +5,7 @@ import type { ApiError } from '@/services/api';
 import { icons, iconSize } from '@/lib/icons';
 import { useAuth } from '@/features/auth/useAuth';
 import { useDevices } from '@/features/devices/api/devices.api';
-import { useProjects, useSuites, useTriggerRun } from '../api/execution.api';
+import { useProjects, useReloadConfig, useSuites, useTriggerRun } from '../api/execution.api';
 import { useRunPresets } from '../hooks/useRunPresets';
 import styles from './TriggerRunForm.module.css';
 
@@ -33,6 +33,7 @@ export function TriggerRunForm() {
   // backend — a run ending, or the TTL sweep — has no client event to hang off.
   const { data: devices } = useDevices(undefined, { refetchInterval: 5000 });
   const { data: projects } = useProjects();
+  const reloadConfig = useReloadConfig();
   const { presets, savePreset, deletePreset } = useRunPresets();
 
   const [project, setProject] = useState('');
@@ -205,9 +206,27 @@ export function TriggerRunForm() {
 
           <div className={styles.row}>
             <div className={styles.field}>
-              <label className={styles.label} htmlFor="project">
-                Project
-              </label>
+              <div className={styles.labelRow}>
+                <label className={styles.label} htmlFor="project">
+                  Project
+                </label>
+                {/* Admin-only, and placed here rather than on a settings page
+                    because this is where its absence is felt: an operator who
+                    just declared a project in YAML comes looking for it in
+                    this dropdown. Config is read at boot, so without this the
+                    only way to see it is a backend restart — which drops every
+                    live log stream and device capture. */}
+                {can('admin') ? (
+                  <button
+                    type="button"
+                    className={styles.inlineAction}
+                    disabled={reloadConfig.isPending}
+                    onClick={() => reloadConfig.mutate()}
+                  >
+                    {reloadConfig.isPending ? 'Reloading…' : 'Reload config'}
+                  </button>
+                ) : null}
+              </div>
               {/* A dropdown once the backend knows of any project, but never a
                   dropdown with nothing in it: on a fresh install there are no
                   projects yet, and an empty select would block the very first
@@ -241,6 +260,22 @@ export function TriggerRunForm() {
                   onChange={(e) => setProject(e.target.value)}
                 />
               )}
+              {/* Says what changed, not just that something did: "it
+                  reloaded" does not tell the operator whether the block they
+                  edited was the one that took. */}
+              {reloadConfig.isError ? (
+                <span className={styles.hintError}>
+                  {reloadConfig.error instanceof Error ? reloadConfig.error.message : 'Config reload failed.'}
+                </span>
+              ) : reloadConfig.isSuccess ? (
+                <span className={styles.hint}>
+                  {reloadConfig.data.projects.added.length > 0
+                    ? `Added ${reloadConfig.data.projects.added.join(', ')}.`
+                    : reloadConfig.data.projects.removed.length > 0
+                      ? `Removed ${reloadConfig.data.projects.removed.join(', ')}.`
+                      : `Config reloaded — ${reloadConfig.data.projects.total} project(s), unchanged.`}
+                </span>
+              ) : null}
             </div>
             <Field label="Branch" value={branch} required onChange={(e) => setBranch(e.target.value)} />
           </div>
