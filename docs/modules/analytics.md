@@ -9,8 +9,8 @@ Built and verified: daily and weekly pre-aggregation (`AnalyticsAggregate`), `by
 | Spec | Reality | Status |
 |---|---|---|
 | Pass rate reflects test outcomes | **Fixed 2026-08-29.** Runs now carry `failureKind` (`test`/`infra`/`precondition`), and pass rate is computed over attributable runs only — a device-locked rejection or a backend restart no longer drags a healthy suite's rate down. Totals still count every run, so lab problems stay visible. | **accepted** |
-| Suite `flakiness` = variation in pass rate across a window | **Computed for real since 2026-08-30** — stddev of the suite's daily pass rate over a trailing window, not the hardcoded `0` this row claimed until 2026-09-02. The upstream problem it named is still half-true, though: `SuiteProvider` (2026-09-01) made suite ids real and stable, so `smoke`/`Smoke`/`@smoke` is no longer the failure mode — but a Cucumber **tag** and a **feature path** can still select overlapping sets, so one logical suite can be counted as two. Trustworthy only once suite identity is canonical. | **computed; correctness still ordered behind canonical suite identity** |
-| Platform attribution per run | Joined from the **current** `Device` record at aggregation time, so deleting a device retroactively changes historical numbers. Should be snapshotted onto `ExecutionRun` at creation. | **must-fix** |
+| Suite `flakiness` = variation in pass rate across a window | **Computed for real since 2026-08-30** — stddev of the suite's daily pass rate over a trailing window, not the hardcoded `0` this row claimed until 2026-09-02. The identity problem it named is **also fixed** (2026-09-02): suites bucket by kind *and* name, so a tag and a feature path sharing a name no longer pool their rates into one variance figure. They are genuinely different selections, so keeping them apart is the correct answer rather than a merge. | **accepted** |
+| Platform attribution per run | **Fixed 2026-09-02.** Snapshotted onto `ExecutionRun` at creation, along with device model/name, framework, suite kind, and the commit resolved after `pulling`. The live join survives only for runs predating the snapshot — back-filling those would be a guess dressed as a fact. | **accepted** |
 | Weekly window selectable in the UI | **Fixed 2026-08-30** — the frontend has a Daily/Weekly selector, URL-synced with the other filters. This row survived as false until 2026-09-02; two external reviews repeated the claim from it. | **accepted** |
 | Trend charts, failure-reason panel, device utilisation | Not built. Recharts is the chosen library — do not add a second one. | **temporary** |
 | Journey / time-window correlation | Deliberately not built; correlate by run id only. | **superseded** |
@@ -68,7 +68,8 @@ Surface actionable test health data: pass rates, run volume trends, flakiness sc
   ],
   bySuite: [
     {
-      suite: string,
+      suite: string,             // bare, as stored on the run — the UI links on it
+      suiteKind: 'tag' | 'feature' | 'name',  // buckets are keyed by the pair
       runs: number,
       passRate: number,
       flakiness: number           // stddev of daily pass rates over 14-day window
