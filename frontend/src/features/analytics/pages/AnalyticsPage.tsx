@@ -42,7 +42,18 @@ function formatAvgDuration(ms: number): string {
   return `${Math.floor(s / 60)}m ${Math.round(s % 60)}s`;
 }
 
-function Kpi({ label, value, tone }: { label: string; value: string; tone?: string }) {
+function Kpi({
+  label,
+  value,
+  tone,
+  sub,
+}: {
+  label: string;
+  value: string;
+  tone?: string;
+  /** One line under the number, for a figure whose denominator isn't obvious. */
+  sub?: string;
+}) {
   return (
     <Card>
       <CardBody>
@@ -50,6 +61,7 @@ function Kpi({ label, value, tone }: { label: string; value: string; tone?: stri
         <div className={styles.kpiValue} style={tone ? { color: tone } : undefined}>
           {value}
         </div>
+        {sub ? <div className={styles.kpiSub}>{sub}</div> : null}
       </CardBody>
     </Card>
   );
@@ -326,7 +338,19 @@ function AggregateSection({ group }: { group: AggregateGroup }) {
 
       <div className={styles.kpis}>
         <Kpi label="Total runs" value={String(latest.totalRuns)} />
-        <Kpi label="Pass rate" value={formatPercent(latest.passRate)} tone={passRateTone(latest.passRate)} />
+        <Kpi label="Pass rate" value={formatPercent(latest.passRate)} tone={passRateTone(latest.passRate)} sub="by run" />
+        {/* Shown only when something actually reported tests. A hardcoded
+            "0%" beside a real run-level rate would read as a catastrophe
+            rather than as an absence, which is the whole reason the backend
+            tracks runsWithTestResults separately. */}
+        {latest.runsWithTestResults > 0 ? (
+          <Kpi
+            label="Test pass rate"
+            value={formatPercent(latest.testPassRate)}
+            tone={passRateTone(latest.testPassRate)}
+            sub={`${latest.passedTests}/${latest.totalTests} tests`}
+          />
+        ) : null}
         <Kpi label="Failed" value={String(latest.failedRuns)} tone="var(--status-failed)" />
         <Kpi label="Avg duration" value={formatAvgDuration(latest.avgDurationMs)} />
       </div>

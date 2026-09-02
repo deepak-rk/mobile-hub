@@ -5,6 +5,7 @@ import { icons, iconSize } from '@/lib/icons';
 import { formatDurationBetween, formatRelative } from 'ts-format-utils';
 import { isInFlight, useCancelRun, useExecutionRun, useRunLog } from '../api/execution.api';
 import { useRunStream } from '../api/useRunStream';
+import type { ExecutionRun } from '../types';
 import { LogViewer } from '../components/LogViewer';
 import { useAuth } from '@/features/auth/useAuth';
 import { STAGE_LABELS, stageColor, stageIcon } from '../lib/stageMeta';
@@ -30,6 +31,70 @@ const FAILURE_KIND_LABELS: Record<string, string> = {
  */
 function artifactUrl(runId: string, suffix: string): string {
   return `${import.meta.env.VITE_API_URL ?? ''}/api/execution/${runId}/${suffix}`;
+}
+
+/**
+ * Test-case results for one run, as a bar plus counts.
+ *
+ * This is where the run-level/test-level distinction is felt: a failed run
+ * that passed 143 of 145 tests and one where the whole suite fell over both
+ * show a red status badge, and only this tells them apart. The bar carries
+ * that at a glance and the counts carry it exactly — the number alone would
+ * make the reader do the arithmetic.
+ *
+ * Rendered only when the runner produced Allure results. A project not using
+ * Allure gets nothing here rather than a row of zeros, which would read as a
+ * suite that ran and found nothing.
+ */
+function TestSummaryPanel({ summary }: { summary: NonNullable<ExecutionRun['testSummary']> }) {
+  const segments = [
+    { key: 'passed', count: summary.passed, label: 'Passed', color: 'var(--status-passed)' },
+    { key: 'failed', count: summary.failed, label: 'Failed', color: 'var(--status-failed)' },
+    // Amber, not red: Allure's "broken" is a test that errored rather than
+    // asserted false, which is usually an environment problem, not a bug in
+    // the app. Reusing --status-smoke keeps it inside the existing palette
+    // rather than inventing a token for one bar.
+    { key: 'broken', count: summary.broken, label: 'Broken', color: 'var(--status-smoke)' },
+    { key: 'skipped', count: summary.skipped, label: 'Skipped', color: 'var(--text-tertiary)' },
+    { key: 'unknown', count: summary.unknown, label: 'Not run', color: 'var(--status-offline)' },
+  ].filter((seg) => seg.count > 0);
+
+  return (
+    <Card>
+      <CardBody>
+        <div className={styles.panelHead}>
+          <span className={styles.panelTitle}>Tests</span>
+          <span className={styles.testRate}>
+            {summary.passRate === null ? '—' : `${Math.round(summary.passRate * 100)}%`}
+          </span>
+        </div>
+
+        <div
+          className={styles.testBar}
+          role="img"
+          aria-label={`${summary.passed} of ${summary.total} tests passed`}
+        >
+          {segments.map((seg) => (
+            <span
+              key={seg.key}
+              className={styles.testSegment}
+              style={{ flexGrow: seg.count, background: seg.color }}
+            />
+          ))}
+        </div>
+
+        <ul className={styles.testLegend}>
+          {segments.map((seg) => (
+            <li key={seg.key} className={styles.testLegendItem}>
+              <span className={styles.testSwatch} style={{ background: seg.color }} aria-hidden="true" />
+              <span>{seg.label}</span>
+              <span className={styles.testCount}>{seg.count}</span>
+            </li>
+          ))}
+        </ul>
+      </CardBody>
+    </Card>
+  );
 }
 
 export function RunDetailPage() {
@@ -145,7 +210,10 @@ export function RunDetailPage() {
               </CardBody>
             </Card>
 
-            <Card>
+            <div className={styles.sideColumn}>
+              {run.testSummary ? <TestSummaryPanel summary={run.testSummary} /> : null}
+
+              <Card>
               <CardBody>
                 <div className={styles.panelHead}>
                   <span className={styles.panelTitle}>Details</span>
@@ -176,7 +244,8 @@ export function RunDetailPage() {
                   ]}
                 />
               </CardBody>
-            </Card>
+              </Card>
+            </div>
           </div>
         ) : null}
       </QueryBoundary>

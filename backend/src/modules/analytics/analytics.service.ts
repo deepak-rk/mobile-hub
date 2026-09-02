@@ -18,6 +18,8 @@ interface RunFacts {
   /** Why a `failed` run failed. See FailureKind in execution-run.model.ts. */
   failureKind: 'test' | 'infra' | 'precondition' | null;
   durationMs: number | null; // null when startedAt was never set (e.g. failed before start)
+  /** Test-case counts from the run's Allure results; null when it produced none. */
+  tests: { total: number; passed: number } | null;
 }
 
 /**
@@ -67,7 +69,7 @@ type SummaryBySuite = { suite: string; runs: number; passRate: number };
 
 function summarize(
   runs: RunFacts[],
-): Pick<IAnalyticsAggregate, 'totalRuns' | 'passedRuns' | 'failedRuns' | 'cancelledRuns' | 'passRate' | 'avgDurationMs' | 'byDevice'> & {
+): Pick<IAnalyticsAggregate, 'totalRuns' | 'passedRuns' | 'failedRuns' | 'cancelledRuns' | 'passRate' | 'avgDurationMs' | 'byDevice' | 'totalTests' | 'passedTests' | 'testPassRate' | 'runsWithTestResults'> & {
   bySuite: SummaryBySuite[];
 } {
   const passed = runs.filter((r) => r.status === 'passed').length;
@@ -79,6 +81,18 @@ function summarize(
   // still include infra and precondition failures — hiding them would make
   // lab problems invisible). Only the *rate* narrows to attributable runs.
   const attributable = runs.filter(isTestAttributable);
+
+  // Test-case-level totals, over the runs that reported any. A run-level rate
+  // and a test-level rate answer different questions: 143 of 145 passing is 0%
+  // at run level and 98.6% here, and a suite where one test of two hundred
+  // flakes used to look identical to one where all two hundred failed.
+  //
+  // The denominator is deliberately only the runs that produced results, not
+  // all of them. A project not using Allure would otherwise drag every rate
+  // toward zero by contributing tests it never reported.
+  const withTests = runs.filter((r) => r.tests !== null);
+  const totalTests = withTests.reduce((sum, r) => sum + (r.tests?.total ?? 0), 0);
+  const passedTests = withTests.reduce((sum, r) => sum + (r.tests?.passed ?? 0), 0);
 
   const groupRate = (group: RunFacts[]): number => {
     const scorable = group.filter(isTestAttributable);
@@ -98,6 +112,13 @@ function summarize(
     failedRuns: failed,
     cancelledRuns: cancelled,
     passRate: attributable.length === 0 ? 0 : passed / attributable.length,
+    totalTests,
+    passedTests,
+    // 0 when nothing reported tests, matching how passRate handles an empty
+    // denominator. `runsWithTestResults` is what tells the two apart, so a
+    // reader can see whether a 0 means "all failed" or "nothing reported".
+    testPassRate: totalTests === 0 ? 0 : passedTests / totalTests,
+    runsWithTestResults: withTests.length,
     avgDurationMs:
       durations.length === 0 ? 0 : Math.round(durations.reduce((a, b) => a + b, 0) / durations.length),
     byDevice: [...byDeviceMap.entries()].map(([deviceUdid, group]) => ({
@@ -211,6 +232,7 @@ async function computeAggregates(
     failureKind: run.failureKind ?? null,
     durationMs:
       run.startedAt && run.endedAt ? run.endedAt.getTime() - run.startedAt.getTime() : null,
+    tests: run.testSummary ? { total: run.testSummary.total, passed: run.testSummary.passed } : null,
   }));
 
   const written: IAnalyticsAggregate[] = [];

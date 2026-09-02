@@ -10,6 +10,17 @@ export interface IAnalyticsAggregate extends Document {
   failedRuns: number;
   cancelledRuns: number;
   passRate: number;
+  /**
+   * Test-case-level totals, summed over the runs in this bucket that produced
+   * Allure results. Separate from the run-level counts above because they
+   * answer a different question — a run with 143/145 passing is one failed run
+   * and 143 passed tests.
+   */
+  totalTests: number;
+  passedTests: number;
+  testPassRate: number;
+  /** How many runs contributed to the two above — the rest reported no tests. */
+  runsWithTestResults: number;
   avgDurationMs: number;
   byDevice: Array<{ deviceUdid: string; runs: number; passRate: number }>;
   bySuite: Array<{ suite: string; runs: number; passRate: number; flakiness: number }>;
@@ -27,6 +38,10 @@ const analyticsAggregateSchema = new Schema<IAnalyticsAggregate>(
     failedRuns: { type: Number, default: 0 },
     cancelledRuns: { type: Number, default: 0 },
     passRate: { type: Number, default: 0 },
+    totalTests: { type: Number, default: 0 },
+    passedTests: { type: Number, default: 0 },
+    testPassRate: { type: Number, default: 0 },
+    runsWithTestResults: { type: Number, default: 0 },
     avgDurationMs: { type: Number, default: 0 },
     byDevice: [{ deviceUdid: String, runs: Number, passRate: Number }],
     bySuite: [{ suite: String, runs: Number, passRate: Number, flakiness: Number }],

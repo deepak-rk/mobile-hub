@@ -126,6 +126,75 @@ describe('computeDailyAggregates', () => {
     // run 3 has no startedAt and is excluded. Average of the other two: 90s.
     expect(summary?.avgDurationMs).toBe(90000);
   });
+
+  it('reports a test-level pass rate alongside the run-level one, which can differ wildly', async () => {
+    stubRuns(
+      [
+        // One failed run — 0% at run level — that passed 143 of its 145 tests.
+        // Before this existed, that was indistinguishable from a suite where
+        // all 145 failed.
+        run({
+          status: 'failed',
+          failureKind: 'test',
+          testSummary: { total: 145, passed: 143, failed: 2, broken: 0, skipped: 0, unknown: 0, passRate: 143 / 145 },
+        }),
+      ],
+      [{ udid: 'd1', platform: 'android' }],
+    );
+    const upsert = vi.fn().mockResolvedValue({ id: 'agg' });
+    vi.spyOn(AnalyticsAggregate, 'findOneAndUpdate').mockImplementation(upsert as never);
+
+    await computeDailyAggregates(new Date('2026-01-01T12:00:00Z'));
+
+    const calls = upsert.mock.calls as UpsertCall[];
+    const summary = calls.find(([filter]) => filter.platform === 'android')?.[1];
+    expect(summary?.passRate).toBe(0);
+    expect(summary?.totalTests).toBe(145);
+    expect(summary?.passedTests).toBe(143);
+    expect(summary?.testPassRate).toBeCloseTo(0.986, 3);
+    expect(summary?.runsWithTestResults).toBe(1);
+  });
+
+  it('excludes runs that reported no tests from the test-level denominator', async () => {
+    stubRuns(
+      [
+        run({ testSummary: { total: 10, passed: 8, failed: 2, broken: 0, skipped: 0, unknown: 0, passRate: 0.8 } }),
+        // A project not using Allure. Counting it as 0 tests passed of 0 would
+        // be harmless; counting it as a run that failed to report would drag
+        // every rate toward zero.
+        run({ testSummary: null }),
+      ],
+      [{ udid: 'd1', platform: 'android' }],
+    );
+    const upsert = vi.fn().mockResolvedValue({ id: 'agg' });
+    vi.spyOn(AnalyticsAggregate, 'findOneAndUpdate').mockImplementation(upsert as never);
+
+    await computeDailyAggregates(new Date('2026-01-01T12:00:00Z'));
+
+    const calls = upsert.mock.calls as UpsertCall[];
+    const summary = calls.find(([filter]) => filter.platform === 'android')?.[1];
+    expect(summary?.totalRuns).toBe(2);
+    // Only the reporting run contributes, so the rate is its own 8/10 — not
+    // 8/10 diluted by a run that never had tests to count.
+    expect(summary?.runsWithTestResults).toBe(1);
+    expect(summary?.totalTests).toBe(10);
+    expect(summary?.testPassRate).toBe(0.8);
+  });
+
+  it('leaves the test-level rate at zero when nothing reported results', async () => {
+    stubRuns([run()], [{ udid: 'd1', platform: 'android' }]);
+    const upsert = vi.fn().mockResolvedValue({ id: 'agg' });
+    vi.spyOn(AnalyticsAggregate, 'findOneAndUpdate').mockImplementation(upsert as never);
+
+    await computeDailyAggregates(new Date('2026-01-01T12:00:00Z'));
+
+    const calls = upsert.mock.calls as UpsertCall[];
+    const summary = calls.find(([filter]) => filter.platform === 'android')?.[1];
+    // Zero, same as passRate handles an empty denominator — and
+    // runsWithTestResults is what tells "all failed" from "nothing reported".
+    expect(summary?.testPassRate).toBe(0);
+    expect(summary?.runsWithTestResults).toBe(0);
+  });
 });
 
 describe('computeWeeklyAggregates', () => {

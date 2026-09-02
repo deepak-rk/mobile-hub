@@ -22,6 +22,16 @@ export interface AnalyticsAggregate {
   failedRuns: number;
   cancelledRuns: number;
   passRate: number;
+  /**
+   * Test-case-level totals, summed over the runs in this bucket that produced
+   * Allure results — a different question from the run-level `passRate` above.
+   * `runsWithTestResults` is what separates "everything failed" from "nothing
+   * reported", since both leave `testPassRate` at 0.
+   */
+  totalTests: number;
+  passedTests: number;
+  testPassRate: number;
+  runsWithTestResults: number;
   avgDurationMs: number;
   byDevice: DeviceBreakdown[];
   bySuite: SuiteBreakdown[];

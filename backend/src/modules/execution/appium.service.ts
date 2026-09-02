@@ -38,6 +38,13 @@ const servers = new Map<string, ManagedProcess>();
 const STATUS_TIMEOUT_MS = 2000;
 const STARTUP_TIMEOUT_MS = 60_000;
 const STARTUP_POLL_MS = 500;
+/**
+ * How long to wait for a port-holder to start answering as Appium before
+ * giving up on adopting it. Shorter than STARTUP_TIMEOUT_MS because by this
+ * point something is already listening — this is waiting out the tail of
+ * someone else's boot, not a boot from nothing.
+ */
+const ADOPT_TIMEOUT_MS = 30_000;
 
 /**
  * The port this device's server uses, assigned once and then remembered.
@@ -191,6 +198,28 @@ export async function ensureAppiumServer(device: IDevice, config: EffectiveConfi
   servers.delete(device.udid);
 
   const detail = startupOutput.trim();
+
+  // A port already held is not the same as a server already up, and the gap
+  // between the two is a window this hub opens itself: the servers map lives
+  // in process memory, so a backend restart orphans a running Appium, and a
+  // run starting while that orphan is still booting sees /status silent and
+  // the port taken. Waiting it out adopts the orphan instead of failing on it,
+  // which is the same adopt-don't-fight rule as the check at the top — that
+  // one just could not see a server that had not opened its API yet.
+  if (detail.includes('EADDRINUSE')) {
+    const adoptDeadline = Date.now() + ADOPT_TIMEOUT_MS;
+    while (Date.now() < adoptDeadline) {
+      await new Promise((r) => setTimeout(r, STARTUP_POLL_MS));
+      if (await isServerUp(endpoint)) return endpoint;
+    }
+    throw new AppiumUnavailableError(
+      `Port ${port} on ${host} is held by something that never answered as Appium ` +
+        `(waited ${ADOPT_TIMEOUT_MS / 1000}s after EADDRINUSE). ` +
+        `That is usually an Appium this hub started before a restart, now orphaned, or another program on the port. ` +
+        `Free the port, or move this device off it by clearing its appiumPort.`,
+    );
+  }
+
   throw new AppiumUnavailableError(
     (exited
       ? `Appium exited during startup on ${endpoint.baseUrl}.`

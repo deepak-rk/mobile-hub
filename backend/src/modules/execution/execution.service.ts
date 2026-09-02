@@ -10,6 +10,7 @@ import { acquireLock, getDevice, releaseLock } from '../devices/devices.service'
 import { getBuild } from '../builds/builds.service';
 import { assertDriverInstalled, ensureAppiumServer } from './appium.service';
 import { buildRunEnvironment, createRedactor } from './run-environment';
+import { summarizeRunResults, ALLURE_RESULTS_DIRNAME } from './allure-summary';
 import { ExecutionRun, IExecutionRun, RunStatus, StageName, FailureKind } from './execution-run.model';
 import { publishExecutionEvent } from './execution.events';
 
@@ -303,6 +304,43 @@ async function restoreCache(
 const ALLURE_REPORT_DIRNAME = 'allure-report';
 
 /**
+ * Records test-case-level counts from the runner's Allure results.
+ *
+ * Same `finally`-before-cleanup ordering as the report collector, and for the
+ * same reason: the results live inside the workspace, which the run deletes.
+ * Unlike the report, only the numbers are kept — the raw result files are a
+ * few hundred KB per run and the report already renders them.
+ *
+ * Runs on every terminal path including failures, which is when the
+ * distinction matters most: `status: 'failed'` says the run failed, and this
+ * says whether that was one flaky test or the whole suite.
+ */
+function collectTestSummary(run: IExecutionRun, logStream: fs.WriteStream): void {
+  let summary;
+  try {
+    summary = summarizeRunResults(run.workspacePath, ALLURE_RESULTS_DIRNAME);
+  } catch (err) {
+    // Best-effort, same as the report: failing to count tests must not turn a
+    // passing run into a failed one.
+    const line = `results: could not read Allure results: ${err instanceof Error ? err.message : String(err)}\n`;
+    logStream.write(line);
+    publishExecutionEvent(run.id as string, { type: 'log', line });
+    return;
+  }
+  if (!summary) return;
+
+  run.testSummary = summary;
+  const line =
+    `results: ${summary.passed}/${summary.total} tests passed` +
+    (summary.failed > 0 ? `, ${summary.failed} failed` : '') +
+    (summary.broken > 0 ? `, ${summary.broken} broken` : '') +
+    (summary.skipped > 0 ? `, ${summary.skipped} skipped` : '') +
+    '\n';
+  logStream.write(line);
+  publishExecutionEvent(run.id as string, { type: 'log', line });
+}
+
+/**
  * Adopts an Allure report the *runner* produced, if there is one.
  *
  * Mobile Hub deliberately does not generate reports — that needs a real
@@ -510,6 +548,9 @@ async function runExecution(
     // workspace is removed below — the report lives inside the workspace until
     // this copies it out. Both orderings are load-bearing.
     await collectAllureReport(run, logStream);
+    // Before `run.save()` and before the workspace is removed, for the same
+    // two reasons as the report above.
+    collectTestSummary(run, logStream);
 
     run.endedAt = new Date();
     await run.save();

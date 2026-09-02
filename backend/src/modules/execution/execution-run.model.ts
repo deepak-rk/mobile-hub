@@ -1,4 +1,11 @@
 import { Schema, model, Document, Types } from 'mongoose';
+import type { TestSummary } from './allure-summary';
+
+/**
+ * The persisted shape of a test summary. Re-exported from the parser rather
+ * than redeclared, so the schema and the code that fills it cannot drift.
+ */
+export type ITestSummary = TestSummary;
 
 export type StageName = 'pulling' | 'restoring_cache' | 'installing' | 'execute';
 export type StageStatus = 'pending' | 'running' | 'done' | 'error' | 'skipped';
@@ -49,11 +56,34 @@ export interface IExecutionRun extends Document {
   artifactsPath: string;
   logPath: string;
   reportPath: string | null;
+  /**
+   * Test-case-level counts parsed from the runner's Allure results, or null
+   * when it produced none.
+   *
+   * Distinct from `status`, which is run-level: a run where 143 of 145 tests
+   * passed is failed at run level and 98.6% here. Null rather than zeros so
+   * "no Allure output" stays distinguishable from "ran zero tests" — the
+   * first is a project not using Allure, the second is a real result.
+   */
+  testSummary: ITestSummary | null;
   startedAt: Date | null;
   endedAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
 }
+
+const testSummarySchema = new Schema<ITestSummary>(
+  {
+    total: { type: Number, required: true },
+    passed: { type: Number, required: true },
+    failed: { type: Number, required: true },
+    broken: { type: Number, required: true },
+    skipped: { type: Number, required: true },
+    unknown: { type: Number, required: true },
+    passRate: { type: Number, default: null },
+  },
+  { _id: false },
+);
 
 const stageSchema = new Schema<IStage>(
   {
@@ -90,6 +120,9 @@ const executionRunSchema = new Schema<IExecutionRun>(
     artifactsPath: { type: String, default: '' },
     logPath: { type: String, required: true },
     reportPath: { type: String, default: null },
+    // Embedded rather than a separate collection: it is written once when the
+    // run ends, read with the run, and never queried on its own.
+    testSummary: { type: testSummarySchema, default: null },
     startedAt: { type: Date, default: null },
     endedAt: { type: Date, default: null },
   },

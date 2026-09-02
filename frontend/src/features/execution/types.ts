@@ -30,6 +30,19 @@ export interface ExecutionRun {
    * UI can treat non-null as "this link works" and hide the control otherwise.
    */
   reportPath: string | null;
+  /**
+   * Test-case counts from the runner's Allure results, or null when it
+   * produced none — which is different from a run that executed zero tests.
+   */
+  testSummary: {
+    total: number;
+    passed: number;
+    failed: number;
+    broken: number;
+    skipped: number;
+    unknown: number;
+    passRate: number | null;
+  } | null;
   stages: RunStage[];
   startedAt: string | null;
   endedAt: string | null;

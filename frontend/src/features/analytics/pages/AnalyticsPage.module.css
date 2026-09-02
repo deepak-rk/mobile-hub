@@ -55,6 +55,15 @@
   color: var(--text-primary);
 }
 
+/* Names the denominator under a percentage that has one. Tabular figures so
+   "8/10" and "143/145" line up down a row of cards. */
+.kpiSub {
+  margin-top: var(--space-1);
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
 .breakdowns {
   display: grid;
   gap: var(--space-3);
