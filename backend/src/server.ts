@@ -14,6 +14,7 @@ import {
 import { runBuildGc, BUILD_GC_INTERVAL_MS } from './modules/builds/builds.service';
 import { releaseExpiredLocks, DEVICE_LOCK_SWEEP_INTERVAL_MS } from './modules/devices/devices.service';
 import { streamingService } from './modules/streaming/streaming.service';
+import { shutdownAppiumServers } from './modules/execution/appium.service';
 import { agentTokenIsConfigured } from './modules/agent-auth/agent-auth';
 import dynamicImport from './common/dynamic-import';
 import type * as MongooseIndexGuard from 'mongoose-index-guard';
@@ -159,6 +160,8 @@ async function start(): Promise<void> {
     clearInterval(deviceLockSweepInterval);
     // No capture process may outlive the server.
     await streamingService.shutdown();
+    // Same rule as captures: a server this process started must not outlive it.
+    await shutdownAppiumServers();
     await app.close();
     process.exit(0);
   };

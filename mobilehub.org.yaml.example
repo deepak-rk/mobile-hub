@@ -19,11 +19,33 @@ build:
   # webhook:
   #   endpoint: https://ci.example.com/hooks/mobile-hub-build
 
+# Appium servers the hub starts for its own runs. Off by default: starting a
+# server is a real side effect on the host, and an org running its own Appium
+# fleet must not have this fight it — an already-listening server on the
+# configured port is adopted rather than replaced.
+#
+# Ports are assigned from basePort upward, one per device, and then persisted
+# on the device record. A port picked fresh each time can leak or race; one
+# that is written down cannot.
+appium:
+  enabled: false
+  host: 127.0.0.1
+  basePort: 4723
+
 devices:
   lockTtlMinutes: 45 # a held lock auto-releases after this long unless renewed; omit to disable expiry
 
 automation:
   framework: appium
+  # Commands are derived from framework + configPath. Declare install/run only
+  # to override that — a framework the hub doesn't know, or a one-off shape.
+  # install: { command: npm, args: [ci] }
+  #
+  # Injected into the runner and redacted from run logs. The child gets an
+  # allow-listed environment rather than inheriting the hub's, so anything a
+  # suite needs must be declared here.
+  # env:
+  #   APP_ENV: staging
   configPath: wdio.conf.js
   envFile: .env
   testDir: test

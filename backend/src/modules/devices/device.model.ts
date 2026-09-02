@@ -20,6 +20,8 @@ export interface IDevice extends Omit<Document, 'model'> {
   status: 'idle' | 'smoke' | 'in-use' | 'offline' | 'unreachable';
   lock: DeviceLock | null;
   isLocallyReachable: boolean;
+  /** Port of this device's Appium server, assigned once and then stable. */
+  appiumPort: number | null;
   lastSeenAt: Date;
   createdAt: Date;
   updatedAt: Date;
@@ -53,6 +55,7 @@ const deviceSchema = new Schema<IDevice>(
       default: null,
     },
     isLocallyReachable: { type: Boolean, default: true },
+    appiumPort: { type: Number, default: null },
     lastSeenAt: { type: Date, default: Date.now },
   },
   { timestamps: true },

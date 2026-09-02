@@ -159,12 +159,26 @@ export async function triggerBuildFetch(config: EffectiveConfig, input: TriggerB
   return completed;
 }
 
+/**
+ * Filename an artifact is stored under.
+ *
+ * The extension matters and is not decoration: Appium refuses an app path
+ * without a platform-appropriate one ("did not have extensions: .apk,.apks"),
+ * which is how a fully-working pipeline still failed at session creation. The
+ * build id remains the filename so a stored artifact is still traceable to its
+ * record at a glance.
+ */
+function artifactFileName(build: IBuild): string {
+  const extension = build.platform === 'ios' ? '.ipa' : '.apk';
+  return `${build.id as string}${extension}`;
+}
+
 async function runFetch(
   config: EffectiveConfig,
   input: TriggerBuildFetchInput,
   build: IBuild,
 ): Promise<IBuild> {
-  const destPath = path.join(env.BUILDS_DIR, build.id as string);
+  const destPath = path.join(env.BUILDS_DIR, artifactFileName(build));
   const provider = getBuildProvider(config.build.provider);
 
   try {
@@ -253,7 +267,7 @@ export async function recoverOrphanedBuilds(): Promise<number> {
     // The partial file is unusable and its size is unknown, so it is deleted
     // on the same "don't leave something that looks fetched" principle the
     // failure path in runFetch already follows.
-    const destPath = build.artifactPath ?? path.join(env.BUILDS_DIR, build.id as string);
+    const destPath = build.artifactPath ?? path.join(env.BUILDS_DIR, artifactFileName(build));
     try {
       if (fs.existsSync(destPath)) fs.rmSync(destPath, { force: true });
     } catch {
@@ -299,7 +313,7 @@ function groupKey(build: IBuild): string {
  * per-build failure to collect (the sweep) or an error to surface (the route).
  */
 async function purgeArtifact(build: IBuild): Promise<void> {
-  const destPath = build.artifactPath ?? path.join(env.BUILDS_DIR, build.id as string);
+  const destPath = build.artifactPath ?? path.join(env.BUILDS_DIR, artifactFileName(build));
   if (fs.existsSync(destPath)) fs.rmSync(destPath, { force: true });
 
   build.status = 'purged';
@@ -431,7 +445,7 @@ export async function runBuildGc(config: EffectiveConfig): Promise<BuildGcResult
         continue;
       }
 
-      const destPath = build.artifactPath ?? path.join(env.BUILDS_DIR, build.id as string);
+      const destPath = build.artifactPath ?? path.join(env.BUILDS_DIR, artifactFileName(build));
       try {
         if (fs.existsSync(destPath)) fs.rmSync(destPath, { force: true });
       } catch (err) {

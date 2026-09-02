@@ -59,6 +59,21 @@ const deviceConfigSchema = z
 /** A command as argv, never a shell string — nothing here is shell-interpreted. */
 const commandSchema = z.object({ command: z.string().min(1), args: z.array(z.string()).default([]) }).strict();
 
+const appiumConfigSchema = z
+  .object({
+    // Off by default: starting servers is a real side effect on the host, and
+    // an org running its own Appium fleet must not have this fight it.
+    enabled: z.boolean().optional(),
+    host: z.string().optional(),
+    // Ports are assigned from here upward, one per device, and then persisted
+    // on the device record. The sibling appium-server-setup repo makes the
+    // case well: a port allocated fresh each time can leak or race, while one
+    // that is written down cannot. This keeps that property for devices the
+    // hub discovers rather than ones a human enumerated.
+    basePort: z.number().int().positive().optional(),
+  })
+  .strict();
+
 const automationConfigSchema = z
   .object({
     framework: z.string().optional(),
@@ -75,6 +90,10 @@ const automationConfigSchema = z
     // modules/execution/automation-commands.ts.
     install: commandSchema.optional(),
     run: commandSchema.optional(),
+    // Injected into the runner process. Values are treated as secret: they
+    // are redacted from run logs, and the child gets an allow-listed
+    // environment rather than inheriting the hub's.
+    env: z.record(z.string()).optional(),
   })
   .strict();
 
@@ -101,6 +120,7 @@ export const partialConfigSchema = z
     features: featureTogglesSchema.optional(),
     build: buildConfigSchema.optional(),
     devices: deviceConfigSchema.optional(),
+    appium: appiumConfigSchema.optional(),
     automation: automationConfigSchema.optional(),
     // Keyed by project id — the same string that lands on ExecutionRun.project
     // and Build.project, so config and history line up without a mapping table.
@@ -121,6 +141,7 @@ export interface EffectiveConfig {
     retention: { keepPerGroup: number; olderThanDays: number | null };
   };
   devices: { lockTtlMinutes: number | null };
+  appium: { enabled: boolean; host: string; basePort: number };
   automation: AutomationConfig;
   /** Declared projects, keyed by id. Empty when an org hasn't declared any. */
   projects: Record<string, ProjectConfig>;
@@ -140,6 +161,8 @@ export interface AutomationConfig {
   /** Overrides the command derived from `framework`; null means derive it. */
   install: AutomationCommand | null;
   run: AutomationCommand | null;
+  /** Injected into the runner; treated as secret (redacted from logs). */
+  env: Record<string, string>;
 }
 
 export interface ProjectConfig {
@@ -202,6 +225,8 @@ export const PLATFORM_DEFAULTS: EffectiveConfig = {
   // 45 min: long enough for someone actively testing on a device, short
   // enough that a crashed/forgotten client doesn't hold it all day.
   devices: { lockTtlMinutes: 45 },
+  // Off by default: starting a server is a real side effect on the host.
+  appium: { enabled: false, host: '127.0.0.1', basePort: 4723 },
   automation: {
     framework: 'appium',
     configPath: 'wdio.conf.js',
@@ -211,6 +236,7 @@ export const PLATFORM_DEFAULTS: EffectiveConfig = {
     // Derived from framework/configPath unless an org declares otherwise.
     install: null,
     run: null,
+    env: {},
   },
   // No projects until an org declares them. The trigger form falls back to
   // free text in that case rather than offering an empty dropdown.

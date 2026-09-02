@@ -79,3 +79,23 @@ describe('canDeriveCommands', () => {
     expect(canDeriveCommands(automation({ framework: 'gradle' }))).toBe(false);
   });
 });
+
+describe('suite selector shape', () => {
+  // Three different things that `--suite` alone conflates. Passing a feature
+  // path to `--suite` failed against a real run with "the suite you specified
+  // doesn't exist", which is what these pin.
+  it('uses --spec for a feature path', () => {
+    const cmd = resolveRunCommand(automation(), 'test/features/app-launch.feature');
+    expect(cmd.args).toEqual(['wdio', 'run', 'wdio.conf.js', '--spec', 'test/features/app-launch.feature']);
+  });
+
+  it('uses a tag expression for a Cucumber tag', () => {
+    const cmd = resolveRunCommand(automation(), '@smoke');
+    expect(cmd.args).toEqual(['wdio', 'run', 'wdio.conf.js', '--cucumberOpts.tagExpression', '@smoke']);
+  });
+
+  it('uses --suite for a plain name defined in the runner config', () => {
+    const cmd = resolveRunCommand(automation(), 'regression');
+    expect(cmd.args).toEqual(['wdio', 'run', 'wdio.conf.js', '--suite', 'regression']);
+  });
+});

@@ -83,10 +83,11 @@ describe('triggerBuildFetch', () => {
     expect(result.status).toBe('ready');
     expect(result.checksum).toBe(expectedChecksum);
     expect(result.sizeBytes).toBe(bytes.length);
-    // Keyed off the id the claim actually assigned, not a literal: the artifact
-    // is written to `BUILDS_DIR/<build id>`, and that id now comes from the
-    // upsert rather than being fixed by the fixture.
-    expect(fs.existsSync(path.join(tmpDir, result.id as string))).toBe(true);
+    // Stored as `<build id>.apk`, not a bare id: Appium refuses an app path
+    // with no platform extension ("did not have extensions: .apk,.apks"),
+    // which is how a working pipeline still failed at session creation. The id
+    // comes from the claim upsert rather than being fixed by the fixture.
+    expect(fs.existsSync(path.join(tmpDir, `${result.id as string}.apk`))).toBe(true);
   });
 
   it('rejects a 0-byte artifact and marks the build corrupt', async () => {

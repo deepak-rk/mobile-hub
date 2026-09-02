@@ -47,8 +47,20 @@ function fakeBuild(overrides: Partial<FakeBuild> & { id: string }): FakeBuild {
   return doc;
 }
 
+/**
+ * Where an artifact for this build id lives.
+ *
+ * Artifacts carry a platform extension — Appium rejects an app path without
+ * one — so the fallback these fixtures rely on (they leave `artifactPath` null
+ * deliberately, to exercise it) resolves to `<id>.apk`. Defined once so a
+ * naming change cannot silently desync the writes from the assertions.
+ */
+function artifactPathFor(buildId: string): string {
+  return path.join(tmpDir, `${buildId}.apk`);
+}
+
 function writeArtifact(buildId: string, contents = 'artifact bytes'): string {
-  const p = path.join(tmpDir, buildId);
+  const p = artifactPathFor(buildId);
   fs.writeFileSync(p, contents);
   return p;
 }
@@ -97,9 +109,9 @@ describe('runBuildGc', () => {
     const result = await runBuildGc(config);
 
     expect(result).toEqual({ purged: 1, skippedReferenced: 0, failures: [] });
-    expect(fs.existsSync(path.join(tmpDir, 'b1'))).toBe(false);
-    expect(fs.existsSync(path.join(tmpDir, 'b2'))).toBe(true);
-    expect(fs.existsSync(path.join(tmpDir, 'b3'))).toBe(true);
+    expect(fs.existsSync(artifactPathFor('b1'))).toBe(false);
+    expect(fs.existsSync(artifactPathFor('b2'))).toBe(true);
+    expect(fs.existsSync(artifactPathFor('b3'))).toBe(true);
     expect(builds[2].status).toBe('purged');
     expect(builds[2].purgedAt).toBeInstanceOf(Date);
     expect(builds[2].artifactPath).toBeNull();
@@ -123,8 +135,8 @@ describe('runBuildGc', () => {
 
     // Only android's 3rd-ranked build is purged; ios has just 1, under the cap.
     expect(result.purged).toBe(1);
-    expect(fs.existsSync(path.join(tmpDir, 'a1'))).toBe(false);
-    expect(fs.existsSync(path.join(tmpDir, 'i1'))).toBe(true);
+    expect(fs.existsSync(artifactPathFor('a1'))).toBe(false);
+    expect(fs.existsSync(artifactPathFor('i1'))).toBe(true);
   });
 
   it('never purges a build referenced by an ExecutionRun, regardless of rank', async () => {
@@ -141,7 +153,7 @@ describe('runBuildGc', () => {
     const result = await runBuildGc(config);
 
     expect(result).toEqual({ purged: 0, skippedReferenced: 1, failures: [] });
-    expect(fs.existsSync(path.join(tmpDir, 'b1'))).toBe(true);
+    expect(fs.existsSync(artifactPathFor('b1'))).toBe(true);
     expect(builds[2].status).toBe('ready');
   });
 
@@ -165,9 +177,9 @@ describe('runBuildGc', () => {
     const result = await runBuildGc(oldConfig);
 
     expect(result.purged).toBe(1);
-    expect(fs.existsSync(path.join(tmpDir, 'old'))).toBe(false);
-    expect(fs.existsSync(path.join(tmpDir, 'young'))).toBe(true);
-    expect(fs.existsSync(path.join(tmpDir, 'recent'))).toBe(true);
+    expect(fs.existsSync(artifactPathFor('old'))).toBe(false);
+    expect(fs.existsSync(artifactPathFor('young'))).toBe(true);
+    expect(fs.existsSync(artifactPathFor('recent'))).toBe(true);
   });
 
   it('is safe to run with nothing eligible', async () => {

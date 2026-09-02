@@ -6,7 +6,10 @@ import * as supervisor from '../../common/process-supervisor';
 import { RunOutcome, describeOutcome, isSuccess, ManagedProcess } from '../../common/process-supervisor';
 import { env } from '../../config/env';
 import { EffectiveConfig, PLATFORM_DEFAULTS } from '../../config/org-config.schema';
-import { acquireLock, releaseLock } from '../devices/devices.service';
+import { acquireLock, getDevice, releaseLock } from '../devices/devices.service';
+import { getBuild } from '../builds/builds.service';
+import { assertDriverInstalled, ensureAppiumServer } from './appium.service';
+import { buildRunEnvironment, createRedactor } from './run-environment';
 import { ExecutionRun, IExecutionRun, RunStatus, StageName, FailureKind } from './execution-run.model';
 import { publishExecutionEvent } from './execution.events';
 
@@ -77,6 +80,7 @@ const NOT_IMPLEMENTED_STAGE_ERROR =
 export async function triggerExecutionRun(
   input: TriggerExecutionInput,
   automation: EffectiveConfig['automation'] = PLATFORM_DEFAULTS.automation,
+  appiumConfig?: EffectiveConfig['appium'],
 ): Promise<IExecutionRun> {
   const runId = new Types.ObjectId();
   const workspacePath = path.join(env.EXECUTIONS_DIR, runId.toString());
@@ -127,7 +131,7 @@ export async function triggerExecutionRun(
   // the trigger endpoint returns immediately (backend/CLAUDE.md: prefer
   // WS-pushed transitions over blocking for this pipeline). The caller
   // polls GET /:id or watches GET /:id/stream.
-  void runExecution(run, input, automation).catch((err: unknown) => {
+  void runExecution(run, input, automation, appiumConfig).catch((err: unknown) => {
     // runExecution handles its own errors internally (see its try/catch) —
     // this is a last-resort net so a bug there can't become an unhandled rejection.
     console.error(`Unhandled error running execution ${runId.toString()}:`, err);
@@ -182,16 +186,23 @@ async function runCommand(
   cwd: string,
   logStream: fs.WriteStream,
   runId: string,
+  context: { env?: NodeJS.ProcessEnv; redact?: (text: string) => string } = {},
 ): Promise<RunOutcome> {
+  const redact = context.redact ?? ((text: string) => text);
   const onChunk = (chunk: Buffer): void => {
-    logStream.write(chunk);
-    publishExecutionEvent(runId, { type: 'log', line: chunk.toString() });
+    // Redacted before it reaches either sink: the log file is served over an
+    // API and the WS stream goes to any viewer, so a secret written to either
+    // has already escaped.
+    const line = redact(chunk.toString());
+    logStream.write(line);
+    publishExecutionEvent(runId, { type: 'log', line });
   };
 
   const managed = supervisor.run({
     command: cmd.command,
     args: cmd.args,
     cwd,
+    env: context.env,
     onStdout: onChunk,
     onStderr: onChunk,
   });
@@ -357,6 +368,7 @@ async function runExecution(
   run: IExecutionRun,
   input: TriggerExecutionInput,
   automation: EffectiveConfig['automation'],
+  appiumConfig?: EffectiveConfig['appium'],
 ): Promise<void> {
   const runId = run.id as string;
   fs.mkdirSync(run.workspacePath, { recursive: true });
@@ -366,6 +378,10 @@ async function runExecution(
   // it below, in which case they move to run inside the checkout instead.
   let cwd = run.workspacePath;
   let cacheDir: string | null = null;
+  // Built once the Appium endpoint is known, so the runner and the install
+  // step share one environment and one redactor.
+  let runEnv = buildRunEnvironment({ configured: automation.env });
+  const redact = createRedactor(automation.env);
 
   try {
     await setStatus(run, 'preparing');
@@ -418,7 +434,7 @@ async function runExecution(
 
     if (input.setup && !cancelledRuns.has(runId)) {
       await setStage(run, 'installing', 'running');
-      const setupOutcome = await runCommand(input.setup, cwd, logStream, runId);
+      const setupOutcome = await runCommand(input.setup, cwd, logStream, runId, { env: runEnv, redact });
       // Dependency install failing is an environment problem, not a test result.
       if (!(await settleStage('installing', setupOutcome, 'infra'))) return;
       await saveCacheIfMissing(cwd, cacheDir);
@@ -432,7 +448,52 @@ async function runExecution(
 
     await setStatus(run, 'running');
     await setStage(run, 'execute', 'running');
-    const runOutcome = await runCommand(input.run, cwd, logStream, runId);
+
+    // Started here rather than at trigger time: the server is only needed for
+    // the suite itself, and a run that fails while cloning should not have
+    // spun one up. Failing to get one is infrastructure, never a test result.
+    if (appiumConfig?.enabled) {
+      try {
+        const device = await getDevice(input.deviceUdid);
+        if (device) {
+          // Cheap and up front: a missing driver otherwise surfaces only after
+          // the runner has started and tried to open a session.
+          await assertDriverInstalled(device.platform);
+          const endpoint = await ensureAppiumServer(device, { appium: appiumConfig } as EffectiveConfig);
+          const line = `Appium ready at ${endpoint.baseUrl} for ${device.udid}\n`;
+          logStream.write(line);
+          publishExecutionEvent(runId, { type: 'log', line });
+          // The app under test, when the run named a build. Without this the
+          // suite opens a session against whatever is already on screen and
+          // every selector misses — which is exactly how a fully-working
+          // pipeline still failed with NoSuchElementError.
+          const build = run.buildId ? await getBuild(run.buildId.toString()) : null;
+          if (run.buildId && !build?.artifactPath) {
+            throw new Error(
+              `Build ${run.buildId.toString()} has no local artifact to run against — re-fetch it before running.`,
+            );
+          }
+
+          runEnv = buildRunEnvironment({
+            configured: automation.env,
+            appium: endpoint,
+            device: {
+              udid: device.udid,
+              name: device.name,
+              platform: device.platform,
+              osVersion: device.osVersion,
+            },
+            appPath: build?.artifactPath ?? undefined,
+          });
+        }
+      } catch (err) {
+        await setStage(run, 'execute', 'error', err instanceof Error ? err.message : String(err));
+        await failRun(run, 'infra');
+        return;
+      }
+    }
+
+    const runOutcome = await runCommand(input.run, cwd, logStream, runId, { env: runEnv, redact });
 
     // The only stage whose nonzero exit is a genuine *test* result.
     if (!(await settleStage('execute', runOutcome, 'test'))) return;

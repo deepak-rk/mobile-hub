@@ -139,6 +139,7 @@ export const executionRoutes: FastifyPluginAsync = async (app) => {
         const run = await triggerExecutionRun(
           { ...body.data, setup, run: runCommand, triggeredBy: req.user.sub },
           automation,
+          app.config.appium,
         );
         return reply.status(201).send(run);
       } catch (err) {

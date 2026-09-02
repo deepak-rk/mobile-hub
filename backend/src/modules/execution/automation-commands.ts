@@ -63,11 +63,34 @@ export function resolveRunCommand(automation: AutomationConfig, suite?: string):
   // Both 'appium' and 'wdio' mean the same runner here: mobile-hub's own
   // default is 'appium', while a team naming the runner directly writes 'wdio'.
   const args = ['wdio', 'run', automation.configPath];
-  // WebdriverIO's own flag for selecting a named suite from its config. A
-  // suite the config doesn't define fails loudly in the runner, which is the
-  // right place for that error — this layer does not know what exists.
-  if (suite) args.push('--suite', suite);
+  if (suite) args.push(...selectorArgsFor(suite));
   return { command: 'npx', args };
+}
+
+/**
+ * The right WebdriverIO flag for how this suite is addressed.
+ *
+ * These are three different things and `--suite` only means the first:
+ *  - a *named* suite, defined in the runner's own `suites: {}` map
+ *  - a *spec path*, which is `--spec`
+ *  - a Cucumber *tag*, which is a tag expression
+ *
+ * Passing a feature path to `--suite` fails with "the suite you specified
+ * doesn't exist" — confirmed against a real run, after suite discovery started
+ * returning paths. The shape is inferred rather than carried alongside the id
+ * because `ExecutionRun.suite` is a single string that has to round-trip
+ * through history, and these three forms cannot be confused for one another:
+ * a tag always starts with `@`, and a spec always looks like a path.
+ */
+function selectorArgsFor(suite: string): string[] {
+  if (suite.startsWith('@')) {
+    // Cucumber selects by tag expression, not by name.
+    return ['--cucumberOpts.tagExpression', suite];
+  }
+  if (suite.includes('/') || suite.endsWith('.feature')) {
+    return ['--spec', suite];
+  }
+  return ['--suite', suite];
 }
 
 function isKnownFramework(framework: string): boolean {
