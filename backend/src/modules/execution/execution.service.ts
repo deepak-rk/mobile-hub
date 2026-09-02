@@ -356,7 +356,11 @@ function collectTestSummary(run: IExecutionRun, logStream: fs.WriteStream): void
     (summary.failed > 0 ? `, ${summary.failed} failed` : '') +
     (summary.broken > 0 ? `, ${summary.broken} broken` : '') +
     (summary.skipped > 0 ? `, ${summary.skipped} skipped` : '') +
-    '\n';
+    '\n' +
+    // The reasons go in the log too, not only onto the record. Someone reading
+    // a failed run's tail should not have to open another view to learn
+    // whether this was one problem hitting twenty tests or twenty problems.
+    summary.failures.map((f) => `  ${f.count}x ${f.message}\n`).join('');
   logStream.write(line);
   publishExecutionEvent(run.id as string, { type: 'log', line });
 }

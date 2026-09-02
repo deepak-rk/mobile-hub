@@ -18,6 +18,7 @@ interface ResultFixture {
   historyId?: string;
   stop?: number;
   name?: string;
+  message?: string;
 }
 
 function writeResult(id: string, fixture: ResultFixture): void {
@@ -28,6 +29,7 @@ function writeResult(id: string, fixture: ResultFixture): void {
       name: fixture.name ?? 'a test',
       historyId: fixture.historyId,
       status: fixture.status,
+      statusDetails: fixture.message ? { message: fixture.message, trace: 'at Object.<anonymous>…' } : {},
       stage: 'finished',
       start: (fixture.stop ?? 1000) - 100,
       stop: fixture.stop ?? 1000,
@@ -60,7 +62,58 @@ describe('summarizeAllureResults', () => {
       skipped: 1,
       unknown: 0,
       passRate: 2 / 5,
+      failures: [],
     });
+  });
+
+  it('groups failures by message and orders them by how many tests hit each', () => {
+    // The counts are the point: twenty tests failing on one message is one
+    // problem, twenty failing on twenty messages is twenty, and a bare failed
+    // count cannot tell those apart.
+    writeResult('a', { status: 'failed', historyId: 'h1', message: 'Expected ~Home-screen within 20s' });
+    writeResult('b', { status: 'failed', historyId: 'h2', message: 'Expected ~Home-screen within 20s' });
+    writeResult('c', { status: 'failed', historyId: 'h3', message: 'Expected a confirmation alert' });
+    writeResult('d', { status: 'passed', historyId: 'h4' });
+
+    expect(summarizeAllureResults(dir)?.failures).toEqual([
+      { message: 'Expected ~Home-screen within 20s', count: 2 },
+      { message: 'Expected a confirmation alert', count: 1 },
+    ]);
+  });
+
+  it('groups on the first line only, so a differing stack does not split one reason', () => {
+    // Allure's message is often an assertion line followed by a stack, and the
+    // stack differs per test — grouping on the whole thing would put every
+    // failure in its own bucket and defeat the count entirely.
+    writeResult('a', { status: 'failed', historyId: 'h1', message: 'Timed out\n  at loginPage.ts:14' });
+    writeResult('b', { status: 'failed', historyId: 'h2', message: 'Timed out\n  at homePage.ts:31' });
+
+    expect(summarizeAllureResults(dir)?.failures).toEqual([{ message: 'Timed out', count: 2 }]);
+  });
+
+  it('counts broken tests as failures too', () => {
+    // An assertion that came out false and a test that errored are different
+    // kinds of problem, but "why is this red" wants both answers.
+    writeResult('a', { status: 'broken', historyId: 'h1', message: 'Cannot read properties of undefined' });
+
+    expect(summarizeAllureResults(dir)?.failures).toEqual([
+      { message: 'Cannot read properties of undefined', count: 1 },
+    ]);
+  });
+
+  it('counts only the surviving attempt of a retried failure', () => {
+    // Same collapse as the totals: a test retried twice and still failing is
+    // one failure, not two, or the counts would exaggerate the blast radius.
+    writeResult('try1', { status: 'failed', historyId: 'flaky', stop: 100, message: 'Timed out' });
+    writeResult('try2', { status: 'failed', historyId: 'flaky', stop: 200, message: 'Timed out' });
+
+    expect(summarizeAllureResults(dir)?.failures).toEqual([{ message: 'Timed out', count: 1 }]);
+  });
+
+  it('is empty when a failure carried no message to group by', () => {
+    writeResult('a', { status: 'failed', historyId: 'h1' });
+
+    expect(summarizeAllureResults(dir)).toMatchObject({ failed: 1, failures: [] });
   });
 
   it('is the whole point: 143 of 145 passing reads as 98.6%, not as a failed run', () => {

@@ -42,6 +42,12 @@ export interface ExecutionRun {
     skipped: number;
     unknown: number;
     passRate: number | null;
+    /**
+     * Distinct failure reasons with how many tests hit each. Twenty tests on
+     * one message is one problem; twenty on twenty messages is twenty, and a
+     * failed count alone cannot tell those apart.
+     */
+    failures: { message: string; count: number }[];
   } | null;
   stages: RunStage[];
   startedAt: string | null;

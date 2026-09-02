@@ -92,6 +92,23 @@ function TestSummaryPanel({ summary }: { summary: NonNullable<ExecutionRun['test
             </li>
           ))}
         </ul>
+
+        {/* The counts say how bad; this says what. One message across twenty
+            tests is a single problem to fix, twenty messages is twenty — the
+            same red bar, opposite responses. */}
+        {summary.failures.length > 0 ? (
+          <div className={styles.failures}>
+            <div className={styles.failuresTitle}>Why they failed</div>
+            <ul className={styles.failureList}>
+              {summary.failures.map((f) => (
+                <li key={f.message} className={styles.failureItem}>
+                  <span className={styles.failureCount}>{f.count}&times;</span>
+                  <span className={styles.failureMessage}>{f.message}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
       </CardBody>
     </Card>
   );

@@ -124,6 +124,13 @@ const testSummarySchema = new Schema<ITestSummary>(
     skipped: { type: Number, required: true },
     unknown: { type: Number, required: true },
     passRate: { type: Number, default: null },
+    // Bounded and denormalised on purpose: written once when the run ends and
+    // only ever read back with the run, so a separate collection would buy
+    // nothing but a join.
+    failures: {
+      type: [new Schema({ message: String, count: Number }, { _id: false })],
+      default: [],
+    },
   },
   { _id: false },
 );

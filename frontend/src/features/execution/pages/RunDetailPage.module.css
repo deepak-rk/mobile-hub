@@ -69,6 +69,50 @@
   color: var(--text-primary);
 }
 
+/* Separated from the legend by a rule rather than only space: the counts
+   above are the summary, this is the detail behind them. */
+.failures {
+  margin-top: var(--space-3);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border-subtle);
+}
+
+.failuresTitle {
+  font-size: var(--text-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-tertiary);
+  margin-bottom: var(--space-2);
+}
+
+.failureList {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.failureItem {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: var(--space-2);
+  font-size: var(--text-xs);
+}
+
+.failureCount {
+  color: var(--status-failed);
+  font-variant-numeric: tabular-nums;
+  font-weight: var(--weight-heading);
+}
+
+/* Wraps rather than truncating: a failure message is the one string on this
+   page a reader actually needs in full. */
+.failureMessage {
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+
 .panelHead {
   display: flex;
   align-items: center;

@@ -26,6 +26,23 @@ export interface TestSummary {
   unknown: number;
   /** Fraction of tests that passed, 0–1, or null when nothing ran. */
   passRate: number | null;
+  /**
+   * Why the failures failed, grouped by message and ordered by how many tests
+   * hit each — the counts are the point. Twenty tests failing on one message
+   * is one problem; twenty tests failing on twenty messages is twenty. A count
+   * of failed tests alone cannot tell those apart, and they call for opposite
+   * responses.
+   *
+   * Empty when nothing failed.
+   */
+  failures: FailureGroup[];
+}
+
+export interface FailureGroup {
+  /** First line of Allure's `statusDetails.message`, truncated. */
+  message: string;
+  /** How many distinct tests failed with this message. */
+  count: number;
 }
 
 export const ALLURE_RESULTS_DIRNAME = 'allure-results';
@@ -38,8 +55,39 @@ export const ALLURE_RESULTS_DIRNAME = 'allure-results';
  */
 const MAX_RESULT_FILES = 5000;
 
+/**
+ * How many distinct failure messages to keep, and how much of each.
+ *
+ * Bounded because this is persisted on every run: a suite failing in two
+ * hundred different ways is itself the finding, and the top few carry it. The
+ * full text stays in the log and the Allure results.
+ */
+const MAX_FAILURE_GROUPS = 5;
+const MAX_FAILURE_MESSAGE_CHARS = 300;
+
+/**
+ * The one line worth grouping by.
+ *
+ * Allure's `message` is often an assertion line followed by a stack, and the
+ * stack differs between two tests that failed for the same reason — grouping
+ * on the whole thing would put every failure in its own bucket and defeat the
+ * count. Real output here repeats the first line verbatim across tests
+ * ("Expected ~Home-screen to be displayed within 20s"), which is what makes
+ * exact grouping on it work without normalising.
+ */
+function failureMessageOf(result: AllureResult): string | null {
+  const raw = result.statusDetails?.message?.trim();
+  if (!raw) return null;
+  const firstLine = raw.split('\n')[0].trim();
+  if (!firstLine) return null;
+  return firstLine.length > MAX_FAILURE_MESSAGE_CHARS
+    ? `${firstLine.slice(0, MAX_FAILURE_MESSAGE_CHARS)}…`
+    : firstLine;
+}
+
 interface AllureResult {
   status?: string;
+  statusDetails?: { message?: string; trace?: string };
   historyId?: string;
   testCaseId?: string;
   fullName?: string;
@@ -56,8 +104,7 @@ interface AllureResult {
  * single test rather than three tests. Counting files instead of tests would
  * inflate the total and, worse, report a flaky-but-eventually-passing test as
  * both a pass and a failure.
- */
-/*
+ *
  * Note what this deliberately does *not* distinguish: two attempts of one test
  * in the same run, and the same test in two different runs, look identical
  * here. That is safe only because a run clones into a fresh workspace that is
@@ -121,7 +168,10 @@ export function summarizeAllureResults(dir: string): TestSummary | null {
     skipped: 0,
     unknown: 0,
     passRate: null,
+    failures: [],
   };
+
+  const failureCounts = new Map<string, number>();
 
   for (const result of latest.values()) {
     summary.total += 1;
@@ -142,7 +192,20 @@ export function summarizeAllureResults(dir: string): TestSummary | null {
         // Allure writes `unknown`, and an absent status means the same thing.
         summary.unknown += 1;
     }
+
+    // Both failed and broken: an assertion that came out false and a test that
+    // errored are different kinds of problem, but an operator asking "why is
+    // this red" wants both answers, not one.
+    if (result.status === 'failed' || result.status === 'broken') {
+      const message = failureMessageOf(result);
+      if (message) failureCounts.set(message, (failureCounts.get(message) ?? 0) + 1);
+    }
   }
+
+  summary.failures = [...failureCounts.entries()]
+    .map(([message, count]) => ({ message, count }))
+    .sort((a, b) => b.count - a.count || a.message.localeCompare(b.message))
+    .slice(0, MAX_FAILURE_GROUPS);
 
   if (summary.total === 0) return null;
 
