@@ -1,5 +1,6 @@
 import { ExecutionRun } from '../execution/execution-run.model';
 import { Device } from '../devices/device.model';
+import { classifySuite } from '../execution/automation-commands';
 import { AnalyticsAggregate, IAnalyticsAggregate } from './analytics-aggregate.model';
 
 export const ANALYTICS_RECOMPUTE_INTERVAL_MS = 60 * 60 * 1000; // recompute today's aggregates hourly
@@ -14,6 +15,8 @@ interface RunFacts {
   platform: Platform; // 'all' when the device is unknown, see below
   deviceUdid: string;
   suite: string;
+  /** See the note where this is populated: tag and feature are not one suite. */
+  suiteKind: 'tag' | 'feature' | 'name' | null;
   status: 'passed' | 'failed' | 'cancelled';
   /** Why a `failed` run failed. See FailureKind in execution-run.model.ts. */
   failureKind: 'test' | 'infra' | 'precondition' | null;
@@ -65,7 +68,23 @@ function stddev(values: number[]): number {
   return Math.sqrt(variance);
 }
 
-type SummaryBySuite = { suite: string; runs: number; passRate: number };
+type SummaryBySuite = { suite: string; suiteKind: RunFacts['suiteKind']; runs: number; passRate: number };
+
+/**
+ * The identity a suite is bucketed and tracked by.
+ *
+ * `suite` alone is not it: the same string means different test sets
+ * depending on whether it was given as a tag or a feature path, and averaging
+ * across that is what made flakiness untrustworthy. An unqualified suite (a
+ * run predating the snapshot) keeps the bare name as its key, so historical
+ * buckets stay continuous rather than every suite appearing to restart.
+ */
+function suiteKeyOf(suite: string, kind: RunFacts['suiteKind']): string {
+  // Historical aggregate rows written before `suiteKind` existed have none
+  // stored; classify them the same way, so the key a suite had yesterday is
+  // the key it has today and its flakiness series stays continuous.
+  return `${kind ?? classifySuite(suite)}:${suite}`;
+}
 
 function summarize(
   runs: RunFacts[],
@@ -103,7 +122,8 @@ function summarize(
   const bySuiteMap = new Map<string, RunFacts[]>();
   for (const r of runs) {
     byDeviceMap.set(r.deviceUdid, [...(byDeviceMap.get(r.deviceUdid) ?? []), r]);
-    bySuiteMap.set(r.suite, [...(bySuiteMap.get(r.suite) ?? []), r]);
+    const key = suiteKeyOf(r.suite, r.suiteKind);
+    bySuiteMap.set(key, [...(bySuiteMap.get(key) ?? []), r]);
   }
 
   return {
@@ -126,8 +146,13 @@ function summarize(
       runs: group.length,
       passRate: groupRate(group),
     })),
-    bySuite: [...bySuiteMap.entries()].map(([suite, group]) => ({
-      suite,
+    // Keyed internally by the qualified identity, but reported with `suite`
+    // as the bare string — the UI links a suite row straight to
+    // `/execution?suite=<suite>`, which filters on what the run actually
+    // stored. A qualified value there would match nothing.
+    bySuite: [...bySuiteMap.entries()].map(([, group]) => ({
+      suite: group[0].suite,
+      suiteKind: group[0].suiteKind,
       runs: group.length,
       passRate: groupRate(group),
     })),
@@ -177,7 +202,9 @@ async function computeFlakinessBySuite(
   const ratesBySuite = new Map<string, number[]>();
   for (const doc of history) {
     for (const s of doc.bySuite) {
-      ratesBySuite.set(s.suite, [...(ratesBySuite.get(s.suite) ?? []), s.passRate]);
+      // Same key the summary buckets by, rebuilt from the stored pair.
+      const key = suiteKeyOf(s.suite, s.suiteKind ?? null);
+      ratesBySuite.set(key, [...(ratesBySuite.get(key) ?? []), s.passRate]);
     }
   }
   if (freshRates) {
@@ -216,18 +243,39 @@ async function computeAggregates(
     endedAt: { $gte: rangeStart, $lt: rangeEnd },
   });
 
-  // Resolve each run's platform via its device. A device that has since been
-  // removed from inventory resolves to 'all': the run still counts in the
-  // per-project rollup, it just can't be attributed to a specific platform.
-  const udids = [...new Set(runs.map((r) => r.deviceUdid))];
-  const devices = await Device.find({ udid: { $in: udids } }).select('udid platform');
+  // Runs since 2026-09-02 carry their platform in `snapshot`, frozen at
+  // trigger time. The live join below is the fallback for older runs only —
+  // it is what made history mutable, since deleting a device retroactively
+  // unattributed every run that had used it. Back-filling a snapshot for
+  // those would be a guess dressed as a fact, so they keep the old behaviour
+  // and everything since is stable.
+  const udids = [...new Set(runs.filter((r) => !r.snapshot?.platform).map((r) => r.deviceUdid))];
+  const devices = udids.length
+    ? await Device.find({ udid: { $in: udids } }).select('udid platform')
+    : [];
   const platformByUdid = new Map(devices.map((d) => [d.udid, d.platform]));
 
   const facts: RunFacts[] = runs.map((run) => ({
     project: run.project,
-    platform: platformByUdid.get(run.deviceUdid) ?? 'all',
+    // A device that has since been removed and left no snapshot resolves to
+    // 'all': the run still counts in the per-project rollup, it just cannot be
+    // attributed to a specific platform.
+    platform: run.snapshot?.platform ?? platformByUdid.get(run.deviceUdid) ?? 'all',
     deviceUdid: run.deviceUdid,
     suite: run.suite,
+    // How the suite was addressed. A Cucumber tag and a feature path select
+    // different sets of tests, so a bucket mixing them is not one suite's
+    // history — and flakiness, being a variance measure over that history, is
+    // the metric that corrupted.
+    //
+    // Runs predating the snapshot fall back to classifying the string, not to
+    // null. That is not a guess: `classifySuite` is a pure function of the
+    // suite string and is the same function the runner used to pick its flag
+    // when the run happened, so it recovers the kind rather than inventing it.
+    // Falling back to null instead was tried and was visibly wrong — the same
+    // feature file showed up as two rows, one unqualified and one qualified,
+    // splitting its history at the moment the snapshot was introduced.
+    suiteKind: run.snapshot?.suiteKind ?? classifySuite(run.suite),
     status: run.status as RunFacts['status'],
     failureKind: run.failureKind ?? null,
     durationMs:
@@ -257,10 +305,18 @@ async function computeAggregates(
       // fold its own fresh rates in as the window's final data point. A
       // weekly bucket isn't a single day, so it contributes nothing of its
       // own; flakiness there is purely the real trailing daily history.
+      // Keyed by the qualified suite identity throughout, so a tag and a
+      // feature path that happen to share a name do not pool their rates into
+      // one variance figure.
       const freshRates =
-        window === 'daily' ? new Map(summary.bySuite.map((s) => [s.suite, s.passRate])) : undefined;
+        window === 'daily'
+          ? new Map(summary.bySuite.map((s) => [suiteKeyOf(s.suite, s.suiteKind), s.passRate]))
+          : undefined;
       const flakinessBySuite = await computeFlakinessBySuite(project, platform, rangeEnd, freshRates);
-      const bySuite = summary.bySuite.map((s) => ({ ...s, flakiness: flakinessBySuite.get(s.suite) ?? 0 }));
+      const bySuite = summary.bySuite.map((s) => ({
+        ...s,
+        flakiness: flakinessBySuite.get(suiteKeyOf(s.suite, s.suiteKind)) ?? 0,
+      }));
 
       const doc = await AnalyticsAggregate.findOneAndUpdate(
         { window, date: bucketDate, project, platform },

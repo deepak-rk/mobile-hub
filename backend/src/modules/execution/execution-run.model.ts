@@ -66,11 +66,54 @@ export interface IExecutionRun extends Document {
    * first is a project not using Allure, the second is a real result.
    */
   testSummary: ITestSummary | null;
+  /**
+   * Facts about this run frozen at the moment it was triggered.
+   *
+   * Analytics used to join a run's platform from the *current* `Device`
+   * record, so removing a device retroactively rewrote history — a
+   * six-month-old Android run silently became unattributed. History is a
+   * statement about what happened, and it cannot depend on what is still
+   * connected today.
+   *
+   * Every field is nullable, and runs predating this have the whole block
+   * null. Back-filling a value that was never recorded would be a guess
+   * dressed as a fact, so analytics falls back to the old live join for those
+   * and uses the snapshot for everything since.
+   */
+  snapshot: IRunSnapshot | null;
   startedAt: Date | null;
   endedAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
 }
+
+/**
+ * `suiteKind` records how the operator addressed the suite, because a
+ * Cucumber tag and a feature path are genuinely different selections that can
+ * cover overlapping tests. Storing which one it was is what stops analytics
+ * from silently comparing them as if they were the same suite.
+ */
+export interface IRunSnapshot {
+  platform: 'android' | 'ios' | null;
+  deviceModel: string | null;
+  deviceName: string | null;
+  framework: string | null;
+  suiteKind: 'tag' | 'feature' | 'name' | null;
+  /** Resolved after `pulling`; null when no repo was cloned. */
+  commit: string | null;
+}
+
+const runSnapshotSchema = new Schema<IRunSnapshot>(
+  {
+    platform: { type: String, enum: ['android', 'ios'], default: null },
+    deviceModel: { type: String, default: null },
+    deviceName: { type: String, default: null },
+    framework: { type: String, default: null },
+    suiteKind: { type: String, enum: ['tag', 'feature', 'name'], default: null },
+    commit: { type: String, default: null },
+  },
+  { _id: false },
+);
 
 const testSummarySchema = new Schema<ITestSummary>(
   {
@@ -123,6 +166,7 @@ const executionRunSchema = new Schema<IExecutionRun>(
     // Embedded rather than a separate collection: it is written once when the
     // run ends, read with the run, and never queried on its own.
     testSummary: { type: testSummarySchema, default: null },
+    snapshot: { type: runSnapshotSchema, default: null },
     startedAt: { type: Date, default: null },
     endedAt: { type: Date, default: null },
   },

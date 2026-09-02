@@ -6,6 +6,13 @@ export interface DeviceBreakdown {
 
 export interface SuiteBreakdown {
   suite: string;
+  /**
+   * How the suite was addressed. A Cucumber tag and a feature path select
+   * different test sets, so they are separate rows even when they share a
+   * name — which is why the table has to show this. Absent on rows aggregated
+   * before it was recorded.
+   */
+  suiteKind?: 'tag' | 'feature' | 'name' | null;
   runs: number;
   passRate: number;
   flakiness: number;

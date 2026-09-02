@@ -181,6 +181,87 @@ describe('computeDailyAggregates', () => {
     expect(summary?.testPassRate).toBe(0.8);
   });
 
+  it('reads platform from the run snapshot, so deleting a device cannot rewrite history', async () => {
+    // The device is gone from inventory entirely — the live join this used to
+    // rely on would resolve it to 'all' and quietly unattribute a run that was
+    // unambiguously Android when it happened.
+    stubRuns([run({ snapshot: { platform: 'android', suiteKind: 'feature' } })], []);
+    const upsert = vi.fn().mockResolvedValue({ id: 'agg' });
+    vi.spyOn(AnalyticsAggregate, 'findOneAndUpdate').mockImplementation(upsert as never);
+
+    await computeDailyAggregates(new Date('2026-01-01T12:00:00Z'));
+
+    const platforms = (upsert.mock.calls as UpsertCall[]).map(([filter]) => filter.platform);
+    expect(platforms).toContain('android');
+  });
+
+  it('still joins the device for runs predating the snapshot', async () => {
+    // Back-filling a snapshot for these would be a guess dressed as a fact, so
+    // they keep the old behaviour rather than losing their platform.
+    stubRuns([run({ snapshot: null })], [{ udid: 'd1', platform: 'ios' }]);
+    const upsert = vi.fn().mockResolvedValue({ id: 'agg' });
+    vi.spyOn(AnalyticsAggregate, 'findOneAndUpdate').mockImplementation(upsert as never);
+
+    await computeDailyAggregates(new Date('2026-01-01T12:00:00Z'));
+
+    const platforms = (upsert.mock.calls as UpsertCall[]).map(([filter]) => filter.platform);
+    expect(platforms).toContain('ios');
+  });
+
+  it('buckets a tag and a feature path separately even when they share a name', async () => {
+    // The two select different sets of tests, so pooling their pass rates into
+    // one series is what made flakiness — a variance measure over that series —
+    // untrustworthy.
+    stubRuns(
+      [
+        run({ suite: 'login', snapshot: { platform: 'android', suiteKind: 'tag' }, status: 'passed' }),
+        run({ suite: 'login', snapshot: { platform: 'android', suiteKind: 'feature' }, status: 'failed', failureKind: 'test' }),
+      ],
+      [{ udid: 'd1', platform: 'android' }],
+    );
+    const upsert = vi.fn().mockResolvedValue({ id: 'agg' });
+    vi.spyOn(AnalyticsAggregate, 'findOneAndUpdate').mockImplementation(upsert as never);
+
+    await computeDailyAggregates(new Date('2026-01-01T12:00:00Z'));
+
+    const calls = upsert.mock.calls as UpsertCall[];
+    const summary = calls.find(([filter]) => filter.platform === 'android')?.[1];
+    const bySuite = summary?.bySuite as Array<{ suite: string; suiteKind: string; passRate: number }>;
+    expect(bySuite).toHaveLength(2);
+    // Reported with the bare name, because the UI links a suite row to
+    // /execution?suite=<suite>, which filters on what the run actually stored.
+    expect(bySuite.every((b) => b.suite === 'login')).toBe(true);
+    expect(bySuite.map((b) => b.suiteKind).sort()).toEqual(['feature', 'tag']);
+    // Two separate 1-run buckets, not one bucket averaging to 50%.
+    expect(bySuite.map((b) => b.passRate).sort()).toEqual([0, 1]);
+  });
+
+  it('keeps a pre-snapshot run in the same bucket as a post-snapshot one for the same suite', async () => {
+    // The regression this guards: falling back to null instead of classifying
+    // split one feature file into two rows — an unqualified bucket holding its
+    // history and a qualified one starting from zero — which was visible in a
+    // real aggregate. `classifySuite` is a pure function of the string and the
+    // same one the runner used, so it recovers the kind rather than guessing.
+    stubRuns(
+      [
+        run({ suite: 'test/features/login.feature', snapshot: null }),
+        run({ suite: 'test/features/login.feature', snapshot: { platform: 'android', suiteKind: 'feature' } }),
+      ],
+      [{ udid: 'd1', platform: 'android' }],
+    );
+    const upsert = vi.fn().mockResolvedValue({ id: 'agg' });
+    vi.spyOn(AnalyticsAggregate, 'findOneAndUpdate').mockImplementation(upsert as never);
+
+    await computeDailyAggregates(new Date('2026-01-01T12:00:00Z'));
+
+    const calls = upsert.mock.calls as UpsertCall[];
+    const summary = calls.find(([filter]) => filter.platform === 'android')?.[1];
+    const bySuite = summary?.bySuite as Array<{ suite: string; suiteKind: string; runs: number }>;
+    expect(bySuite).toEqual([
+      expect.objectContaining({ suite: 'test/features/login.feature', suiteKind: 'feature', runs: 2 }),
+    ]);
+  });
+
   it('leaves the test-level rate at zero when nothing reported results', async () => {
     stubRuns([run()], [{ udid: 'd1', platform: 'android' }]);
     const upsert = vi.fn().mockResolvedValue({ id: 'agg' });

@@ -23,7 +23,20 @@ export interface IAnalyticsAggregate extends Document {
   runsWithTestResults: number;
   avgDurationMs: number;
   byDevice: Array<{ deviceUdid: string; runs: number; passRate: number }>;
-  bySuite: Array<{ suite: string; runs: number; passRate: number; flakiness: number }>;
+  /**
+   * `suiteKind` is how the suite was addressed — a Cucumber tag and a feature
+   * path select different test sets, so they are bucketed separately even
+   * when they share a name. Optional: rows written before it existed have no
+   * value, and those key on the bare name, which is what they were bucketed
+   * as.
+   */
+  bySuite: Array<{
+    suite: string;
+    suiteKind?: 'tag' | 'feature' | 'name' | null;
+    runs: number;
+    passRate: number;
+    flakiness: number;
+  }>;
   computedAt: Date;
 }
 
@@ -44,7 +57,7 @@ const analyticsAggregateSchema = new Schema<IAnalyticsAggregate>(
     runsWithTestResults: { type: Number, default: 0 },
     avgDurationMs: { type: Number, default: 0 },
     byDevice: [{ deviceUdid: String, runs: Number, passRate: Number }],
-    bySuite: [{ suite: String, runs: Number, passRate: Number, flakiness: Number }],
+    bySuite: [{ suite: String, suiteKind: String, runs: Number, passRate: Number, flakiness: Number }],
     computedAt: { type: Date, default: Date.now },
   },
   { timestamps: false },

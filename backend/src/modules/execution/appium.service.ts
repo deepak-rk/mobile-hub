@@ -39,12 +39,13 @@ const STATUS_TIMEOUT_MS = 2000;
 const STARTUP_TIMEOUT_MS = 60_000;
 const STARTUP_POLL_MS = 500;
 /**
- * How long to wait for a port-holder to start answering as Appium before
- * giving up on adopting it. Shorter than STARTUP_TIMEOUT_MS because by this
- * point something is already listening — this is waiting out the tail of
- * someone else's boot, not a boot from nothing.
+ * How long to keep retrying while the port is held by something that is not
+ * answering as Appium — a holder either finishing its boot or finishing its
+ * shutdown. Bounded: past this it is not contention, it is a program that owns
+ * the port and is not going to give it back.
  */
-const ADOPT_TIMEOUT_MS = 30_000;
+const PORT_CONTENTION_TIMEOUT_MS = 45_000;
+const PORT_RETRY_DELAY_MS = 2000;
 
 /**
  * The port this device's server uses, assigned once and then remembered.
@@ -130,19 +131,18 @@ async function isServerUp(endpoint: AppiumEndpoint): Promise<boolean> {
 }
 
 /**
- * Returns a running server's endpoint for this device, starting one if needed.
+ * One attempt at starting a server, reported rather than thrown.
  *
- * An already-listening server is adopted rather than replaced — an org running
- * its own Appium fleet on the configured ports should have the hub use it, not
- * fight it.
+ * `portBusy` is its own outcome because it is the one failure worth retrying:
+ * everything else (no `appium` on PATH, a driver that will not load) fails the
+ * same way however many times it is tried.
  */
-export async function ensureAppiumServer(device: IDevice, config: EffectiveConfig): Promise<AppiumEndpoint> {
-  const port = await ensurePort(device, config);
-  const host = config.appium.host;
-  const endpoint: AppiumEndpoint = { host, port, baseUrl: `http://${host}:${port}` };
+type StartOutcome =
+  | { kind: 'started' }
+  | { kind: 'port-busy' }
+  | { kind: 'failed'; exited: boolean; detail: string };
 
-  if (await isServerUp(endpoint)) return endpoint;
-
+async function startServer(device: IDevice, endpoint: AppiumEndpoint): Promise<StartOutcome> {
   // A tracked process that is no longer answering has died; drop it so a fresh
   // one can take the port.
   servers.delete(device.udid);
@@ -161,9 +161,9 @@ export async function ensureAppiumServer(device: IDevice, config: EffectiveConfi
     command: 'appium',
     args: [
       '--address',
-      host,
+      endpoint.host,
       '--port',
-      String(port),
+      String(endpoint.port),
       '--base-path',
       '/',
       // Only this device may be driven by this server, which is what makes
@@ -191,43 +191,67 @@ export async function ensureAppiumServer(device: IDevice, config: EffectiveConfi
   while (Date.now() < deadline) {
     if (exited) break;
     await new Promise((r) => setTimeout(r, STARTUP_POLL_MS));
-    if (await isServerUp(endpoint)) return endpoint;
+    if (await isServerUp(endpoint)) return { kind: 'started' };
   }
 
   managed.cancel();
   servers.delete(device.udid);
 
   const detail = startupOutput.trim();
+  if (detail.includes('EADDRINUSE')) return { kind: 'port-busy' };
+  return { kind: 'failed', exited, detail };
+}
 
-  // A port already held is not the same as a server already up, and the gap
-  // between the two is a window this hub opens itself: the servers map lives
-  // in process memory, so a backend restart orphans a running Appium, and a
-  // run starting while that orphan is still booting sees /status silent and
-  // the port taken. Waiting it out adopts the orphan instead of failing on it,
-  // which is the same adopt-don't-fight rule as the check at the top — that
-  // one just could not see a server that had not opened its API yet.
-  if (detail.includes('EADDRINUSE')) {
-    const adoptDeadline = Date.now() + ADOPT_TIMEOUT_MS;
-    while (Date.now() < adoptDeadline) {
-      await new Promise((r) => setTimeout(r, STARTUP_POLL_MS));
-      if (await isServerUp(endpoint)) return endpoint;
+/**
+ * Returns a running server's endpoint for this device, starting one if needed.
+ *
+ * An already-listening server is adopted rather than replaced — an org running
+ * its own Appium fleet on the configured ports should have the hub use it, not
+ * fight it.
+ *
+ * The retry loop exists because a port being *held* is neither "free" nor
+ * "ready", and the hub creates that third state itself: the `servers` map is
+ * process memory, so a restart orphans a running Appium. A run arriving during
+ * that window finds `/status` silent and the port taken, and the holder is
+ * equally likely to be **booting** (so wait and adopt it) or **dying** (so wait
+ * and take the port). Only retrying the whole attempt covers both; polling
+ * `/status` alone covers only the first, and that was the bug — the first run
+ * after a backend restart failed against a server that was on its way out.
+ */
+export async function ensureAppiumServer(device: IDevice, config: EffectiveConfig): Promise<AppiumEndpoint> {
+  const port = await ensurePort(device, config);
+  const host = config.appium.host;
+  const endpoint: AppiumEndpoint = { host, port, baseUrl: `http://${host}:${port}` };
+
+  const contendedUntil = Date.now() + PORT_CONTENTION_TIMEOUT_MS;
+  for (;;) {
+    if (await isServerUp(endpoint)) return endpoint;
+
+    const outcome = await startServer(device, endpoint);
+    if (outcome.kind === 'started') return endpoint;
+
+    if (outcome.kind === 'port-busy') {
+      if (Date.now() < contendedUntil) {
+        await new Promise((r) => setTimeout(r, PORT_RETRY_DELAY_MS));
+        continue;
+      }
+      throw new AppiumUnavailableError(
+        `Port ${port} on ${host} stayed busy for ${PORT_CONTENTION_TIMEOUT_MS / 1000}s without ever ` +
+          `answering as Appium. That is usually an Appium this hub started before a restart, now ` +
+          `orphaned, or another program holding the port. Free it, or move this device off it by ` +
+          `clearing its appiumPort.`,
+      );
     }
+
     throw new AppiumUnavailableError(
-      `Port ${port} on ${host} is held by something that never answered as Appium ` +
-        `(waited ${ADOPT_TIMEOUT_MS / 1000}s after EADDRINUSE). ` +
-        `That is usually an Appium this hub started before a restart, now orphaned, or another program on the port. ` +
-        `Free the port, or move this device off it by clearing its appiumPort.`,
+      (outcome.exited
+        ? `Appium exited during startup on ${endpoint.baseUrl}.`
+        : `Appium did not become ready on ${endpoint.baseUrl} within ${STARTUP_TIMEOUT_MS / 1000}s.`) +
+        ` Check that \`appium\` is installed and on PATH, and that port ${port} is free.` +
+        // The server's own words beat any guess this layer could make about why.
+        (outcome.detail ? `\nAppium said:\n${outcome.detail}` : '\nAppium produced no output before failing.'),
     );
   }
-
-  throw new AppiumUnavailableError(
-    (exited
-      ? `Appium exited during startup on ${endpoint.baseUrl}.`
-      : `Appium did not become ready on ${endpoint.baseUrl} within ${STARTUP_TIMEOUT_MS / 1000}s.`) +
-      ` Check that \`appium\` is installed and on PATH, and that port ${port} is free.` +
-      // The server's own words beat any guess this layer could make about why.
-      (detail ? `\nAppium said:\n${detail}` : '\nAppium produced no output before failing.'),
-  );
 }
 
 /**

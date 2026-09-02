@@ -78,6 +78,18 @@ beforeEach(() => {
   origArtifactsDir = env.EXECUTION_ARTIFACTS_DIR;
   env.EXECUTIONS_DIR = tmpDir;
   env.EXECUTION_ARTIFACTS_DIR = artifactsDir;
+
+  // triggerExecutionRun reads the device to snapshot its platform/model onto
+  // the run. Stubbed for every test, not just the ones that care: an unmocked
+  // Mongoose query against no database never settles, so leaving it real turns
+  // an unrelated assertion into a 5s timeout with nothing to diagnose. Same
+  // trap as builds.service.test.ts's claim upsert.
+  vi.spyOn(devicesService, 'getDevice').mockResolvedValue({
+    udid: 'd1',
+    platform: 'android',
+    model: 'Pixel 7',
+    name: 'Lab phone',
+  } as never);
 });
 
 /**

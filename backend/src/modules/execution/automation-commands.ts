@@ -82,15 +82,30 @@ export function resolveRunCommand(automation: AutomationConfig, suite?: string):
  * through history, and these three forms cannot be confused for one another:
  * a tag always starts with `@`, and a spec always looks like a path.
  */
+export type SuiteKind = 'tag' | 'feature' | 'name';
+
+/**
+ * Which of the three a suite string is. Exported because analytics needs the
+ * same answer the runner flags do — a tag and a feature path select different
+ * sets, so comparing them as one suite is what made flakiness untrustworthy.
+ * Deriving it in two places would let the two drift.
+ */
+export function classifySuite(suite: string): SuiteKind {
+  if (suite.startsWith('@')) return 'tag';
+  if (suite.includes('/') || suite.endsWith('.feature')) return 'feature';
+  return 'name';
+}
+
 function selectorArgsFor(suite: string): string[] {
-  if (suite.startsWith('@')) {
-    // Cucumber selects by tag expression, not by name.
-    return ['--cucumberOpts.tagExpression', suite];
+  switch (classifySuite(suite)) {
+    case 'tag':
+      // Cucumber selects by tag expression, not by name.
+      return ['--cucumberOpts.tagExpression', suite];
+    case 'feature':
+      return ['--spec', suite];
+    default:
+      return ['--suite', suite];
   }
-  if (suite.includes('/') || suite.endsWith('.feature')) {
-    return ['--spec', suite];
-  }
-  return ['--suite', suite];
 }
 
 function isKnownFramework(framework: string): boolean {

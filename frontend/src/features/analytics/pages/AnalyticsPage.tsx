@@ -67,6 +67,13 @@ function Kpi({
   );
 }
 
+/** Named for what the operator picked, not for the runner flag it becomes. */
+const SUITE_KIND_LABELS: Record<'tag' | 'feature' | 'name', string> = {
+  tag: 'tag',
+  feature: 'feature file',
+  name: 'named suite',
+};
+
 function platformLabel(platform: AnalyticsAggregate['platform']): string {
   if (platform === 'all') return 'All platforms';
   return platform === 'ios' ? 'iOS' : 'Android';
@@ -156,9 +163,17 @@ function makeSuiteColumns(project: string) {
       // The number is the question; the runs behind it are the answer. Links
       // straight to those runs rather than making the reader re-filter by hand.
       cell: (info) => (
-        <Link className={styles.rowLink} to={`/execution?project=${encodeURIComponent(project)}&suite=${encodeURIComponent(info.getValue())}`}>
-          {info.getValue()}
-        </Link>
+        <span className={styles.suiteCell}>
+          <Link className={styles.rowLink} to={`/execution?project=${encodeURIComponent(project)}&suite=${encodeURIComponent(info.getValue())}`}>
+            {info.getValue()}
+          </Link>
+          {/* Two rows can share a name — a Cucumber tag and a feature path
+              select different test sets and are tracked separately — so
+              without this the table would show what looks like a duplicate. */}
+          {info.row.original.suiteKind ? (
+            <span className={styles.suiteKind}>{SUITE_KIND_LABELS[info.row.original.suiteKind]}</span>
+          ) : null}
+        </span>
       ),
     }),
     suiteColumnHelper.accessor('passRate', {

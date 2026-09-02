@@ -10,6 +10,7 @@ import { acquireLock, getDevice, releaseLock } from '../devices/devices.service'
 import { getBuild } from '../builds/builds.service';
 import { assertDriverInstalled, ensureAppiumServer } from './appium.service';
 import { buildRunEnvironment, createRedactor } from './run-environment';
+import { classifySuite } from './automation-commands';
 import { summarizeRunResults, ALLURE_RESULTS_DIRNAME } from './allure-summary';
 import { ExecutionRun, IExecutionRun, RunStatus, StageName, FailureKind } from './execution-run.model';
 import { publishExecutionEvent } from './execution.events';
@@ -91,6 +92,14 @@ export async function triggerExecutionRun(
   const logPath = path.join(artifactsPath, 'run.log');
   const pullsRealRepo = Boolean(automation.repoUrl);
 
+  // Frozen now, not joined at aggregation time. Analytics used to read a
+  // run's platform from the current Device record, so removing a device
+  // rewrote history — an old Android run silently became unattributed.
+  // A best-effort read: a device that cannot be resolved leaves the fields
+  // null rather than blocking the trigger, since the lock acquisition below
+  // is what actually decides whether this run may proceed.
+  const device = await getDevice(input.deviceUdid).catch(() => null);
+
   const run = await ExecutionRun.create({
     _id: runId,
     machineId: input.machineId,
@@ -111,6 +120,18 @@ export async function triggerExecutionRun(
       { name: 'installing', status: input.setup ? 'pending' : 'skipped' },
       { name: 'execute', status: 'pending' },
     ],
+    snapshot: {
+      platform: device?.platform ?? null,
+      deviceModel: device?.model ?? null,
+      deviceName: device?.name ?? null,
+      framework: automation.framework ?? null,
+      // How the operator addressed the suite. A tag and a feature path select
+      // different sets, so recording which one it was is what stops analytics
+      // comparing them as though they were the same suite.
+      suiteKind: classifySuite(input.suite),
+      // Filled in after `pulling`; there is nothing to resolve yet.
+      commit: null,
+    },
     workspacePath,
     artifactsPath,
     logPath,
@@ -394,6 +415,35 @@ async function collectAllureReport(run: IExecutionRun, logStream: fs.WriteStream
   }
 }
 
+/**
+ * Records the commit the run actually executed against.
+ *
+ * `branch` alone does not identify what ran: a branch moves, so two runs of
+ * `main` a week apart are different code, and a re-run of an old run against
+ * "the same branch" is a different thing entirely. The commit is what makes a
+ * result reproducible.
+ *
+ * Best-effort and silent on failure — a run that tested the app successfully
+ * must not be failed because a metadata read did not work.
+ */
+async function recordCommit(run: IExecutionRun, repoDir: string): Promise<void> {
+  let out = '';
+  const managed = supervisor.run({
+    command: 'git',
+    args: ['rev-parse', 'HEAD'],
+    cwd: repoDir,
+    timeoutMs: 10_000,
+    onStdout: (chunk) => {
+      out += chunk.toString();
+    },
+  });
+  const outcome = await managed.result;
+  const sha = out.trim();
+  if (!isSuccess(outcome) || !/^[0-9a-f]{40}$/.test(sha)) return;
+  if (run.snapshot) run.snapshot.commit = sha;
+  await run.save();
+}
+
 async function saveCacheIfMissing(repoDir: string, cacheDir: string | null): Promise<void> {
   if (!cacheDir || fs.existsSync(cacheDir)) return;
   const nodeModules = path.join(repoDir, 'node_modules');
@@ -463,6 +513,7 @@ async function runExecution(
       // the app under test.
       if (!(await settleStage('pulling', cloneOutcome, 'infra'))) return;
       cwd = repoDir;
+      await recordCommit(run, repoDir);
 
       await setStage(run, 'restoring_cache', 'running');
       ({ cacheDir } = await restoreCache(run, repoDir, logStream));
