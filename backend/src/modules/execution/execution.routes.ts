@@ -7,21 +7,16 @@ import type { WebSocket } from 'ws';
 import { env } from '../../config/env';
 import {
   cancelExecutionRun,
-  DeviceLockedError,
   getExecutionRun,
   listExecutionRuns,
-  RunNotCancellableError,
   triggerExecutionRun,
 } from './execution.service';
 import { subscribeToExecutionEvents } from './execution.events';
-import {
-  resolveInstallCommand,
-  resolveRunCommand,
-  UnsupportedFrameworkError,
-} from './automation-commands';
+import { resolveInstallCommand, resolveRunCommand } from './automation-commands';
 import { discoverSuites, SuiteDiscoveryError } from './suites/suites.service';
 import { ExecutionRun } from './execution-run.model';
 import type { JwtPayload } from 'fastify-auth-kit';
+import { ForbiddenError, NotFoundError, ValidationError } from '../../common/errors/app-error';
 
 const commandSchema = z.object({ command: z.string().min(1), args: z.array(z.string()).default([]) });
 
@@ -86,14 +81,12 @@ export const executionRoutes: FastifyPluginAsync = async (app) => {
    * Also declared before `/:id`, for the same reason `projects` is.
    * `?refresh=1` bypasses the cache, for when someone just pushed a suite.
    */
-  app.get('/projects/:projectId/suites', async (req, reply) => {
+  app.get('/projects/:projectId/suites', async (req) => {
     const { projectId } = req.params as { projectId: string };
     const { refresh } = req.query as { refresh?: string };
     const project = app.config.projects[projectId];
     if (!project) {
-      return reply
-        .status(404)
-        .send({ code: 'PROJECT_NOT_CONFIGURED', message: `No project '${projectId}' is declared in config.` });
+      throw new NotFoundError(`No project '${projectId}' is declared in config.`, 'PROJECT_NOT_CONFIGURED');
     }
 
     try {
@@ -110,10 +103,10 @@ export const executionRoutes: FastifyPluginAsync = async (app) => {
     }
   });
 
-  app.get('/:id', async (req, reply) => {
+  app.get('/:id', async (req) => {
     const { id } = req.params as { id: string };
     const run = await getExecutionRun(id);
-    if (!run) return reply.status(404).send({ code: 'NOT_FOUND', message: 'Execution run not found' });
+    if (!run) throw new NotFoundError('Execution run not found');
     return run;
   });
 
@@ -126,33 +119,25 @@ export const executionRoutes: FastifyPluginAsync = async (app) => {
     async (req, reply) => {
       const body = triggerBody.safeParse(req.body);
       if (!body.success) {
-        return reply.status(400).send({ code: 'VALIDATION_ERROR', message: body.error.message });
+        throw new ValidationError(body.error.message);
       }
-      try {
-        // A declared project's own automation block wins over the org default —
-        // that per-project override is the entire point of declaring one.
-        const automation = app.config.projects[body.data.project]?.automation ?? app.config.automation;
-        // Config decides how to install and run unless this trigger overrode it.
-        const setup = body.data.setup ?? resolveInstallCommand(automation) ?? undefined;
-        const runCommand = body.data.run ?? resolveRunCommand(automation, body.data.suite);
+      // A declared project's own automation block wins over the org default —
+      // that per-project override is the entire point of declaring one.
+      const automation = app.config.projects[body.data.project]?.automation ?? app.config.automation;
+      // Config decides how to install and run unless this trigger overrode it.
+      // DeviceLockedError (409) and UnsupportedFrameworkError (400, code
+      // NO_RUN_COMMAND — nothing configured and nothing supplied) are both
+      // typed AppErrors now; the global error handler in app.ts maps them,
+      // so nothing here needs to catch them itself.
+      const setup = body.data.setup ?? resolveInstallCommand(automation) ?? undefined;
+      const runCommand = body.data.run ?? resolveRunCommand(automation, body.data.suite);
 
-        const run = await triggerExecutionRun(
-          { ...body.data, setup, run: runCommand, triggeredBy: req.user.sub },
-          automation,
-          app.config.appium,
-        );
-        return reply.status(201).send(run);
-      } catch (err) {
-        if (err instanceof DeviceLockedError) {
-          return reply.status(409).send({ code: 'DEVICE_LOCKED', message: err.message });
-        }
-        // Nothing was configured and nothing was supplied — a 400 naming both
-        // ways out, rather than a run that fails later with a vaguer reason.
-        if (err instanceof UnsupportedFrameworkError) {
-          return reply.status(400).send({ code: 'NO_RUN_COMMAND', message: err.message });
-        }
-        throw err;
-      }
+      const run = await triggerExecutionRun(
+        { ...body.data, setup, run: runCommand, triggeredBy: req.user.sub },
+        automation,
+        app.config.appium,
+      );
+      return reply.status(201).send(run);
     },
   );
 
@@ -168,14 +153,12 @@ export const executionRoutes: FastifyPluginAsync = async (app) => {
   app.get('/:id/logs', async (req, reply) => {
     const { id } = req.params as { id: string };
     const run = await getExecutionRun(id);
-    if (!run) return reply.status(404).send({ code: 'NOT_FOUND', message: 'Execution run not found' });
+    if (!run) throw new NotFoundError('Execution run not found');
 
     // Runs from before durable artifacts existed kept their log inside the
     // workspace; say so plainly rather than 404ing as if the run never had one.
     if (!run.logPath || !fs.existsSync(run.logPath)) {
-      return reply
-        .status(404)
-        .send({ code: 'LOG_UNAVAILABLE', message: 'No log file is stored for this run.' });
+      throw new NotFoundError('No log file is stored for this run.', 'LOG_UNAVAILABLE');
     }
     // `?download=1` serves the same bytes as an attachment. Done server-side
     // with Content-Disposition rather than client-side from the fetched text:
@@ -202,7 +185,7 @@ export const executionRoutes: FastifyPluginAsync = async (app) => {
     const { id } = req.params as { id: string };
     const run = await getExecutionRun(id);
     if (!run?.reportPath) {
-      return reply.status(404).send({ code: 'REPORT_UNAVAILABLE', message: 'No report is stored for this run.' });
+      throw new NotFoundError('No report is stored for this run.', 'REPORT_UNAVAILABLE');
     }
     // Redirect off the caller's own URL rather than a hardcoded prefix — the
     // `/api/execution` mount point is chosen in app.ts, not here.
@@ -214,7 +197,7 @@ export const executionRoutes: FastifyPluginAsync = async (app) => {
     const { id } = req.params as { id: string };
     const run = await getExecutionRun(id);
     if (!run?.reportPath) {
-      return reply.status(404).send({ code: 'REPORT_UNAVAILABLE', message: 'No report is stored for this run.' });
+      throw new NotFoundError('No report is stored for this run.', 'REPORT_UNAVAILABLE');
     }
 
     const relativePath = (req.params as Record<string, string>)['*'] || 'index.html';
@@ -226,24 +209,19 @@ export const executionRoutes: FastifyPluginAsync = async (app) => {
     const resolved = path.resolve(run.reportPath, relativePath);
     const root = path.resolve(run.reportPath);
     if (resolved !== root && !resolved.startsWith(root + path.sep)) {
-      return reply.status(403).send({ code: 'FORBIDDEN', message: 'Path escapes the report directory.' });
+      throw new ForbiddenError('Path escapes the report directory.');
     }
 
     return reply.sendFile(relativePath, run.reportPath);
   });
 
-  app.post('/:id/cancel', { preHandler: app.requireRole('operator', 'admin') }, async (req, reply) => {
+  app.post('/:id/cancel', { preHandler: app.requireRole('operator', 'admin') }, async (req) => {
     const { id } = req.params as { id: string };
-    try {
-      const run = await cancelExecutionRun(id);
-      if (!run) return reply.status(404).send({ code: 'NOT_FOUND', message: 'Execution run not found' });
-      return { message: 'Cancellation requested', run };
-    } catch (err) {
-      if (err instanceof RunNotCancellableError) {
-        return reply.status(409).send({ code: 'CONFLICT', message: err.message });
-      }
-      throw err;
-    }
+    // RunNotCancellableError is a typed ConflictError now; the global error
+    // handler maps it, so no local catch is needed.
+    const run = await cancelExecutionRun(id);
+    if (!run) throw new NotFoundError('Execution run not found');
+    return { message: 'Cancellation requested', run };
   });
 
   // Auth via ?token= since a plain WS upgrade can't easily carry an

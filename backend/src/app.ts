@@ -28,6 +28,7 @@ import { installRunsRoutes } from './modules/device-installs/install-runs.routes
 import { executionRoutes } from './modules/execution/execution.routes';
 import { streamingRoutes } from './modules/streaming/streaming.routes';
 import { analyticsRoutes } from './modules/analytics/analytics.routes';
+import { AppError } from './common/errors/app-error';
 
 export async function buildApp(config: EffectiveConfig): Promise<FastifyInstance> {
   const app = Fastify({
@@ -41,6 +42,34 @@ export async function buildApp(config: EffectiveConfig): Promise<FastifyInstance
                 ? { target: 'pino-pretty', options: { colorize: true } }
                 : undefined,
           },
+  });
+
+  // The one place an AppError becomes an HTTP response — every route below
+  // that throws one (rather than catching it and building a reply by hand)
+  // is handled here. Anything that isn't an AppError is treated as opaque:
+  // logged with the full error for diagnosis, but never handed back to the
+  // caller (backend/CLAUDE.md: "Never expose secrets, tokens, stack traces
+  // ... in logs or API responses").
+  app.setErrorHandler((err, req, reply) => {
+    if (err instanceof AppError) {
+      return reply.status(err.statusCode).send({ code: err.code, message: err.message });
+    }
+    // Fastify itself and its plugins — @fastify/rate-limit's 429 confirmed by
+    // reading its source (node_modules/@fastify/rate-limit/index.js: a plain
+    // `Error` with `.statusCode` set, not an AppError), plus built-in cases
+    // like a malformed JSON body — throw plain Errors with a `statusCode`
+    // (and sometimes `code`) attached, carrying an already-safe, user-facing
+    // message. Respect those instead of collapsing every 4xx a plugin raises
+    // into a 500; only a genuinely unexpected error (no statusCode, or a 5xx)
+    // falls through to the generic response below.
+    const pluginError = err as { statusCode?: number; code?: string; message?: string };
+    if (typeof pluginError.statusCode === 'number' && pluginError.statusCode >= 400 && pluginError.statusCode < 500) {
+      return reply
+        .status(pluginError.statusCode)
+        .send({ code: pluginError.code ?? 'ERROR', message: pluginError.message ?? 'Request error' });
+    }
+    req.log.error(err);
+    return reply.status(500).send({ code: 'INTERNAL_ERROR', message: 'Something went wrong' });
   });
 
   // Security plugins

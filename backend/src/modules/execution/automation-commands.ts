@@ -1,5 +1,6 @@
 import { AutomationConfig } from '../../config/org-config.schema';
 import { RunCommand } from './execution.service';
+import { ValidationError } from '../../common/errors/app-error';
 
 /**
  * Turns a project's declared automation config into the commands to run.
@@ -18,13 +19,17 @@ import { RunCommand } from './execution.service';
 /** Frameworks whose invocation this module knows how to build. */
 const KNOWN_FRAMEWORKS = ['appium', 'wdio'] as const;
 
-export class UnsupportedFrameworkError extends Error {
+// A 400 ValidationError, not a 409/404 — the request itself is malformed
+// (nothing usable was configured or supplied), matching what
+// execution.routes.ts was already mapping this to under the code
+// 'NO_RUN_COMMAND', now baked in here instead of a route-level instanceof check.
+export class UnsupportedFrameworkError extends ValidationError {
   constructor(framework: string) {
     super(
       `No run command is known for framework '${framework}'. ` +
         `Either supply an explicit run command with the trigger, or configure one of: ${KNOWN_FRAMEWORKS.join(', ')}.`,
+      'NO_RUN_COMMAND',
     );
-    this.name = 'UnsupportedFrameworkError';
   }
 }
 

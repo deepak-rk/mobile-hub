@@ -3,9 +3,6 @@ import { z } from 'zod';
 import type { WebSocket } from 'ws';
 import type { JwtPayload } from 'fastify-auth-kit';
 import {
-  BuildNotReadyError,
-  IncompatibleDeviceError,
-  UnknownDeviceError,
   getInstallRun,
   getInstalledDevicesForBuild,
   listInstallRuns,
@@ -14,6 +11,7 @@ import {
 } from './install-runs.service';
 import { subscribeToInstallEvents } from './install-runs.events';
 import { requireAgentToken } from '../agent-auth/agent-auth';
+import { NotFoundError, ValidationError } from '../../common/errors/app-error';
 
 const triggerBody = z.object({
   buildId: z.string().min(1),
@@ -45,10 +43,10 @@ export const installRunsRoutes: FastifyPluginAsync = async (app) => {
     return getInstalledDevicesForBuild(buildId);
   });
 
-  app.get('/:id', async (req, reply) => {
+  app.get('/:id', async (req) => {
     const { id } = req.params as { id: string };
     const run = await getInstallRun(id);
-    if (!run) return reply.status(404).send({ code: 'NOT_FOUND', message: 'Install run not found' });
+    if (!run) throw new NotFoundError('Install run not found');
     return run;
   });
 
@@ -61,36 +59,26 @@ export const installRunsRoutes: FastifyPluginAsync = async (app) => {
     async (req, reply) => {
       const body = triggerBody.safeParse(req.body);
       if (!body.success) {
-        return reply.status(400).send({ code: 'VALIDATION_ERROR', message: body.error.message });
+        throw new ValidationError(body.error.message);
       }
-      try {
-        const run = await triggerInstallRun({ ...body.data, triggeredBy: req.user.sub });
-        return reply.status(201).send(run);
-      } catch (err) {
-        if (err instanceof BuildNotReadyError) {
-          return reply.status(409).send({ code: 'BUILD_NOT_READY', message: err.message });
-        }
-        if (err instanceof UnknownDeviceError) {
-          return reply.status(400).send({ code: 'UNKNOWN_DEVICE', message: err.message });
-        }
-        if (err instanceof IncompatibleDeviceError) {
-          return reply.status(400).send({ code: 'INCOMPATIBLE_DEVICE', message: err.message });
-        }
-        throw err;
-      }
+      // BuildNotReadyError / UnknownDeviceError / IncompatibleDeviceError are
+      // typed AppErrors now — the global error handler maps them, so no local
+      // catch is needed.
+      const run = await triggerInstallRun({ ...body.data, triggeredBy: req.user.sub });
+      return reply.status(201).send(run);
     },
   );
 
   // Agent-authenticated: the agent driving one target's download/install
   // reports its own progress here as it goes.
-  app.post('/:id/targets/:deviceUdid/report', { preHandler: requireAgentToken }, async (req, reply) => {
+  app.post('/:id/targets/:deviceUdid/report', { preHandler: requireAgentToken }, async (req) => {
     const { id, deviceUdid } = req.params as { id: string; deviceUdid: string };
     const body = reportBody.safeParse(req.body);
     if (!body.success) {
-      return reply.status(400).send({ code: 'VALIDATION_ERROR', message: body.error.message });
+      throw new ValidationError(body.error.message);
     }
     const run = await reportTargetProgress(id, deviceUdid, body.data);
-    if (!run) return reply.status(404).send({ code: 'NOT_FOUND', message: 'Install run or target not found' });
+    if (!run) throw new NotFoundError('Install run or target not found');
     return run;
   });
 

@@ -12,6 +12,7 @@ import { ExecutionRun } from '../execution/execution-run.model';
 // this one, so reaching for it here would close a cycle. Same shape as the
 // ExecutionRun import above, which exists for the GC guard for the same reason.
 import { InstallRun } from '../device-installs/install-run.model';
+import { ConflictError } from '../../common/errors/app-error';
 
 async function sha256File(filePath: string): Promise<string> {
   const hash = crypto.createHash('sha256');
@@ -349,10 +350,9 @@ export async function refetchBuild(config: EffectiveConfig, build: IBuild): Prom
   );
 }
 
-export class BuildNotPurgeableError extends Error {
+export class BuildNotPurgeableError extends ConflictError {
   constructor(message: string) {
-    super(message);
-    this.name = 'BuildNotPurgeableError';
+    super(message, 'BUILD_NOT_PURGEABLE');
   }
 }
 

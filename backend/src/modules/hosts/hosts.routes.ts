@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { listHosts, getHost, upsertHeartbeat } from './hosts.service';
 import { requireAgentToken } from '../agent-auth/agent-auth';
 import { getPendingInstallsForMachine } from '../device-installs/install-runs.service';
+import { ForbiddenError, NotFoundError, ValidationError } from '../../common/errors/app-error';
 
 const heartbeatBody = z.object({
   machineId: z.string().min(1),
@@ -21,19 +22,16 @@ export const hostsRoutes: FastifyPluginAsync = async (app) => {
     return listHosts();
   });
 
-  app.post('/heartbeat', { preHandler: requireAgentToken }, async (req, reply) => {
+  app.post('/heartbeat', { preHandler: requireAgentToken }, async (req) => {
     const body = heartbeatBody.safeParse(req.body);
     if (!body.success) {
-      return reply.status(400).send({ code: 'VALIDATION_ERROR', message: body.error.message });
+      throw new ValidationError(body.error.message);
     }
     // A per-agent credential is scoped to one machineId — that's the entire
     // point of it over the shared AGENT_TOKEN. `agentMachineId` is null for
     // the shared-token path, which stays unrestricted exactly as before.
     if (req.agentMachineId && req.agentMachineId !== body.data.machineId) {
-      return reply.status(403).send({
-        code: 'AGENT_MACHINE_MISMATCH',
-        message: 'This credential is scoped to a different machineId.',
-      });
+      throw new ForbiddenError('This credential is scoped to a different machineId.', 'AGENT_MACHINE_MISMATCH');
     }
     const host = await upsertHeartbeat(body.data);
     // Piggybacks on the existing 10s poll cycle rather than opening a second
@@ -43,10 +41,10 @@ export const hostsRoutes: FastifyPluginAsync = async (app) => {
     return { ...host.toObject(), pendingInstalls };
   });
 
-  app.get('/:machineId', async (req, reply) => {
+  app.get('/:machineId', async (req) => {
     const { machineId } = req.params as { machineId: string };
     const host = await getHost(machineId);
-    if (!host) return reply.status(404).send({ code: 'NOT_FOUND', message: 'Host not found' });
+    if (!host) throw new NotFoundError('Host not found');
     return host;
   });
 };

@@ -14,18 +14,20 @@ import { classifySuite } from './automation-commands';
 import { summarizeRunResults, ALLURE_RESULTS_DIRNAME } from './allure-summary';
 import { ExecutionRun, IExecutionRun, RunStatus, StageName, FailureKind } from './execution-run.model';
 import { publishExecutionEvent } from './execution.events';
+import { ConflictError } from '../../common/errors/app-error';
 
-export class DeviceLockedError extends Error {
+// Both extend ConflictError (409) directly — matches what execution.routes.ts
+// was already mapping them to before typed errors existed, now baked in at
+// the throw site instead of a per-route instanceof check.
+export class DeviceLockedError extends ConflictError {
   constructor(deviceUdid: string) {
-    super(`Device ${deviceUdid} is already locked`);
-    this.name = 'DeviceLockedError';
+    super(`Device ${deviceUdid} is already locked`, 'DEVICE_LOCKED');
   }
 }
 
-export class RunNotCancellableError extends Error {
+export class RunNotCancellableError extends ConflictError {
   constructor(status: string) {
     super(`Run is already ${status}`);
-    this.name = 'RunNotCancellableError';
   }
 }
 

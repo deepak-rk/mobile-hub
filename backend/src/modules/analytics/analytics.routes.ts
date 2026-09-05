@@ -1,6 +1,7 @@
 import { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 import { computeDailyAggregates, computeWeeklyAggregates, queryAggregates } from './analytics.service';
+import { ValidationError } from '../../common/errors/app-error';
 
 const listQuery = z.object({
   project: z.string().optional(),
@@ -18,18 +19,18 @@ const recomputeBody = z.object({
 });
 
 export const analyticsRoutes: FastifyPluginAsync = async (app) => {
-  app.get('/', async (req, reply) => {
+  app.get('/', async (req) => {
     const query = listQuery.safeParse(req.query);
     if (!query.success) {
-      return reply.status(400).send({ code: 'VALIDATION_ERROR', message: query.error.message });
+      throw new ValidationError(query.error.message);
     }
     return queryAggregates(query.data);
   });
 
-  app.post('/recompute', { preHandler: app.requireRole('operator', 'admin') }, async (req, reply) => {
+  app.post('/recompute', { preHandler: app.requireRole('operator', 'admin') }, async (req) => {
     const body = recomputeBody.safeParse(req.body ?? {});
     if (!body.success) {
-      return reply.status(400).send({ code: 'VALIDATION_ERROR', message: body.error.message });
+      throw new ValidationError(body.error.message);
     }
     const aggregates =
       body.data.window === 'weekly'

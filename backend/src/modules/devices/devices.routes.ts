@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { acquireLock, getDevice, listDevices, releaseLock, renewLock, syncDevices } from './devices.service';
 import { requireAgentToken } from '../agent-auth/agent-auth';
 import { getActiveInstallUdids } from '../device-installs/install-runs.service';
+import { ConflictError, ForbiddenError, NotFoundError, ValidationError } from '../../common/errors/app-error';
 
 const syncBody = z.object({
   machineId: z.string().min(1),
@@ -35,35 +36,32 @@ export const devicesRoutes: FastifyPluginAsync = async (app) => {
     }));
   });
 
-  app.post('/sync', { preHandler: requireAgentToken }, async (req, reply) => {
+  app.post('/sync', { preHandler: requireAgentToken }, async (req) => {
     const body = syncBody.safeParse(req.body);
     if (!body.success) {
-      return reply.status(400).send({ code: 'VALIDATION_ERROR', message: body.error.message });
+      throw new ValidationError(body.error.message);
     }
     // See hosts.routes.ts's heartbeat handler for why this check exists.
     if (req.agentMachineId && req.agentMachineId !== body.data.machineId) {
-      return reply.status(403).send({
-        code: 'AGENT_MACHINE_MISMATCH',
-        message: 'This credential is scoped to a different machineId.',
-      });
+      throw new ForbiddenError('This credential is scoped to a different machineId.', 'AGENT_MACHINE_MISMATCH');
     }
     return syncDevices(body.data.machineId, body.data.devices);
   });
 
-  app.get('/:udid', async (req, reply) => {
+  app.get('/:udid', async (req) => {
     const { udid } = req.params as { udid: string };
     const device = await getDevice(udid);
-    if (!device) return reply.status(404).send({ code: 'NOT_FOUND', message: 'Device not found' });
+    if (!device) throw new NotFoundError('Device not found');
     return device;
   });
 
-  app.post('/:udid/lock', { preHandler: app.authenticate }, async (req, reply) => {
+  app.post('/:udid/lock', { preHandler: app.authenticate }, async (req) => {
     const { udid } = req.params as { udid: string };
     const { reason } = (req.body as { reason?: string }) ?? {};
     const sessionId = `session-${Date.now()}`;
     const device = await acquireLock(udid, req.user.sub, sessionId, reason);
     if (!device) {
-      return reply.status(409).send({ code: 'DEVICE_LOCKED', message: 'Device is already locked' });
+      throw new ConflictError('Device is already locked', 'DEVICE_LOCKED');
     }
     return device;
   });
@@ -72,22 +70,22 @@ export const devicesRoutes: FastifyPluginAsync = async (app) => {
   // without changing anything else about it. Nothing calls this yet — no
   // frontend wiring in this pass — but the endpoint exists so a lock holder
   // has a real way to say "I'm still using this" once one does.
-  app.post('/:udid/lock/renew', { preHandler: app.authenticate }, async (req, reply) => {
+  app.post('/:udid/lock/renew', { preHandler: app.authenticate }, async (req) => {
     const { udid } = req.params as { udid: string };
     const isAdmin = req.user.role === 'admin';
     const device = await renewLock(udid, req.user.sub, isAdmin);
     if (!device) {
-      return reply.status(403).send({ code: 'FORBIDDEN', message: 'Cannot renew a lock you do not hold' });
+      throw new ForbiddenError('Cannot renew a lock you do not hold');
     }
     return device;
   });
 
-  app.post('/:udid/unlock', { preHandler: app.authenticate }, async (req, reply) => {
+  app.post('/:udid/unlock', { preHandler: app.authenticate }, async (req) => {
     const { udid } = req.params as { udid: string };
     const isAdmin = req.user.role === 'admin';
     const device = await releaseLock(udid, req.user.sub, isAdmin);
     if (!device) {
-      return reply.status(403).send({ code: 'FORBIDDEN', message: 'Cannot release a lock you do not hold' });
+      throw new ForbiddenError('Cannot release a lock you do not hold');
     }
     return device;
   });

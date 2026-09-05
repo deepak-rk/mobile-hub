@@ -4,7 +4,6 @@ import type { WebSocket } from 'ws';
 import type { JwtPayload } from 'fastify-auth-kit';
 import { z } from 'zod';
 import {
-  BuildNotPurgeableError,
   getBuild,
   listBuilds,
   purgeBuildArtifact,
@@ -14,6 +13,7 @@ import {
 } from './builds.service';
 import { subscribeToBuildEvents } from './builds.events';
 import { requireAgentToken } from '../agent-auth/agent-auth';
+import { ConflictError, NotFoundError, ValidationError } from '../../common/errors/app-error';
 
 const triggerBody = z.object({
   project: z.string().min(1),
@@ -31,10 +31,10 @@ export const buildsRoutes: FastifyPluginAsync = async (app) => {
     return listBuilds({ project, platform });
   });
 
-  app.get('/:id', async (req, reply) => {
+  app.get('/:id', async (req) => {
     const { id } = req.params as { id: string };
     const build = await getBuild(id);
-    if (!build) return reply.status(404).send({ code: 'NOT_FOUND', message: 'Build not found' });
+    if (!build) throw new NotFoundError('Build not found');
     return build;
   });
 
@@ -44,9 +44,9 @@ export const buildsRoutes: FastifyPluginAsync = async (app) => {
   app.get('/:id/artifact', { preHandler: requireAgentToken }, async (req, reply) => {
     const { id } = req.params as { id: string };
     const build = await getBuild(id);
-    if (!build) return reply.status(404).send({ code: 'NOT_FOUND', message: 'Build not found' });
+    if (!build) throw new NotFoundError('Build not found');
     if (build.status !== 'ready' || !build.artifactPath) {
-      return reply.status(409).send({ code: 'BUILD_NOT_READY', message: `Build is '${build.status}', not 'ready'` });
+      throw new ConflictError(`Build is '${build.status}', not 'ready'`, 'BUILD_NOT_READY');
     }
     const stat = fs.statSync(build.artifactPath);
     return reply
@@ -87,18 +87,13 @@ export const buildsRoutes: FastifyPluginAsync = async (app) => {
    * version stays visible in the catalog and can be re-fetched, which is the
    * same `purged` transition retention already uses.
    */
-  app.post('/:id/purge', { preHandler: app.requireRole('operator', 'admin') }, async (req, reply) => {
+  app.post('/:id/purge', { preHandler: app.requireRole('operator', 'admin') }, async (req) => {
     const { id } = req.params as { id: string };
-    try {
-      const build = await purgeBuildArtifact(id);
-      if (!build) return reply.status(404).send({ code: 'NOT_FOUND', message: 'Build not found' });
-      return build;
-    } catch (err) {
-      if (err instanceof BuildNotPurgeableError) {
-        return reply.status(409).send({ code: 'BUILD_NOT_PURGEABLE', message: err.message });
-      }
-      throw err;
-    }
+    // BuildNotPurgeableError is a typed ConflictError now — the global error
+    // handler maps it, so no local catch is needed.
+    const build = await purgeBuildArtifact(id);
+    if (!build) throw new NotFoundError('Build not found');
+    return build;
   });
 
   /**
@@ -112,15 +107,13 @@ export const buildsRoutes: FastifyPluginAsync = async (app) => {
   app.post('/:id/refetch', { preHandler: app.requireRole('operator', 'admin') }, async (req, reply) => {
     const { id } = req.params as { id: string };
     const build = await getBuild(id);
-    if (!build) return reply.status(404).send({ code: 'NOT_FOUND', message: 'Build not found' });
+    if (!build) throw new NotFoundError('Build not found');
     if (build.status === 'ready') {
-      return reply.status(409).send({ code: 'ALREADY_READY', message: 'This build is already on disk.' });
+      throw new ConflictError('This build is already on disk.', 'ALREADY_READY');
     }
     if (!build.artifactUrl) {
       // Nothing records where it came from, so there is nowhere to fetch from.
-      return reply
-        .status(409)
-        .send({ code: 'NO_SOURCE', message: 'This build has no source URL to re-fetch from.' });
+      throw new ConflictError('This build has no source URL to re-fetch from.', 'NO_SOURCE');
     }
 
     try {
@@ -143,12 +136,10 @@ export const buildsRoutes: FastifyPluginAsync = async (app) => {
     async (req, reply) => {
       const body = triggerBody.safeParse(req.body);
       if (!body.success) {
-        return reply.status(400).send({ code: 'VALIDATION_ERROR', message: body.error.message });
+        throw new ValidationError(body.error.message);
       }
       if (app.config.build.provider === 'url' && !body.data.artifactUrl) {
-        return reply
-          .status(400)
-          .send({ code: 'VALIDATION_ERROR', message: "artifactUrl is required when build.provider is 'url'" });
+        throw new ValidationError("artifactUrl is required when build.provider is 'url'");
       }
       try {
         // Default stays synchronous — the response is the finished, checksummed

@@ -3,6 +3,7 @@ import { Build } from '../builds/build.model';
 import { getDevice } from '../devices/devices.service';
 import { InstallRun, IInstallRun, InstallTargetStatus } from './install-run.model';
 import { publishInstallEvent } from './install-runs.events';
+import { ConflictError, ValidationError } from '../../common/errors/app-error';
 
 /**
  * Statuses meaning "this device is busy with an install right now".
@@ -15,17 +16,18 @@ import { publishInstallEvent } from './install-runs.events';
  */
 const IN_FLIGHT_TARGET_STATUSES: InstallTargetStatus[] = ['queued', 'downloading', 'transferring', 'installing'];
 
-export class BuildNotReadyError extends Error {
+export class BuildNotReadyError extends ConflictError {
   constructor(status: string) {
-    super(`Build is '${status}', not 'ready'`);
-    this.name = 'BuildNotReadyError';
+    super(`Build is '${status}', not 'ready'`, 'BUILD_NOT_READY');
   }
 }
 
-export class UnknownDeviceError extends Error {
+// A 400 ValidationError, not a 404 — install-runs.routes.ts was already
+// mapping this to 400 (the caller supplied a udid that doesn't resolve to
+// any known device, which is a malformed request, not a missing resource).
+export class UnknownDeviceError extends ValidationError {
   constructor(udid: string) {
-    super(`Unknown device: ${udid}`);
-    this.name = 'UnknownDeviceError';
+    super(`Unknown device: ${udid}`, 'UNKNOWN_DEVICE');
   }
 }
 
@@ -39,10 +41,9 @@ export class UnknownDeviceError extends Error {
  * device picker by platform — this is the server-side half, because a filtered
  * picker is a convenience and never a guarantee.
  */
-export class IncompatibleDeviceError extends Error {
+export class IncompatibleDeviceError extends ValidationError {
   constructor(udid: string, devicePlatform: string, buildPlatform: string) {
-    super(`Device ${udid} is ${devicePlatform}; this build is ${buildPlatform}`);
-    this.name = 'IncompatibleDeviceError';
+    super(`Device ${udid} is ${devicePlatform}; this build is ${buildPlatform}`, 'INCOMPATIBLE_DEVICE');
   }
 }
 

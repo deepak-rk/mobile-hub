@@ -1,6 +1,7 @@
 import { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 import { issueCredential, listCredentials, revokeCredential } from './agent-credentials.service';
+import { NotFoundError, ValidationError } from '../../common/errors/app-error';
 
 const issueBody = z.object({
   machineId: z.string().min(1),
@@ -15,10 +16,10 @@ const issueBody = z.object({
  * GET /api/config.
  */
 export const agentCredentialsRoutes: FastifyPluginAsync = async (app) => {
-  app.post('/', { preHandler: app.requireRole('admin') }, async (req, reply) => {
+  app.post('/', { preHandler: app.requireRole('admin') }, async (req) => {
     const body = issueBody.safeParse(req.body);
     if (!body.success) {
-      return reply.status(400).send({ code: 'VALIDATION_ERROR', message: body.error.message });
+      throw new ValidationError(body.error.message);
     }
     // Returned once, here, and never again — the same principle as a GitHub
     // PAT or a Stripe API key: only the hash is kept after this response.
@@ -29,11 +30,11 @@ export const agentCredentialsRoutes: FastifyPluginAsync = async (app) => {
     return listCredentials();
   });
 
-  app.post('/:id/revoke', { preHandler: app.requireRole('admin') }, async (req, reply) => {
+  app.post('/:id/revoke', { preHandler: app.requireRole('admin') }, async (req) => {
     const { id } = req.params as { id: string };
     const revoked = await revokeCredential(id);
     if (!revoked) {
-      return reply.status(404).send({ code: 'NOT_FOUND', message: 'Agent credential not found' });
+      throw new NotFoundError('Agent credential not found');
     }
     return revoked;
   });

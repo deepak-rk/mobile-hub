@@ -6,6 +6,7 @@ import { getDevice } from '../devices/devices.service';
 import { StreamSession } from './stream-session.model';
 import { streamingService, StreamingError } from './streaming.service';
 import type { StreamProtocol } from './capture-source';
+import { NotFoundError } from '../../common/errors/app-error';
 
 const protocolQuery = z.object({
   protocol: z.enum(['mjpeg', 'h264']).default('mjpeg'),
@@ -22,10 +23,10 @@ export const streamingRoutes: FastifyPluginAsync = async (app) => {
     return { active: sessions.some((s) => s.captureStatus === 'active'), sessions };
   });
 
-  app.post('/:udid/stream/stop', { preHandler: app.requireRole('operator', 'admin') }, async (req, reply) => {
+  app.post('/:udid/stream/stop', { preHandler: app.requireRole('operator', 'admin') }, async (req) => {
     const { udid } = req.params as { udid: string };
     const device = await getDevice(udid);
-    if (!device) return reply.status(404).send({ code: 'NOT_FOUND', message: 'Device not found' });
+    if (!device) throw new NotFoundError('Device not found');
 
     const stopped = await streamingService.stopForDevice(device.machineId, udid);
     return { stopped };
