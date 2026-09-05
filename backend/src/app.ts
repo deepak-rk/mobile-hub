@@ -4,6 +4,8 @@ import helmet from '@fastify/helmet';
 import rateLimit from '@fastify/rate-limit';
 import jwt from '@fastify/jwt';
 import websocket from '@fastify/websocket';
+import swagger from '@fastify/swagger';
+import swaggerUi from '@fastify/swagger-ui';
 // Type-only import: guarantees fastify-auth-kit's ambient `declare module
 // 'fastify'` augmentation (app.authenticate, app.requireRole, req.user) is
 // loaded and merged program-wide, even though the runtime values below are
@@ -45,6 +47,36 @@ export async function buildApp(config: EffectiveConfig): Promise<FastifyInstance
   void app.register(helmet, { contentSecurityPolicy: false });
   void app.register(cors, { origin: env.NODE_ENV === 'development' ? true : false });
   void app.register(rateLimit, { max: env.RATE_LIMIT_MAX, timeWindow: env.RATE_LIMIT_WINDOW });
+
+  // API docs — auto-generated from whatever route metadata actually exists
+  // (paths/methods/tags), not the hand-authored docs/api-spec.yaml, which
+  // has drifted from the real routes (see docs/TODO.md's "Spec & reference
+  // drift" section: /api/execution/runs vs the real /api/execution, etc.).
+  // This can never drift the same way because it reads the routes Fastify
+  // actually registered. It's necessarily thin on request/response bodies —
+  // routes validate with inline `zod.safeParse`, not Fastify's own `schema`
+  // option, so there's no per-route schema for @fastify/swagger to surface
+  // yet (see docs/TODO.md's "no typed domain error classes" row, the natural
+  // place to add real schemas alongside a status-code convention).
+  //
+  // Registered here, before every route (including fastify-auth-kit's, which
+  // register inside an async plugin `await`ed below) — @fastify/swagger
+  // discovers routes via an `onRoute` hook, which only fires for routes
+  // registered *after* this plugin boots. Registering it any later silently
+  // dropped every /api/auth/* route from the generated spec — caught only by
+  // actually curling /docs/json and grepping for them, not by anything
+  // static.
+  void app.register(swagger, {
+    openapi: {
+      info: {
+        title: 'Mobile Hub API',
+        version: process.env.npm_package_version ?? '0.0.0',
+        description: 'Auto-generated from the live route table. See docs/api-spec.yaml for the fuller (but hand-maintained, occasionally stale) reference.',
+      },
+      servers: [{ url: `http://localhost:${env.API_PORT}` }],
+    },
+  });
+  void app.register(swaggerUi, { routePrefix: '/docs' });
 
   // A getter/setter pair, not a plain value, so POST /api/config/reload can
   // actually swap it. Fastify gives each registered plugin an encapsulated

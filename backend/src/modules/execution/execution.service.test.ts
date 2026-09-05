@@ -13,6 +13,7 @@ import {
   cancelExecutionRun,
   recoverOrphanedRuns,
   sweepFinishedWorkspaces,
+  computeCacheKey,
   DeviceLockedError,
 } from './execution.service';
 
@@ -347,6 +348,85 @@ describe('pulling / restoring_cache with a real automation.repoUrl configured', 
 
     expect(doc.status).toBe('passed');
     expect(fs.existsSync(path.join(tmpDir, 'run-1', 'repo'))).toBe(false);
+  });
+});
+
+/**
+ * Direct unit tests for the formula itself — the integration test above only
+ * ever asserts "a sha256-shaped string came out", never that the *inputs*
+ * that are supposed to matter actually change it. That gap is exactly how
+ * the previous lockfile-only formula (a confirmed collision source per
+ * `docs/modules/execution.md`) went unnoticed: a lockfile regenerated with
+ * identical content after a meaningful `package.json` change produced the
+ * same key both before and after, and nothing here would have caught it.
+ */
+describe('computeCacheKey', () => {
+  let repoDir: string;
+
+  beforeEach(() => {
+    repoDir = path.join(tmpDir, 'repo');
+    fs.mkdirSync(repoDir, { recursive: true });
+  });
+
+  function writeManifest(content: string) {
+    fs.writeFileSync(path.join(repoDir, 'package.json'), content);
+  }
+
+  it('returns null when the repo has no package.json', () => {
+    expect(computeCacheKey(repoDir)).toBeNull();
+  });
+
+  it('returns a stable sha256 hex digest for the same inputs', () => {
+    writeManifest('{"name":"demo"}');
+    const key1 = computeCacheKey(repoDir, 'linux', 'v20.0.0');
+    const key2 = computeCacheKey(repoDir, 'linux', 'v20.0.0');
+    expect(key1).toMatch(/^[a-f0-9]{64}$/);
+    expect(key1).toBe(key2);
+  });
+
+  it('changes when package.json changes, even with an identical lockfile — the exact regression this formula exists to fix', () => {
+    writeManifest('{"name":"demo","scripts":{"build":"a"}}');
+    fs.writeFileSync(path.join(repoDir, 'package-lock.json'), '{"lockfileVersion":3}');
+    const before = computeCacheKey(repoDir, 'linux', 'v20.0.0');
+
+    // Lockfile untouched, only package.json changes (a moved dependency, a
+    // changed script) — the old lockfile-only formula would have kept
+    // serving the stale cache here.
+    writeManifest('{"name":"demo","scripts":{"build":"b"}}');
+    const after = computeCacheKey(repoDir, 'linux', 'v20.0.0');
+
+    expect(after).not.toBe(before);
+  });
+
+  it('changes when the platform changes', () => {
+    writeManifest('{"name":"demo"}');
+    const linux = computeCacheKey(repoDir, 'linux', 'v20.0.0');
+    const win32 = computeCacheKey(repoDir, 'win32', 'v20.0.0');
+    expect(linux).not.toBe(win32);
+  });
+
+  it('changes when the Node version changes — a native addon compiled for one Node ABI is not safe to restore under another', () => {
+    writeManifest('{"name":"demo"}');
+    const v20 = computeCacheKey(repoDir, 'linux', 'v20.0.0');
+    const v22 = computeCacheKey(repoDir, 'linux', 'v22.0.0');
+    expect(v20).not.toBe(v22);
+  });
+
+  it('changes when a lockfile is added, and again if the lockfile name changes for identical content', () => {
+    writeManifest('{"name":"demo"}');
+    const noLockfile = computeCacheKey(repoDir, 'linux', 'v20.0.0');
+
+    fs.writeFileSync(path.join(repoDir, 'package-lock.json'), 'SAME CONTENT');
+    const npmLock = computeCacheKey(repoDir, 'linux', 'v20.0.0');
+    expect(npmLock).not.toBe(noLockfile);
+
+    // Same content, different package manager's lockfile name — must not
+    // collide, per the doc comment's explicit "switching package managers"
+    // guard.
+    fs.rmSync(path.join(repoDir, 'package-lock.json'));
+    fs.writeFileSync(path.join(repoDir, 'yarn.lock'), 'SAME CONTENT');
+    const yarnLock = computeCacheKey(repoDir, 'linux', 'v20.0.0');
+    expect(yarnLock).not.toBe(npmLock);
   });
 });
 
