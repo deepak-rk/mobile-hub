@@ -154,8 +154,24 @@ export async function buildApp(config: EffectiveConfig): Promise<FastifyInstance
   // WebSocket (execution events, build job progress)
   void app.register(websocket);
 
-  // Health
-  app.get('/health', async () => ({ status: 'ok', ts: new Date().toISOString() }));
+  // Health — wrapped in register() deliberately, not a bare app.get(). Every
+  // `void app.register(plugin)` call above only *enqueues* that plugin;
+  // avvio doesn't actually run its body until the app boots (`.listen()`/
+  // `.ready()`), processing the queue in registration order. A bare
+  // `app.get(...)` sitting between two `register()` calls isn't queued at
+  // all — it runs immediately, synchronously, as buildApp() executes top to
+  // bottom, before any of the plugins registered above it (helmet, cors,
+  // rate-limit, swagger) have actually run their bodies. So rate-limit's
+  // onRoute hook didn't exist yet when this route registered, silently
+  // exempting /health from the global limit — confirmed live (RATE_LIMIT_MAX
+  // overridden low, /health never 429'd while /api/hosts correctly did) both
+  // before and after the typed-error-classes change, so this predates it.
+  // Wrapping the route in its own register() forces it into the same avvio
+  // queue, positioned after rate-limit above, so the hook is guaranteed to
+  // exist by the time this actually runs.
+  void app.register(async (instance) => {
+    instance.get('/health', async () => ({ status: 'ok', ts: new Date().toISOString() }));
+  });
 
   // API routes
   void app.register(hostsRoutes, { prefix: '/api/hosts' });
