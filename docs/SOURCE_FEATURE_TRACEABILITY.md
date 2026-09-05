@@ -20,6 +20,8 @@ Every capability the reference platform ("the old farm") had, or that mobile-hub
 
 Everything below marked ✅ was checked against the working tree on 2026-08-29 (grep/read of the actual source), not inferred from trackers. This matters: the three external reviews all state they could not read the repository, and **two of them were wrong about analytics** as a result — see "Corrections" below. Where a claim rests on the tracker rather than code, it says so.
 
+**Re-verified 2026-09-05**: 8 rows in this file had themselves gone stale the same way the external reviews once did — describing work as missing that had actually shipped, mostly on 2026-08-30 (bundled into an unrelated-sounding commit whose message named neither fix) and 2026-09-01/02 (after this file's last full pass). Each corrected row below says so explicitly rather than being silently rewritten, per this file's own governing rule.
+
 ---
 
 ## Corrections to the external reviews
@@ -31,7 +33,7 @@ Recorded so these are not re-imported as gaps next session.
 | "Flakiness is hardcoded `0`" | **False.** Real implementation: stddev of daily pass rate over a trailing window, with documented handling for short history and the current partial day. | `analytics.service.ts#computeFlakinessBySuite`; commit `688ccb4` |
 | "Frontend cannot select the weekly window" | **False.** `AnalyticsFilterBar` takes and renders a `window` control. | `AnalyticsFilterBar.tsx:23,30,48`; commit `3d2e601` |
 | Windows `spawn`, stuck stage, historical logs, workspace cleanup, durable artifacts, install-in-progress, pass-rate semantics, `InstallJob` deprecation, `streaming.md`/`analytics.md` headers | **All done 2026-08-29**, after the reviews' snapshot. | See `TODO.md` § "P0 correctness round" |
-| "135 backend tests" | 158 backend, 41 frontend. | `npm test` |
+| "135 backend tests" | 158 backend, 41 frontend as of 2026-08-29; **249 backend as of 2026-09-05** (grew across the 09-01/09-02/09-05 rounds). | `npm test` |
 
 The reviews were *right* about everything I could verify that wasn't stale — including four items they honestly flagged VERIFY. Their method was sound; their snapshot was old.
 
@@ -47,7 +49,7 @@ The reviews were *right* about everything I could verify that wasn't stale — i
 | Serve artifact bytes to the agent | **DONE** | ✅ `GET /api/builds/:id/artifact` |
 | Catalog UI: project → versions → detail | **DONE** | ✅ |
 | **Download % (provider → hub)** | **REIMPLEMENT — blocked on a contract decision** | ✅ **Still missing, and larger than it looks.** `POST /api/builds` currently **awaits the entire download** before responding, so a 700 MB fetch blocks one HTTP request and there is no window in which a client could observe progress — it cannot even learn the build id until the transfer is finished. Emitting progress therefore requires backgrounding the fetch (create → return `201 {status:'downloading'}` → fetch in the background → push progress), which is what `builds.md` always described and what `execution` already does. **That changes a public contract**: the sibling E2E suite asserts `POST /api/builds` returns `status: 'ready'` synchronously (`playwright-project_js/tests/api/builds.spec.ts:41`). Needs an explicit go-ahead plus a coordinated change in that repo. Do **not** revive the dead `InstallJob` for this — put `downloadedBytes` on `Build`. |
-| **Concurrent-fetch guard** | **REIMPLEMENT** | ✅ **Missing.** `triggerBuildFetch` calls `Build.create()` unconditionally — two fetches race the same `destPath`. `builds.md` names this a corruption source. |
+| ~~**Concurrent-fetch guard**~~ | **DONE** — row was stale | ✅ **Fixed 2026-08-30** (`51ace05`, bundled into an unrelated-sounding "usability round" commit — why this row and several others below went stale). `claimBuildFetch()`: an atomic upsert against a partial unique index (`one_inflight_fetch_per_version`), ownership decided by a pre-generated `_id` surviving the upsert, the losing racer's E11000 resolved to the winner's row instead of surfaced. Real, well-engineered, not a stub. Re-confirmed 2026-09-05. |
 | **`BuildProvider.listBuilds()`** | **REIMPLEMENT** | ✅ **Missing.** Interface is `fetch()` only, so builds exist only if someone POSTs one. Blocks "browse what CI produced". Add paging + provider-neutral metadata, not an unbounded array. |
 | **Build provenance** (build number, branch, commit SHA, commit/PR title, source timestamp, source URL) | **REIMPLEMENT** | ✅ **Zero provenance fields on the model.** Not decoration — it answers "what code produced this binary?" during a regression. Keep provider-neutral. |
 | Changelog (commit range between builds) | **ADAPT** | Needs provenance first. If built, take the reference's own safeguards: check SHA reachability, bound the range, time out, never cache an empty result permanently. |
@@ -55,7 +57,7 @@ The reviews were *right* about everything I could verify that wasn't stale — i
 | Squad/team breakdown | **DROP** for v1 | Organisation-specific grouping; revisit only via config/provider metadata. |
 | App icons on cards | **DROP** for v1 | Requires a config-driven icon map. No hardcoded org tables. |
 | "Downloaded" vs "all builds" view | **REIMPLEMENT** (small) | `status === 'ready'` + `artifactPath` already distinguishes these; just not surfaced. |
-| Manual "remove local copy" | **REIMPLEMENT** (small) | GC is automatic policy; operator-initiated reclaim is a different job (huge artifact, corrupt build, force re-download). |
+| ~~Manual "remove local copy"~~ | **DONE** — row was stale | ✅ `POST /:id/purge` + `POST /:id/refetch`, wired end to end: `usePurgeBuild`/`useRefetchBuild` in `frontend/src/features/builds/api/builds.api.ts`, real buttons in `BuildDetailDialog.tsx`. Confirmed 2026-09-05. |
 | Associated build artifacts (symbols, metadata bundles) | **DROP** — recorded | No concrete use case yet. Recorded so it isn't "rediscovered". |
 | Filename → version/build/SHA regex | **DROP** | Org-specific. Provider's job if anyone's. |
 | Nexus TLS bypass | **DROP** | Reference disabled verification silently. Never. |
@@ -89,9 +91,9 @@ The reviews were *right* about everything I could verify that wasn't stale — i
 | Durable artifacts split from ephemeral workspace | **DONE** | ✅ |
 | Historical run logs served | **DONE** | ✅ `GET /api/execution/:id/logs` + UI fallback |
 | Result taxonomy (`test` / `infra` / `precondition`) | **DONE** | ✅ pass rate now excludes non-attributable runs |
-| **Cache key = package.json + lockfile + platform + Node** | **REIMPLEMENT** | ✅ Currently `sha256(lockfile-or-package.json)` only. `execution.md` names lockfile-only a **confirmed collision source in the reference implementation** — a known-bad shortcut, not a theoretical one. |
+| ~~**Cache key = package.json + lockfile + platform + Node**~~ | **DONE** — row was stale | ✅ **Fixed 2026-08-30** (`51ace05`, same bundled commit as the concurrent-fetch guard above). `computeCacheKey()` hashes package.json + every present lockfile (name and contents) + platform + Node version. Had zero unit tests until 2026-09-05 despite its own doc comment saying "exported for testing" — 6 added, all pass. |
 | Cache restore via symlink | **ADAPT → DROP** | Recursive copy is the right Windows default (dir symlinks need admin/Dev Mode). Recorded as a deliberate deviation. |
-| **Allure: collect / generate / serve** | **REIMPLEMENT** | ✅ `reportPath` is declared on the interface *and* the schema and **written by nothing**; no `/report` route; `@fastify/static` installed and unused. Two-stage loss: the reference generated the report *and* extracted a summary; the spec reduced it to "runner generates, hub serves"; the implementation did neither. |
+| ~~**Allure: collect / generate / serve**~~ | **DONE** — row was stale | ✅ Collect+serve built: `collectAllureReport()` copies a runner-produced `allure-report/index.html` to durable `artifactsPath` (checked before workspace cleanup, runs on every terminal path including failures), `reportPath` set, `GET /:id/report` + `/:id/report/*` serve it with a path-traversal guard, UI hides the link when null. "Generate" was never built (nothing runs `allure generate`) but is now moot: `testSummary` (below) extracts the same data directly from raw `allure-results`, which is why a WDIO run that never calls `allure generate` still produces real numbers. Confirmed 2026-09-05. |
 | **`testSummary` extraction** (total/passed/failed/broken/skipped) | **DONE** 2026-09-02 | ✅ The sharpest finding in the external reviews, and correct. Parsed from the runner's raw `allure-results`, not the generated HTML — the report is a rendering of exactly this data, and it also means the summary works when a runner writes results but never runs `allure generate`, which is the common case here. Retries collapse by `historyId`, or a flaky-but-eventually-passing test would count as both a pass and a failure; pointed at the sibling repo's checked-in results this correctly reduced 18 files from three runs to 6 real tests. Skipped tests stay in the denominator. Null rather than zeros when nothing reported, since "not using Allure" and "ran zero tests" are different facts. **Live-verified**: a real run finished `passed` with `{total: 2, passed: 2, passRate: 1}`. Analytics carries `totalTests`/`passedTests`/`testPassRate` plus `runsWithTestResults`, which is what separates "everything failed" from "nothing reported" — both leave the rate at 0. |
 | **`automation.env` injection** | **DONE** 2026-09-01 (injection + containment) | ✅ Values declared in config reach the runner, and the hard half — containment — is what got built. The child does **not** inherit the hub's environment; it gets an allow-list (`run-environment.ts`), because this workspace has already seen a child dump its whole inherited environment into a crash report, so "our code never prints the secret" is not a defence. Redaction matches on **values**, not key names: a secret leaks by being printed, and a stack trace embedding a token never mentions the key it came from. **Still open:** values are inline in YAML. Secret *references* (a keystore/vault lookup) remain the right end state — the injection path is now the easy part of that change. |
 | **`automation.install` as a declared step** | **DONE** 2026-09-01 | ✅ Declared in config, defaulting to `npm ci` for known frameworks. The cache tension is now explicit rather than accidental: `npm ci` deletes `node_modules` and so discards a restored cache, which is why a project wanting the cache to count declares `install: npm install`. That tradeoff is the org’s, so it is a config key. |
@@ -124,8 +126,8 @@ The reviews were *right* about everything I could verify that wasn't stale — i
 | **Tab-visibility pause** | **REIMPLEMENT** | ✅ No `visibilitychange` handling anywhere. The 10-min idle grace covers *zero viewers*, not a backgrounded tab. |
 | **Newest-frame-wins backpressure** | **REIMPLEMENT** | ✅ Frames are not dropped for a slow consumer. |
 | **`sourceHost` per tile / multi-host wall** | **REIMPLEMENT** | ✅ Absent. Blocked behind capture locality. |
-| **"View live" on the device card** | **REIMPLEMENT** (small) | ✅ Cards link to the device page; the only stream button is the page-level "Multi-view". Two decisions got conflated: *don't auto-start a capture on page load* (correct, keep) vs *don't offer a live entry point from the grid* (never actually decided). |
-| Multi-view mode in the inventory header (cards → checkboxes) | **ADAPT** (small) | The `/devices/multi-view` route **exists** — do not rebuild it. Only the header entry mode is missing. |
+| ~~**"View live" on the device card**~~ | **DONE** — row was stale | ✅ Every online, non-selectable card has an explicit "View live" button (`DevicesPage.tsx`) linking to `/devices/:udid` — navigation only, doesn't auto-start a capture, matching the deliberate page-level gate. Confirmed 2026-09-05. |
+| ~~Multi-view mode in the inventory header (cards → checkboxes)~~ | **DONE** — row was stale | ✅ Per-card checkboxes ("Select N for multi-view") feed a header-level "Multi-view" button navigating to `/devices/multi-view?udids=...` — exactly the design this row asked for. Confirmed 2026-09-05. |
 | Short linger after last viewer | **ADAPT** | Currently a 10-min zero-viewer grace; reference used ~30s. Tuning, not a missing capability. |
 | Dedicated stream port | **DROP** unless measured | Deliberately unified onto the API origin. Re-measure with 3 tiles + API + execution WS before reversing. |
 | Per-viewer H264 processes | **DROP** | Reference scar. |
@@ -140,9 +142,9 @@ The reviews were *right* about everything I could verify that wasn't stale — i
 | Real flakiness (stddev of daily pass rate) | **DONE** | ✅ **Both external reviews wrongly call this hardcoded `0`.** |
 | Weekly window selector in the UI | **DONE** | ✅ **Both external reviews wrongly call this missing.** |
 | Pass rate excludes infra/precondition failures | **DONE** | ✅ shipped 2026-08-29 |
-| **Test-case-level counts** (total/passed/failed/broken/skipped) | **REIMPLEMENT** | Blocked on `testSummary` extraction, which is blocked on Allure, which is blocked on a real runner. Show run rate *and* test rate; never label one as the other. |
+| ~~**Test-case-level counts** (total/passed/failed/broken/skipped)~~ | **DONE** — row was stale | ✅ **Done 2026-09-02.** `TestSummary` (`allure-summary.ts`) carries total/passed/failed/broken/skipped/unknown + `passRate`; `ExecutionRun.testSummary` and analytics' `totalTests`/`passedTests`/`testPassRate`/`runsWithTestResults` all shipped and live-verified (see `TODO.md`'s execution module notes). Both run-rate and test-rate exist and are labeled distinctly. Confirmed 2026-09-05. |
 | **Failure-reason aggregation** | **ADAPT** | "Recent failures" answers *what failed?*; grouped reasons answer *what fails repeatedly?* Group by a normalized signature (exception type + normalized message + stage), not the raw string — the reference grouped by exact string and fragmented on variable messages. Stage error strings are enough to start. |
-| Snapshot platform/device on the run | **REIMPLEMENT** | Same item as in Execution. |
+| ~~Snapshot platform/device on the run~~ | **DONE** — row was stale | ✅ Same item as in Execution, done 2026-09-02. |
 | Branch / entity / suite / tag dimensions | **BLOCKED** | Needs canonical run inputs. Do not draw empty filters. |
 | Previous-period KPI deltas | **ADAPT** | Cheap once the aggregate pair is queried. |
 | Duration min/max trend | **ADAPT** | Low priority; useful for slow-tail regressions. |
@@ -170,16 +172,16 @@ Sequenced by: *lies and safety gaps first, then unblocking chains, then features
 
 1. ~~**Byte progress, hub → agent.**~~ **DONE 2026-08-30.** Real byte counting, ~1s throttle, honest bar semantics. The lie the user actually saw.
 2. ~~**Install platform compatibility check.**~~ **DONE 2026-08-30.** `400 INCOMPATIBLE_DEVICE` before any run is created.
-3. **Byte progress, provider → hub** — **needs a decision first.** Requires backgrounding `POST /api/builds`, which breaks the sibling E2E's synchronous `status: 'ready'` assertion. See the Builds row above.
-4. **Concurrent-fetch guard.** Spec-named corruption source; two fetches currently race one path. Naturally bundled with (3), since backgrounding makes the race easier to hit.
-5. **Cache key = package.json + lockfile + platform + Node.** Spec-named *confirmed* collision source. Independent of the above; can be done any time.
+3. **Byte progress, provider → hub** — **needs a decision first.** Requires backgrounding `POST /api/builds`, which breaks the sibling E2E's synchronous `status: 'ready'` assertion. See the Builds row above. Still the only genuinely open P0 item.
+4. ~~**Concurrent-fetch guard.**~~ **Row corrected 2026-09-05 — was already done 2026-08-30**, same bundled commit as (5) below. Went unmarked because neither fix's commit message mentioned it.
+5. ~~**Cache key = package.json + lockfile + platform + Node.**~~ **Row corrected 2026-09-05 — was already done 2026-08-30.** Unit-tested 2026-09-05 (had zero tests despite its own doc comment saying otherwise).
 
 ### P1 — operator jobs on pipes that already work (small, high visible value)
 
-5. **"View live" on the device card** (`?live=1`), keeping "Start live view" as the socket gate.
-6. **Multi-view mode in the inventory header.** The route exists — wire the entry point only.
-7. **Serve Allure when `allure-report/index.html` already exists**; hide the link when `reportPath` is null. Honest partial: unblocks any command that already emits Allure, without pretending Hub generates it.
-8. **Post-install verification** + **"installed on N devices"** from existing `InstallRun` data.
+5. ~~**"View live" on the device card.**~~ **Row corrected 2026-09-05 — already done.** Every online card has one.
+6. ~~**Multi-view mode in the inventory header.**~~ **Row corrected 2026-09-05 — already done.** Checkboxes + header button, feeding the existing route.
+7. ~~**Serve Allure when `allure-report/index.html` already exists.**~~ **Row corrected 2026-09-05 — already done**, and superseded in practice by `testSummary` extracting the same data straight from raw results regardless of whether a report was generated.
+8. **Post-install verification** + **"installed on N devices"** from existing `InstallRun` data. **Still genuinely open** — the only P1 item left. `getInstalledDevicesForBuild`/`GET /api/device-installs/builds/:buildId/devices` already exists backend-side (confirmed 2026-09-05); nothing in the frontend calls it yet.
 
 ### P2 — the streaming re-architecture (one project, not two)
 
