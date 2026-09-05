@@ -214,3 +214,10 @@
   color: var(--text-tertiary);
   font-variant-numeric: tabular-nums;
 }
+
+.failureCount {
+  flex: none;
+  min-width: 2.5em;
+  color: var(--status-failed);
+  font-variant-numeric: tabular-nums;
+}

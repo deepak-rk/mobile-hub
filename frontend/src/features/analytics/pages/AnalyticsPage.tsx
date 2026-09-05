@@ -22,7 +22,7 @@ import { icons } from '@/lib/icons';
 import { formatPercent, formatRelative } from 'ts-format-utils';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { useExecutionRuns } from '@/features/execution/api/execution.api';
-import { useAnalytics } from '../api/analytics.api';
+import { useAnalytics, useFailureReasons } from '../api/analytics.api';
 import { AnalyticsFilterBar } from '../components/AnalyticsFilterBar';
 import { useAnalyticsFilters } from '../hooks/useAnalyticsFilters';
 import type { AnalyticsAggregate, DeviceBreakdown, SuiteBreakdown } from '../types';
@@ -429,6 +429,37 @@ function RecentRuns({ project }: { project?: string }) {
   );
 }
 
+/**
+ * "What fails repeatedly" over a trailing window — a different question from
+ * "what failed on this run" (RunDetailPage's own per-run breakdown). Grouped
+ * server-side on a normalized signature so the same failure with a different
+ * run id/port/timestamp counts as one entry, not one per occurrence.
+ */
+function FailureReasons({ project, platform }: { project?: string; platform?: 'android' | 'ios' | 'all' }) {
+  const { data } = useFailureReasons({ project, platform });
+  const reasons = data?.reasons.slice(0, 8) ?? [];
+  if (reasons.length === 0) return null;
+
+  return (
+    <Card>
+      <CardBody>
+        <div className={styles.breakdownTitle}>Recurring failures (last 30 days)</div>
+        <ul className={styles.recentList}>
+          {reasons.map((r) => (
+            <li key={r.signature} className={styles.recentRow}>
+              <Mono className={styles.failureCount}>{r.count}&times;</Mono>
+              <span className={styles.recentSuite}>{r.message}</span>
+              <span className={styles.recentWhen}>
+                {r.runCount === 1 ? '1 run' : `${r.runCount} runs`} · last {formatRelative(r.lastSeenAt)}
+              </span>
+            </li>
+          ))}
+        </ul>
+      </CardBody>
+    </Card>
+  );
+}
+
 export function AnalyticsPage() {
   const { project, setProject, platform, setPlatform, window, setWindow } = useAnalyticsFilters();
   // 'all' is the cross-platform rollup; picking a specific platform switches
@@ -488,6 +519,7 @@ export function AnalyticsPage() {
             <AggregateSection key={g.key} group={g} />
           ))}
           <RecentRuns project={project || undefined} />
+          <FailureReasons project={project || undefined} platform={platform} />
         </div>
       </QueryBoundary>
     </Page>

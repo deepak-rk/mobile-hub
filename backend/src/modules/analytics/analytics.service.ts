@@ -368,3 +368,106 @@ export async function queryAggregates(filters: {
   }
   return AnalyticsAggregate.find(query).sort({ date: -1, project: 1, platform: 1 });
 }
+
+export const FAILURE_REASONS_WINDOW_DAYS = 30;
+
+export interface FailureReasonSummary {
+  /** Normalized dedup key — never shown to a user, only used for grouping. */
+  signature: string;
+  /** The first occurrence's real message, truncated per allure-summary.ts — what's actually displayed. */
+  message: string;
+  /** Total failed tests across every matched run, not just how many runs saw it. */
+  count: number;
+  /** How many distinct runs contributed to `count` — a message hit by one flaky run 10 times and a message hit by 10 different runs once each both have count 10, but very different implications. */
+  runCount: number;
+  lastSeenAt: Date;
+}
+
+/**
+ * Strips the volatile parts of a failure message — long hex/numeric ids,
+ * timestamps, counts — so two occurrences of "logically the same" failure
+ * with different specific values (a different run id, a different port, a
+ * different retry count) group into one bucket instead of fragmenting into
+ * one each. This is the exact mistake `docs/SOURCE_FEATURE_TRACEABILITY.md`
+ * names in the reference implementation: it grouped by the raw string and
+ * splintered on any variable content.
+ *
+ * Deliberately conservative: this cannot tell an `AssertionError` from a
+ * `TimeoutError` that happens to share wording after normalization, since
+ * Allure's `statusDetails.message` carries no structured exception-type
+ * field to key on separately — only a heuristic over the free-text string.
+ * Good enough to answer "what keeps failing", not precise enough to be the
+ * only signal a human uses to decide two failures are unrelated.
+ */
+export function normalizeFailureMessage(message: string): string {
+  return message
+    .toLowerCase()
+    .replace(/[0-9a-f]{8,}/g, '<id>') // long hex ids/hashes
+    .replace(/\d+/g, '<n>') // any remaining run of digits (counts, ports, timestamps)
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/**
+ * Recurring failure reasons across many runs — "recent failures" on one run
+ * answers *what failed*; this answers *what fails repeatedly*, which is a
+ * different question needing a different view. Per-run grouping (added
+ * 2026-09-02, `allure-summary.ts`) already exists; this is the aggregate
+ * layer on top of it that was deliberately left for a dedup design, not
+ * forgotten — see docs/TODO.md.
+ */
+export async function computeFailureReasons(filters: {
+  project?: string;
+  platform?: Platform;
+  suite?: string;
+  days?: number;
+}): Promise<{ reasons: FailureReasonSummary[]; scannedRuns: number }> {
+  const since = new Date(Date.now() - (filters.days ?? FAILURE_REASONS_WINDOW_DAYS) * 24 * 60 * 60 * 1000);
+
+  const query: Record<string, unknown> = {
+    createdAt: { $gte: since },
+    'testSummary.failures.0': { $exists: true },
+  };
+  if (filters.project) query.project = filters.project;
+  if (filters.suite) query.suite = filters.suite;
+
+  const runs = await ExecutionRun.find(query)
+    .select('testSummary snapshot createdAt')
+    .sort({ createdAt: 1 })
+    .lean();
+
+  // Platform is only known via the snapshot (frozen at trigger time, see
+  // execution.service.ts) — a run predating it has no reliable platform to
+  // filter by, so it's excluded rather than guessed when a platform filter
+  // is actually requested. Unfiltered queries still include it.
+  const scoped =
+    filters.platform && filters.platform !== 'all'
+      ? runs.filter((r) => r.snapshot?.platform === filters.platform)
+      : runs;
+
+  const bySignature = new Map<string, FailureReasonSummary>();
+  for (const run of scoped) {
+    for (const f of run.testSummary?.failures ?? []) {
+      const signature = normalizeFailureMessage(f.message);
+      const existing = bySignature.get(signature);
+      if (existing) {
+        existing.count += f.count;
+        existing.runCount += 1;
+        existing.lastSeenAt = run.createdAt;
+      } else {
+        bySignature.set(signature, {
+          signature,
+          message: f.message,
+          count: f.count,
+          runCount: 1,
+          lastSeenAt: run.createdAt,
+        });
+      }
+    }
+  }
+
+  return {
+    reasons: [...bySignature.values()].sort((a, b) => b.count - a.count),
+    scannedRuns: scoped.length,
+  };
+}

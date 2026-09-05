@@ -2,7 +2,13 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import { ExecutionRun } from '../execution/execution-run.model';
 import { Device } from '../devices/device.model';
 import { AnalyticsAggregate } from './analytics-aggregate.model';
-import { computeDailyAggregates, computeWeeklyAggregates, queryAggregates } from './analytics.service';
+import {
+  computeDailyAggregates,
+  computeWeeklyAggregates,
+  queryAggregates,
+  computeFailureReasons,
+  normalizeFailureMessage,
+} from './analytics.service';
 
 /**
  * Covers the three properties `computeDailyAggregates` exists for:
@@ -444,5 +450,109 @@ describe('queryAggregates', () => {
     expect(findSpy).toHaveBeenCalledWith({
       date: { $gte: new Date('2026-01-01T00:00:00.000Z'), $lte: new Date('2026-01-05T00:00:00.000Z') },
     });
+  });
+});
+
+describe('normalizeFailureMessage', () => {
+  it('collapses messages that differ only in volatile values (ids, ports, counts) to the same signature', () => {
+    const a = normalizeFailureMessage('Timeout waiting for element after 5000ms on port 4723 (run 6a9433ff6a37c7fb88c9fe15)');
+    const b = normalizeFailureMessage('Timeout waiting for element after 8000ms on port 4801 (run 6a9433ff6a37c7fb88c9fe16)');
+    expect(a).toBe(b);
+  });
+
+  it('keeps messages that actually differ in wording apart', () => {
+    const a = normalizeFailureMessage('expected true to be false');
+    const b = normalizeFailureMessage('element not found: #submit');
+    expect(a).not.toBe(b);
+  });
+});
+
+describe('computeFailureReasons', () => {
+  function mockRuns(runs: unknown[]) {
+    const lean = vi.fn().mockResolvedValue(runs);
+    const sort = vi.fn().mockReturnValue({ lean });
+    const select = vi.fn().mockReturnValue({ sort });
+    return vi.spyOn(ExecutionRun, 'find').mockReturnValue({ select } as never);
+  }
+
+  it('groups failures across runs by normalized message and counts both tests and distinct runs', async () => {
+    mockRuns([
+      {
+        createdAt: new Date('2026-01-01'),
+        snapshot: { platform: 'android' },
+        testSummary: { failures: [{ message: 'Timeout after 5000ms', count: 2 }] },
+      },
+      {
+        createdAt: new Date('2026-01-02'),
+        snapshot: { platform: 'android' },
+        testSummary: { failures: [{ message: 'Timeout after 8000ms', count: 3 }] },
+      },
+    ]);
+
+    const { reasons, scannedRuns } = await computeFailureReasons({});
+
+    expect(scannedRuns).toBe(2);
+    expect(reasons).toEqual([
+      {
+        signature: normalizeFailureMessage('Timeout after 5000ms'),
+        message: 'Timeout after 5000ms', // first occurrence's real message, for display
+        count: 5, // 2 + 3 tests, not 2 runs
+        runCount: 2,
+        lastSeenAt: new Date('2026-01-02'), // the later run, since runs are scanned oldest-first
+      },
+    ]);
+  });
+
+  it('orders reasons by how many tests they hit, worst first', async () => {
+    mockRuns([
+      {
+        createdAt: new Date('2026-01-01'),
+        snapshot: { platform: 'android' },
+        testSummary: {
+          failures: [
+            { message: 'rare failure', count: 1 },
+            { message: 'common failure', count: 20 },
+          ],
+        },
+      },
+    ]);
+
+    const { reasons } = await computeFailureReasons({});
+
+    expect(reasons.map((r) => r.message)).toEqual(['common failure', 'rare failure']);
+  });
+
+  it('excludes a run predating the platform snapshot when a platform filter is requested, rather than guessing', async () => {
+    mockRuns([
+      {
+        createdAt: new Date('2026-01-01'),
+        snapshot: null, // predates ExecutionRun.snapshot
+        testSummary: { failures: [{ message: 'old-run failure', count: 1 }] },
+      },
+      {
+        createdAt: new Date('2026-01-02'),
+        snapshot: { platform: 'android' },
+        testSummary: { failures: [{ message: 'known-platform failure', count: 1 }] },
+      },
+    ]);
+
+    const { reasons, scannedRuns } = await computeFailureReasons({ platform: 'android' });
+
+    expect(scannedRuns).toBe(1);
+    expect(reasons.map((r) => r.message)).toEqual(['known-platform failure']);
+  });
+
+  it('queries only runs with at least one failure, within the requested trailing window', async () => {
+    const findSpy = mockRuns([]);
+
+    await computeFailureReasons({ project: 'p1', suite: 'smoke', days: 7 });
+
+    const [calledWith] = findSpy.mock.calls[0] as [Record<string, unknown>];
+    expect(calledWith).toMatchObject({
+      project: 'p1',
+      suite: 'smoke',
+      'testSummary.failures.0': { $exists: true },
+    });
+    expect((calledWith.createdAt as { $gte: Date }).$gte.getTime()).toBeLessThan(Date.now());
   });
 });

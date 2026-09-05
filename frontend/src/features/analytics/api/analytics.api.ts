@@ -12,3 +12,25 @@ export function useAnalytics(params?: {
     queryFn: async () => (await api.get<AnalyticsAggregate[]>('/analytics', { params })).data,
   });
 }
+
+export interface FailureReasonSummary {
+  signature: string;
+  message: string;
+  count: number;
+  runCount: number;
+  lastSeenAt: string;
+}
+
+/**
+ * "What fails repeatedly" across a trailing window — distinct from a single
+ * run's own failure breakdown (RunDetailPage), which only answers "what
+ * failed on this run".
+ */
+export function useFailureReasons(params?: { project?: string; platform?: 'android' | 'ios' | 'all'; suite?: string }) {
+  return useQuery({
+    queryKey: ['analytics', 'failures', params],
+    queryFn: async () =>
+      (await api.get<{ reasons: FailureReasonSummary[]; scannedRuns: number }>('/analytics/failures', { params }))
+        .data,
+  });
+}
