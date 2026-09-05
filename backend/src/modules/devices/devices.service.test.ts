@@ -1,6 +1,13 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { Device } from './device.model';
-import { syncDevices, acquireLock, releaseLock, renewLock, releaseExpiredLocks } from './devices.service';
+import {
+  syncDevices,
+  acquireLock,
+  releaseLock,
+  renewLock,
+  releaseExpiredLocks,
+  getDevicesByUdids,
+} from './devices.service';
 
 /**
  * `syncDevices` used to force-set `status:'idle'` on every rediscovered
@@ -183,5 +190,23 @@ describe('releaseExpiredLocks', () => {
     await expect(releaseExpiredLocks(45)).resolves.toBe(0);
     // And safe to call again immediately after.
     await expect(releaseExpiredLocks(45)).resolves.toBe(0);
+  });
+});
+
+describe('getDevicesByUdids', () => {
+  it('queries with an $in filter built from the given udids', async () => {
+    const find = vi.fn().mockResolvedValue([{ udid: 'd1' }]);
+    vi.spyOn(Device, 'find').mockImplementation(find as never);
+
+    await getDevicesByUdids(['d1', 'd2']);
+
+    expect(find).toHaveBeenCalledWith({ udid: { $in: ['d1', 'd2'] } });
+  });
+
+  it('short-circuits on an empty list rather than querying with an empty $in', async () => {
+    const find = vi.spyOn(Device, 'find');
+
+    expect(await getDevicesByUdids([])).toEqual([]);
+    expect(find).not.toHaveBeenCalled();
   });
 });

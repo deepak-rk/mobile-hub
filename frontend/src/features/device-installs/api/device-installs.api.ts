@@ -23,6 +23,8 @@ export function useInstallRun(installRunId: string | undefined, livePush = false
 
 export interface InstalledDevice {
   deviceUdid: string;
+  /** Null when the device has since been deregistered or never synced. */
+  deviceName: string | null;
   installRunId: string;
   installedAt: string | null;
 }

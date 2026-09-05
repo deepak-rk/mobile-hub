@@ -19,6 +19,17 @@ export async function getDevice(udid: string): Promise<IDevice | null> {
   return Device.findOne({ udid });
 }
 
+/**
+ * Batch lookup for a known set of udids — e.g. enriching an install history
+ * with device names in one query instead of N+1 single lookups. Empty input
+ * short-circuits rather than issuing a query that would just return nothing:
+ * an empty `$in` is a legal but wasteful round trip.
+ */
+export async function getDevicesByUdids(udids: string[]): Promise<IDevice[]> {
+  if (udids.length === 0) return [];
+  return Device.find({ udid: { $in: udids } });
+}
+
 export async function syncDevices(
   machineId: string,
   discovered: Array<{

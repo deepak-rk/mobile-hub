@@ -78,7 +78,7 @@ The reviews were *right* about everything I could verify that wasn't stale — i
 | Post-install verification (package present at expected version) | **REIMPLEMENT** (small) | Reference had none; don't inherit that. Cheap with `adb shell pm list packages`. |
 | Automatic rollback | **DROP** for now | Reference lists "no rollback" as a known limitation. Verification first; rollback is a separate product decision with real complexity and no current demand. |
 | **Uninstall** | **REIMPLEMENT** | ✅ **Missing entirely.** Model as a device-app operation (requestedBy, device, package, timing, status), not a one-off UI call. |
-| "Installed on N devices" / "installed 1d ago" | **REIMPLEMENT** | Data already exists in `InstallRun.targets`; just never queried build-wise or device-wise. |
+| ~~"Installed on N devices" / "installed 1d ago"~~ | **DONE 2026-09-05** | ✅ `getInstalledDevicesForBuild()` now enriches with `deviceName` (batch-looked-up, not N+1); `BuildDetailDialog` shows "Installed on N device(s)" with each device name (linking to its page) and a relative "installed Xd ago" — live-verified in a real browser against real seeded data (a real APK installed on `emulator-5554`), zero console errors. |
 | Post-install GUI env setup via hardcoded taps | **DROP** | The reference's worst idea — brittle against any app UI change. `automation.env` replaces the *job*. |
 
 ## 3. Execution
@@ -181,7 +181,7 @@ Sequenced by: *lies and safety gaps first, then unblocking chains, then features
 5. ~~**"View live" on the device card.**~~ **Row corrected 2026-09-05 — already done.** Every online card has one.
 6. ~~**Multi-view mode in the inventory header.**~~ **Row corrected 2026-09-05 — already done.** Checkboxes + header button, feeding the existing route.
 7. ~~**Serve Allure when `allure-report/index.html` already exists.**~~ **Row corrected 2026-09-05 — already done**, and superseded in practice by `testSummary` extracting the same data straight from raw results regardless of whether a report was generated.
-8. **Post-install verification** + **"installed on N devices"** from existing `InstallRun` data. **Still genuinely open** — the only P1 item left. `getInstalledDevicesForBuild`/`GET /api/device-installs/builds/:buildId/devices` already exists backend-side (confirmed 2026-09-05); nothing in the frontend calls it yet.
+8. ~~**"Installed on N devices"**~~ **done 2026-09-05.** See the Device install row above. **Post-install verification** (package present at expected version) is the only piece of this item still open.
 
 ### P2 — the streaming re-architecture (one project, not two)
 

@@ -1,6 +1,6 @@
 import { getBuild } from '../builds/builds.service';
 import { Build } from '../builds/build.model';
-import { getDevice } from '../devices/devices.service';
+import { getDevice, getDevicesByUdids } from '../devices/devices.service';
 import { InstallRun, IInstallRun, InstallTargetStatus } from './install-run.model';
 import { publishInstallEvent } from './install-runs.events';
 import { ConflictError, ValidationError } from '../../common/errors/app-error';
@@ -184,6 +184,10 @@ export async function getActiveInstallUdids(): Promise<Set<string>> {
 
 export interface InstalledDevice {
   deviceUdid: string;
+  /** Null when the device has since been deregistered/never synced — the
+   * install history is still real even if the device it named isn't around
+   * to look up any more. */
+  deviceName: string | null;
   installRunId: string;
   installedAt: Date | null;
 }
@@ -226,13 +230,18 @@ export async function getInstalledDevicesForBuild(buildId: string): Promise<Inst
     }
   }
 
-  return [...latestByDevice.entries()]
-    .filter(([, latest]) => latest.buildId === buildId)
-    .map(([deviceUdid, latest]) => ({
-      deviceUdid,
-      installRunId: latest.installRunId,
-      installedAt: latest.installedAt,
-    }));
+  const current = [...latestByDevice.entries()].filter(([, latest]) => latest.buildId === buildId);
+
+  // One batch lookup for names rather than N+1 single-device queries.
+  const devices = await getDevicesByUdids(current.map(([udid]) => udid));
+  const nameByUdid = new Map(devices.map((d) => [d.udid, d.name]));
+
+  return current.map(([deviceUdid, latest]) => ({
+    deviceUdid,
+    deviceName: nameByUdid.get(deviceUdid) ?? null,
+    installRunId: latest.installRunId,
+    installedAt: latest.installedAt,
+  }));
 }
 
 export interface ReportTargetProgressInput {

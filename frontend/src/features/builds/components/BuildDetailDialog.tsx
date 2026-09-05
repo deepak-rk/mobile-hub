@@ -1,10 +1,12 @@
 import { useState } from 'react';
+import { Link } from 'react-router-dom';
 import { Button, DescriptionList, Dialog, Mono } from 'react-design-kit';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { icons, iconSize } from '@/lib/icons';
 import { formatBytes, formatRelative } from 'ts-format-utils';
 import { useAuth } from '@/features/auth/useAuth';
 import { InstallDialog } from '@/features/device-installs/components/InstallDialog';
+import { useInstalledDevices } from '@/features/device-installs/api/device-installs.api';
 import type { ApiError } from '@/services/api';
 import { usePurgeBuild, useRefetchBuild } from '../api/builds.api';
 import type { Build } from '../types';
@@ -24,6 +26,7 @@ export function BuildDetailDialog({ build, onClose }: { build: Build | null; onC
   const purge = usePurgeBuild();
   const refetch = useRefetchBuild();
   const { can } = useAuth();
+  const { data: installedDevices } = useInstalledDevices(build?._id);
 
   function copyChecksum() {
     if (!build?.checksum) return;
@@ -109,6 +112,32 @@ export function BuildDetailDialog({ build, onClose }: { build: Build | null; onC
               { term: 'Triggered', value: formatRelative(build.createdAt) },
             ]}
           />
+
+          {/* Undefined while loading, so this never flashes "not installed
+              anywhere" before the real answer arrives. Derived from install
+              history — a device that later received a *different* build of
+              the same app no longer counts here, since it's not carrying
+              this one any more. */}
+          {installedDevices ? (
+            <div className={styles.installed}>
+              <h3 className={styles.installedHeading}>
+                <icons.device size={iconSize.dense} aria-hidden="true" />
+                {installedDevices.length === 0
+                  ? 'Not installed on any device'
+                  : `Installed on ${installedDevices.length} device${installedDevices.length === 1 ? '' : 's'}`}
+              </h3>
+              {installedDevices.length > 0 ? (
+                <ul className={styles.installedList}>
+                  {installedDevices.map((d) => (
+                    <li key={d.deviceUdid}>
+                      <Link to={`/devices/${d.deviceUdid}`}>{d.deviceName ?? d.deviceUdid}</Link>
+                      <span className={styles.installedWhen}>installed {formatRelative(d.installedAt)}</span>
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
+            </div>
+          ) : null}
         </>
       ) : null}
       </Dialog>

@@ -10,6 +10,7 @@ import {
   triggerInstallRun,
   getPendingInstallsForMachine,
   reportTargetProgress,
+  getInstalledDevicesForBuild,
 } from './install-runs.service';
 
 afterEach(() => {
@@ -185,5 +186,70 @@ describe('reportTargetProgress', () => {
     vi.spyOn(InstallRun, 'findById').mockResolvedValue(fakeRun() as never);
 
     expect(await reportTargetProgress('run-1', 'not-a-target', { status: 'done' })).toBeNull();
+  });
+});
+
+describe('getInstalledDevicesForBuild', () => {
+  it('reports each device only under the build it most recently, successfully received', async () => {
+    vi.spyOn(buildsService, 'getBuild').mockResolvedValue(readyBuild as never);
+    vi.spyOn(InstallRun, 'find').mockReturnValue({
+      // Oldest first — the function relies on this order to let the later
+      // write win when folding into a per-device map.
+      sort: vi.fn().mockResolvedValue([
+        {
+          id: 'run-1',
+          buildId: { toString: () => 'build-1' },
+          targets: [
+            { deviceUdid: 'd1', status: 'done', endedAt: new Date('2026-01-01') },
+            { deviceUdid: 'd2', status: 'done', endedAt: new Date('2026-01-01') },
+          ],
+        },
+        {
+          // A later install of a *different* build onto d1 — this build.md
+          // supersedes build-1 there, so d1 must not be reported for build-1
+          // any more even though it really did receive it once.
+          id: 'run-2',
+          buildId: { toString: () => 'build-2' },
+          targets: [{ deviceUdid: 'd1', status: 'done', endedAt: new Date('2026-01-02') }],
+        },
+      ]),
+    } as never);
+    vi.spyOn(devicesService, 'getDevicesByUdids').mockResolvedValue([
+      { udid: 'd2', name: 'Pixel 7' },
+    ] as never);
+
+    const result = await getInstalledDevicesForBuild('build-1');
+
+    expect(result).toEqual([
+      { deviceUdid: 'd2', deviceName: 'Pixel 7', installRunId: 'run-1', installedAt: new Date('2026-01-01') },
+    ]);
+  });
+
+  it('reports a null deviceName rather than guessing when the device is no longer known', async () => {
+    vi.spyOn(buildsService, 'getBuild').mockResolvedValue(readyBuild as never);
+    vi.spyOn(InstallRun, 'find').mockReturnValue({
+      sort: vi.fn().mockResolvedValue([
+        {
+          id: 'run-1',
+          buildId: { toString: () => 'build-1' },
+          targets: [{ deviceUdid: 'gone', status: 'done', endedAt: new Date('2026-01-01') }],
+        },
+      ]),
+    } as never);
+    vi.spyOn(devicesService, 'getDevicesByUdids').mockResolvedValue([] as never);
+
+    const result = await getInstalledDevicesForBuild('build-1');
+
+    expect(result).toEqual([
+      { deviceUdid: 'gone', deviceName: null, installRunId: 'run-1', installedAt: new Date('2026-01-01') },
+    ]);
+  });
+
+  it('returns empty for an unknown build, without querying installs at all', async () => {
+    vi.spyOn(buildsService, 'getBuild').mockResolvedValue(null);
+    const find = vi.spyOn(InstallRun, 'find');
+
+    expect(await getInstalledDevicesForBuild('ghost')).toEqual([]);
+    expect(find).not.toHaveBeenCalled();
   });
 });
