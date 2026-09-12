@@ -1,9 +1,9 @@
-import { Link, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import { Button, Card, CardBody, DescriptionList, Mono, Page, PageHeader, QueryBoundary } from 'react-design-kit';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { icons, iconSize } from '@/lib/icons';
 import { formatDurationBetween, formatRelative } from 'ts-format-utils';
-import { isInFlight, useCancelRun, useExecutionRun, useRunLog } from '../api/execution.api';
+import { isInFlight, useCancelRun, useExecutionRun, useRerunExecution, useRunLog } from '../api/execution.api';
 import { useRunStream } from '../api/useRunStream';
 import type { ExecutionRun } from '../types';
 import { LogViewer } from '../components/LogViewer';
@@ -116,6 +116,7 @@ function TestSummaryPanel({ summary }: { summary: NonNullable<ExecutionRun['test
 
 export function RunDetailPage() {
   const { runId } = useParams<{ runId: string }>();
+  const navigate = useNavigate();
   const { can } = useAuth();
   // Always attempt the stream: the hook itself reports 'unauthenticated' when
   // there's no token, which the viewer shows as "sign in to stream logs".
@@ -135,10 +136,17 @@ export function RunDetailPage() {
   // all, rather than a link that fails when clicked.
   const hasStoredLog = Boolean(storedLog) || logLines.length > 0;
   const cancel = useCancelRun(runId ?? '');
+  const rerun = useRerunExecution(runId ?? '');
 
   // Cancel is only meaningful while the run is non-terminal, and only for
   // roles the backend will actually accept (guidelines §10).
   const showCancel = run ? isInFlight(run.status) && can('operator', 'admin') : false;
+  // Re-run is the opposite: it targets the same device the original run
+  // used, so offering it while that run is still in flight would just
+  // predictably 409 on the still-held lock. Once the run is terminal the
+  // device is free again (or someone else's problem), and re-running makes
+  // real sense.
+  const showRerun = run ? !isInFlight(run.status) && can('operator', 'admin') : false;
 
   return (
     <Page>
@@ -177,6 +185,21 @@ export function RunDetailPage() {
               >
                 <icons.cancelled size={iconSize.control} aria-hidden="true" />
                 {cancel.isPending ? 'Cancelling…' : 'Cancel run'}
+              </Button>
+            ) : null}
+            {showRerun ? (
+              <Button
+                size="sm"
+                variant="secondary"
+                disabled={rerun.isPending}
+                onClick={() =>
+                  rerun.mutate(undefined, {
+                    onSuccess: (newRun) => navigate(`/execution/${newRun._id}`),
+                  })
+                }
+              >
+                <icons.retry size={iconSize.control} aria-hidden="true" />
+                {rerun.isPending ? 'Starting…' : 'Re-run'}
               </Button>
             ) : null}
             <Link to="/execution">

@@ -159,6 +159,23 @@ export function useCancelRun(runId: string) {
   });
 }
 
+/**
+ * Re-runs an existing run's immutable inputs (device, build, branch, suite)
+ * as a brand-new trigger. The backend re-resolves config fresh rather than
+ * replaying whatever the original run used — this is "run it again under
+ * today's config," not "replay this exact past configuration."
+ */
+export function useRerunExecution(runId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async () => (await api.post<ExecutionRun>(`/execution/${runId}/rerun`)).data,
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['runs'] });
+      void qc.invalidateQueries({ queryKey: ['devices'] });
+    },
+  });
+}
+
 export interface ConfigReloadResult {
   reloaded: boolean;
   projects: { added: string[]; removed: string[]; total: number };

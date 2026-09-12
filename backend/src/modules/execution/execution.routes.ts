@@ -142,6 +142,53 @@ export const executionRoutes: FastifyPluginAsync = async (app) => {
   );
 
   /**
+   * Re-runs an existing run's immutable inputs (machineId, deviceUdid,
+   * buildId, project, branch, suite) as a brand-new trigger.
+   *
+   * Deliberately re-resolves `automation` and the setup/run commands from
+   * the *current* config rather than replaying whatever the original run
+   * happened to use — "re-resolve device/branch/secrets" is the whole point
+   * (`docs/SOURCE_FEATURE_TRACEABILITY.md`). A run doesn't store which
+   * setup/run commands it actually used as *inputs* (only what ended up in
+   * its stages), so there is nothing frozen to replay even if that were
+   * wanted — re-running always means "run this again under today's config",
+   * never "run this exact stale configuration again."
+   */
+  app.post(
+    '/:id/rerun',
+    {
+      preHandler: app.requireRole('operator', 'admin'),
+      config: { rateLimit: { max: 20, timeWindow: '1 minute' } },
+    },
+    async (req, reply) => {
+      const { id } = req.params as { id: string };
+      const original = await getExecutionRun(id);
+      if (!original) throw new NotFoundError('Execution run not found');
+
+      const automation = app.config.projects[original.project]?.automation ?? app.config.automation;
+      const setup = resolveInstallCommand(automation) ?? undefined;
+      const runCommand = resolveRunCommand(automation, original.suite);
+
+      const run = await triggerExecutionRun(
+        {
+          machineId: original.machineId,
+          deviceUdid: original.deviceUdid,
+          buildId: original.buildId?.toString(),
+          project: original.project,
+          branch: original.branch,
+          suite: original.suite,
+          setup,
+          run: runCommand,
+          triggeredBy: req.user.sub,
+        },
+        automation,
+        app.config.appium,
+      );
+      return reply.status(201).send(run);
+    },
+  );
+
+  /**
    * The run's log as stored on disk.
    *
    * The WebSocket below only carries lines emitted while a client is watching,
