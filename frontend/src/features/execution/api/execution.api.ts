@@ -123,6 +123,26 @@ export function useSuites(projectId: string | undefined) {
   });
 }
 
+/**
+ * Real branch names for this project, straight from its git remote.
+ *
+ * Same `unavailable` shape as `useSuites`: a project with no `repoUrl`, or a
+ * remote that can't be reached, simply can't be enumerated — the form falls
+ * back to free text and says why, rather than blocking the trigger on it.
+ */
+export function useBranches(projectId: string | undefined) {
+  return useQuery({
+    queryKey: ['execution', 'branches', projectId],
+    queryFn: async () =>
+      (
+        await api.get<{ branches: string[]; unavailable?: string }>(`/execution/projects/${projectId}/branches`)
+      ).data,
+    enabled: Boolean(projectId),
+    staleTime: 5 * 60_000,
+    retry: false,
+  });
+}
+
 export interface TriggerRunInput {
   machineId: string;
   deviceUdid: string;

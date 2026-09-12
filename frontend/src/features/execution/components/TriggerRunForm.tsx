@@ -5,7 +5,7 @@ import type { ApiError } from '@/services/api';
 import { icons, iconSize } from '@/lib/icons';
 import { useAuth } from '@/features/auth/useAuth';
 import { useDevices } from '@/features/devices/api/devices.api';
-import { useProjects, useReloadConfig, useSuites, useTriggerRun } from '../api/execution.api';
+import { useBranches, useProjects, useReloadConfig, useSuites, useTriggerRun } from '../api/execution.api';
 import { useRunPresets } from '../hooks/useRunPresets';
 import styles from './TriggerRunForm.module.css';
 
@@ -59,6 +59,11 @@ export function TriggerRunForm() {
   const suiteHint = suitesLoading
     ? 'Reading suites from the automation repo…'
     : (suiteData?.unavailable ?? (suites && suites.length === 0 ? 'No suites found in the repo — type one.' : ''));
+  const { data: branchData, isFetching: branchesLoading } = useBranches(configuredProject ? project : undefined);
+  const branches = branchData?.branches;
+  const branchHint = branchesLoading
+    ? 'Reading branches from the remote…'
+    : (branchData?.unavailable ?? (branches && branches.length === 0 ? 'No branches found — type one.' : ''));
 
   if (!user) {
     return (
@@ -277,7 +282,40 @@ export function TriggerRunForm() {
                 </span>
               ) : null}
             </div>
-            <Field label="Branch" value={branch} required onChange={(e) => setBranch(e.target.value)} />
+            <div className={styles.field}>
+              <label className={styles.label} htmlFor="branch">
+                Branch
+              </label>
+              {/* Same dropdown-or-free-text pattern as Suite below: a real
+                  list once the remote can be read, free text (still
+                  defaulting to "main") when it can't be — no repo
+                  configured, or the remote couldn't be reached. */}
+              {branches && branches.length > 0 ? (
+                <select
+                  id="branch"
+                  className={styles.select}
+                  value={branch}
+                  required
+                  onChange={(e) => setBranch(e.target.value)}
+                >
+                  {branches.map((b) => (
+                    <option key={b} value={b}>
+                      {b}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <input
+                  id="branch"
+                  className={styles.select}
+                  value={branch}
+                  required
+                  placeholder="e.g. main"
+                  onChange={(e) => setBranch(e.target.value)}
+                />
+              )}
+              {branchHint ? <span className={styles.hint}>{branchHint}</span> : null}
+            </div>
           </div>
 
           <div className={styles.row}>

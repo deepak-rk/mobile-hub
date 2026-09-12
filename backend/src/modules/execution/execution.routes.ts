@@ -14,6 +14,7 @@ import {
 import { subscribeToExecutionEvents } from './execution.events';
 import { resolveInstallCommand, resolveRunCommand } from './automation-commands';
 import { discoverSuites, SuiteDiscoveryError } from './suites/suites.service';
+import { discoverBranches, BranchDiscoveryError } from './branches.service';
 import { ExecutionRun } from './execution-run.model';
 import type { JwtPayload } from 'fastify-auth-kit';
 import { ForbiddenError, NotFoundError, ValidationError } from '../../common/errors/app-error';
@@ -98,6 +99,36 @@ export const executionRoutes: FastifyPluginAsync = async (app) => {
         // for this project" is a normal state the form handles by falling back
         // to a text field, not a failure of the request.
         return { suites: [], unavailable: err.message };
+      }
+      throw err;
+    }
+  });
+
+  /**
+   * Real branch names for a project, straight from its git remote.
+   *
+   * Also declared before `/:id`, for the same reason `projects`/`suites` are.
+   * Same 200-with-explanation shape as suites: "can't list branches" is a
+   * normal state the form handles by falling back to free text, not a
+   * failure of the request.
+   */
+  app.get('/projects/:projectId/branches', async (req) => {
+    const { projectId } = req.params as { projectId: string };
+    const { refresh } = req.query as { refresh?: string };
+    const project = app.config.projects[projectId];
+    if (!project) {
+      throw new NotFoundError(`No project '${projectId}' is declared in config.`, 'PROJECT_NOT_CONFIGURED');
+    }
+    if (!project.automation.repoUrl) {
+      return { branches: [], unavailable: 'This project has no automation.repoUrl configured.' };
+    }
+
+    try {
+      const branches = await discoverBranches(project.automation.repoUrl, { refresh: Boolean(refresh) });
+      return { branches };
+    } catch (err) {
+      if (err instanceof BranchDiscoveryError) {
+        return { branches: [], unavailable: err.message };
       }
       throw err;
     }
