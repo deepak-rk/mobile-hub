@@ -1,6 +1,7 @@
 import { DeviceDiscovery, DiscoveredDevice } from './device-discovery';
-import { HubClient, HostCapabilities, PendingInstall } from './hub-client';
+import { HubClient, HostCapabilities, PendingInstall, PendingUninstall } from './hub-client';
 import { runInstall } from './installer';
+import { runUninstall } from './uninstaller';
 
 export interface AgentOptions {
   machineId: string;
@@ -37,6 +38,10 @@ export class DeviceAgent {
   // non-'queued' report for it, so this guards against starting it twice
   // while the first attempt is still in flight.
   private readonly inFlightInstalls = new Set<string>();
+  // Same guard, same reason, for uninstalls — a distinct set because the two
+  // key spaces (`installRunId:udid` vs `uninstallRunId:udid`) are otherwise
+  // indistinguishable and a collision would silently drop a real re-poll.
+  private readonly inFlightUninstalls = new Set<string>();
 
   constructor(private readonly opts: AgentOptions) {}
 
@@ -50,7 +55,7 @@ export class DeviceAgent {
 
     // Heartbeat first: a host with zero devices must still show as online,
     // otherwise an empty lab looks like a dead agent.
-    const { pendingInstalls } = await this.opts.hub.heartbeat({
+    const { pendingInstalls, pendingUninstalls } = await this.opts.hub.heartbeat({
       machineId: this.opts.machineId,
       hostname: this.opts.hostname,
       os: this.opts.os,
@@ -58,6 +63,7 @@ export class DeviceAgent {
       capabilities: this.opts.capabilities,
     });
     this.startPendingInstalls(pendingInstalls);
+    this.startPendingUninstalls(pendingUninstalls);
 
     const { upserted, markedOffline } = await this.opts.hub.syncDevices(this.opts.machineId, devices);
     return { devices, upserted, markedOffline };
@@ -79,6 +85,21 @@ export class DeviceAgent {
           this.log('error', `install ${key} failed: ${err instanceof Error ? err.message : String(err)}`);
         })
         .finally(() => this.inFlightInstalls.delete(key));
+    }
+  }
+
+  /** Same not-awaited, in-flight-guarded shape as startPendingInstalls. */
+  private startPendingUninstalls(pendingUninstalls: PendingUninstall[]): void {
+    for (const pending of pendingUninstalls) {
+      const key = `${pending.uninstallRunId}:${pending.deviceUdid}`;
+      if (this.inFlightUninstalls.has(key)) continue;
+      this.inFlightUninstalls.add(key);
+
+      void runUninstall(this.opts.hub, pending)
+        .catch((err: unknown) => {
+          this.log('error', `uninstall ${key} failed: ${err instanceof Error ? err.message : String(err)}`);
+        })
+        .finally(() => this.inFlightUninstalls.delete(key));
     }
   }
 

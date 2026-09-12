@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { InstallRun } from './install-run.model';
+import { UninstallRun } from './uninstall-run.model';
 import { Build } from '../builds/build.model';
 import * as buildsService from '../builds/builds.service';
 import * as devicesService from '../devices/devices.service';
@@ -251,5 +252,58 @@ describe('getInstalledDevicesForBuild', () => {
 
     expect(await getInstalledDevicesForBuild('ghost')).toEqual([]);
     expect(find).not.toHaveBeenCalled();
+  });
+
+  it('excludes a device whose package was successfully uninstalled after this install completed', async () => {
+    vi.spyOn(buildsService, 'getBuild').mockResolvedValue(readyBuild as never);
+    vi.spyOn(InstallRun, 'find').mockReturnValue({
+      sort: vi.fn().mockResolvedValue([
+        {
+          id: 'run-1',
+          buildId: { toString: () => 'build-1' },
+          targets: [
+            { deviceUdid: 'd1', status: 'done', endedAt: new Date('2026-01-01'), packageName: 'com.example.app' },
+            { deviceUdid: 'd2', status: 'done', endedAt: new Date('2026-01-01'), packageName: 'com.example.app' },
+          ],
+        },
+      ]),
+    } as never);
+    vi.spyOn(UninstallRun, 'find').mockResolvedValue([
+      {
+        packageName: 'com.example.app',
+        // Only d1 was uninstalled, and only after the install completed.
+        targets: [{ deviceUdid: 'd1', status: 'done', endedAt: new Date('2026-01-02') }],
+      },
+    ] as never);
+    vi.spyOn(devicesService, 'getDevicesByUdids').mockResolvedValue([{ udid: 'd2', name: 'Pixel 7' }] as never);
+
+    const result = await getInstalledDevicesForBuild('build-1');
+
+    expect(result.map((d) => d.deviceUdid)).toEqual(['d2']);
+  });
+
+  it('does not exclude a device that was uninstalled and then reinstalled', async () => {
+    vi.spyOn(buildsService, 'getBuild').mockResolvedValue(readyBuild as never);
+    vi.spyOn(InstallRun, 'find').mockReturnValue({
+      sort: vi.fn().mockResolvedValue([
+        {
+          id: 'run-1',
+          buildId: { toString: () => 'build-1' },
+          // The reinstall (Jan 3) is after the uninstall (Jan 2) mocked below.
+          targets: [{ deviceUdid: 'd1', status: 'done', endedAt: new Date('2026-01-03'), packageName: 'com.example.app' }],
+        },
+      ]),
+    } as never);
+    vi.spyOn(UninstallRun, 'find').mockResolvedValue([
+      {
+        packageName: 'com.example.app',
+        targets: [{ deviceUdid: 'd1', status: 'done', endedAt: new Date('2026-01-02') }],
+      },
+    ] as never);
+    vi.spyOn(devicesService, 'getDevicesByUdids').mockResolvedValue([{ udid: 'd1', name: 'Pixel 7' }] as never);
+
+    const result = await getInstalledDevicesForBuild('build-1');
+
+    expect(result.map((d) => d.deviceUdid)).toEqual(['d1']);
   });
 });

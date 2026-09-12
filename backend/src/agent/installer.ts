@@ -272,7 +272,11 @@ export async function runInstall(
     );
     if (installedPackage) await verifyPackageInstalled(adbPath, deviceUdid, installedPackage);
 
-    await hub.reportInstallProgress(installRunId, deviceUdid, { status: 'done', progress: 100 });
+    await hub.reportInstallProgress(installRunId, deviceUdid, {
+      status: 'done',
+      progress: 100,
+      ...(installedPackage ? { packageName: installedPackage } : {}),
+    });
   } catch (err) {
     await hub.reportInstallProgress(installRunId, deviceUdid, {
       status: 'error',

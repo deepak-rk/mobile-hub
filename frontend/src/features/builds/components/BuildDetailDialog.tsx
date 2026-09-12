@@ -6,7 +6,11 @@ import { icons, iconSize } from '@/lib/icons';
 import { formatBytes, formatRelative } from 'ts-format-utils';
 import { useAuth } from '@/features/auth/useAuth';
 import { InstallDialog } from '@/features/device-installs/components/InstallDialog';
-import { useInstalledDevices } from '@/features/device-installs/api/device-installs.api';
+import {
+  useInstalledDevices,
+  useTriggerUninstallRun,
+  type InstalledDevice,
+} from '@/features/device-installs/api/device-installs.api';
 import type { ApiError } from '@/services/api';
 import { usePurgeBuild, useRefetchBuild } from '../api/builds.api';
 import type { Build } from '../types';
@@ -23,8 +27,10 @@ export function BuildDetailDialog({ build, onClose }: { build: Build | null; onC
   const [copied, setCopied] = useState(false);
   const [installOpen, setInstallOpen] = useState(false);
   const [confirmPurge, setConfirmPurge] = useState(false);
+  const [confirmUninstall, setConfirmUninstall] = useState<InstalledDevice | null>(null);
   const purge = usePurgeBuild();
   const refetch = useRefetchBuild();
+  const uninstall = useTriggerUninstallRun();
   const { can } = useAuth();
   const { data: installedDevices } = useInstalledDevices(build?._id);
 
@@ -39,7 +45,7 @@ export function BuildDetailDialog({ build, onClose }: { build: Build | null; onC
   return (
     <>
       <Dialog
-        open={build !== null && !installOpen && !confirmPurge}
+        open={build !== null && !installOpen && !confirmPurge && !confirmUninstall}
         onClose={onClose}
         title={build ? `${build.project} · ${build.version}` : 'Build'}
         actions={
@@ -131,7 +137,18 @@ export function BuildDetailDialog({ build, onClose }: { build: Build | null; onC
                   {installedDevices.map((d) => (
                     <li key={d.deviceUdid}>
                       <Link to={`/devices/${d.deviceUdid}`}>{d.deviceName ?? d.deviceUdid}</Link>
-                      <span className={styles.installedWhen}>installed {formatRelative(d.installedAt)}</span>
+                      <span className={styles.installedMeta}>
+                        <span className={styles.installedWhen}>installed {formatRelative(d.installedAt)}</span>
+                        {/* Only offered when the agent positively identified
+                            the package at install time — nothing to
+                            uninstall without knowing what it's called. */}
+                        {d.packageName && can('operator', 'admin') ? (
+                          <Button size="sm" variant="ghost" onClick={() => setConfirmUninstall(d)}>
+                            <icons.remove size={iconSize.dense} aria-hidden="true" />
+                            Uninstall
+                          </Button>
+                        ) : null}
+                      </span>
                     </li>
                   ))}
                 </ul>
@@ -177,6 +194,46 @@ export function BuildDetailDialog({ build, onClose }: { build: Build | null; onC
         <p>
           Deletes this build&apos;s artifact from disk to reclaim space. The build stays in the catalog and can be
           fetched again. Refused while an install is still using it.
+        </p>
+      </Dialog>
+
+      <Dialog
+        open={confirmUninstall !== null}
+        onClose={() => setConfirmUninstall(null)}
+        title="Uninstall from this device?"
+        actions={
+          <>
+            <Button size="sm" variant="ghost" onClick={() => setConfirmUninstall(null)}>
+              Cancel
+            </Button>
+            <Button
+              size="sm"
+              variant="destructive"
+              disabled={uninstall.isPending}
+              onClick={() =>
+                build &&
+                confirmUninstall &&
+                uninstall.mutate(
+                  {
+                    packageName: confirmUninstall.packageName as string,
+                    project: build.project,
+                    deviceUdids: [confirmUninstall.deviceUdid],
+                  },
+                  { onSuccess: () => setConfirmUninstall(null) },
+                )
+              }
+            >
+              {uninstall.isPending ? 'Uninstalling…' : 'Uninstall'}
+            </Button>
+          </>
+        }
+      >
+        <p className={styles.error}>{(uninstall.error as ApiError | null)?.message ?? ''}</p>
+        <p>
+          Removes <Mono>{confirmUninstall?.packageName}</Mono> from{' '}
+          {confirmUninstall?.deviceName ?? confirmUninstall?.deviceUdid}, including its data on that device. The
+          agent picks this up on its next poll — this dialog closes once the request is accepted, not once the
+          device confirms it.
         </p>
       </Dialog>
     </>

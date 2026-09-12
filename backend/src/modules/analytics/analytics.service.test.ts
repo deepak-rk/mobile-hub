@@ -547,7 +547,7 @@ describe('computeFailureReasons', () => {
 
     await computeFailureReasons({ project: 'p1', suite: 'smoke', days: 7 });
 
-    const [calledWith] = findSpy.mock.calls[0] as [Record<string, unknown>];
+    const [calledWith] = findSpy.mock.calls[0] as unknown as [Record<string, unknown>];
     expect(calledWith).toMatchObject({
       project: 'p1',
       suite: 'smoke',

@@ -24,6 +24,17 @@ export interface IInstallTarget {
   error: string | null;
   startedAt: Date | null;
   endedAt: Date | null;
+  /**
+   * The package the agent positively identified as newly installed (diffing
+   * `pm list packages` before/after — see `installer.ts`'s
+   * `identifyInstalledPackage`), reported alongside `status: 'done'`. Null
+   * when a same-version reinstall left the package table unchanged (nothing
+   * to positively attribute) or for a run that predates this field. This is
+   * what makes uninstall possible without re-deriving the package from the
+   * APK on every request — it was identified once, at install time, and
+   * never persisted before this.
+   */
+  packageName: string | null;
 }
 
 export interface IInstallRun extends Document {
@@ -50,6 +61,7 @@ const installTargetSchema = new Schema<IInstallTarget>(
     error: { type: String, default: null },
     startedAt: { type: Date, default: null },
     endedAt: { type: Date, default: null },
+    packageName: { type: String, default: null },
   },
   { _id: false },
 );

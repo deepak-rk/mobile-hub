@@ -17,7 +17,14 @@ export interface PendingInstall {
   sizeBytes: number | null;
 }
 
+export interface PendingUninstall {
+  uninstallRunId: string;
+  deviceUdid: string;
+  packageName: string;
+}
+
 export type InstallTargetStatus = 'queued' | 'downloading' | 'transferring' | 'installing' | 'done' | 'error';
+export type UninstallTargetStatus = 'queued' | 'uninstalling' | 'done' | 'error';
 
 export class HubError extends Error {
   constructor(
@@ -54,10 +61,14 @@ export class HubClient {
     os: 'darwin' | 'linux' | 'win32';
     agentVersion: string;
     capabilities: HostCapabilities;
-  }): Promise<{ pendingInstalls: PendingInstall[] }> {
+  }): Promise<{ pendingInstalls: PendingInstall[]; pendingUninstalls: PendingUninstall[] }> {
     // The response body used to be ignored entirely — reading pendingInstalls
-    // off it is additive, not a breaking change to this call's contract.
-    return this.post<{ pendingInstalls: PendingInstall[] }>('/api/hosts/heartbeat', params);
+    // (and, as of this field, pendingUninstalls) off it is additive, not a
+    // breaking change to this call's contract.
+    return this.post<{ pendingInstalls: PendingInstall[]; pendingUninstalls: PendingUninstall[] }>(
+      '/api/hosts/heartbeat',
+      params,
+    );
   }
 
   async syncDevices(machineId: string, devices: DiscoveredDevice[]): Promise<{ upserted: number; markedOffline: number }> {
@@ -110,9 +121,17 @@ export class HubClient {
   async reportInstallProgress(
     installRunId: string,
     deviceUdid: string,
-    update: { status: InstallTargetStatus; progress?: number; error?: string },
+    update: { status: InstallTargetStatus; progress?: number; error?: string; packageName?: string },
   ): Promise<void> {
     await this.post(`/api/device-installs/${installRunId}/targets/${deviceUdid}/report`, update);
+  }
+
+  async reportUninstallProgress(
+    uninstallRunId: string,
+    deviceUdid: string,
+    update: { status: UninstallTargetStatus; error?: string },
+  ): Promise<void> {
+    await this.post(`/api/device-installs/uninstalls/${uninstallRunId}/targets/${deviceUdid}/report`, update);
   }
 
   private async post<T>(path: string, body: unknown): Promise<T> {

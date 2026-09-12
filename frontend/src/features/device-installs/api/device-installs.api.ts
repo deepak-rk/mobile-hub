@@ -27,6 +27,8 @@ export interface InstalledDevice {
   deviceName: string | null;
   installRunId: string;
   installedAt: string | null;
+  /** Null for a run predating this field, or a same-version reinstall the agent couldn't positively attribute — nothing to uninstall from here. */
+  packageName: string | null;
 }
 
 /**
@@ -53,6 +55,32 @@ export function useTriggerInstallRun() {
   return useMutation({
     mutationFn: async (input: TriggerInstallRunInput) => (await api.post<InstallRun>('/device-installs', input)).data,
     onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['device-installs'] });
+    },
+  });
+}
+
+export interface TriggerUninstallRunInput {
+  packageName: string;
+  project: string;
+  deviceUdids: string[];
+}
+
+/**
+ * Removes a package from one device — the reverse of triggerInstallRun, and
+ * deliberately a single-device call from the UI even though the backend
+ * accepts many at once: the one call site (a per-device row in
+ * BuildDetailDialog's "Installed on" list) only ever has one device in hand.
+ */
+export function useTriggerUninstallRun() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: TriggerUninstallRunInput) =>
+      (await api.post('/device-installs/uninstalls', input)).data,
+    onSuccess: () => {
+      // Invalidates useInstalledDevices too — same 'device-installs' query
+      // key prefix — so the list this action is triggered from drops the
+      // device once the uninstall actually completes and a refetch lands.
       void qc.invalidateQueries({ queryKey: ['device-installs'] });
     },
   });
