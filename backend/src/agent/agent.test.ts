@@ -60,6 +60,9 @@ describe('DeviceAgent.tick', () => {
       os: 'linux',
       agentVersion: '0.1.0',
       capabilities: { maxDevices: 4, androidSupport: true, iosSupport: false },
+      // Real, best-effort host stats (see diagnostics.ts) — asserted by shape,
+      // not exact values, since disk numbers vary by whatever machine runs this.
+      diagnostics: { diskFreeBytes: expect.any(Number), diskTotalBytes: expect.any(Number), nodeVersion: process.version },
     });
   });
 

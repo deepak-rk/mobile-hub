@@ -37,6 +37,13 @@
   border: 1px solid var(--border-subtle);
 }
 
+.diagnostics {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+}
+
 .credentialRow {
   display: flex;
   align-items: center;

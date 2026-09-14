@@ -6,6 +6,7 @@ import {
   triggerUninstallRun,
   getPendingUninstallsForMachine,
   getActiveUninstallUdids,
+  getActiveUninstallCountForMachine,
   reportUninstallTargetProgress,
 } from './uninstall-runs.service';
 
@@ -100,6 +101,20 @@ describe('getActiveUninstallUdids', () => {
     const active = await getActiveUninstallUdids();
 
     expect(active).toEqual(new Set(['d1', 'd2']));
+  });
+});
+
+describe('getActiveUninstallCountForMachine', () => {
+  it('counts in-flight targets scoped to the requested machine', async () => {
+    const countDocuments = vi.spyOn(UninstallRun, 'countDocuments').mockResolvedValue(3 as never);
+
+    const count = await getActiveUninstallCountForMachine('host-1');
+
+    expect(count).toBe(3);
+    expect(countDocuments).toHaveBeenCalledWith({
+      'targets.machineId': 'host-1',
+      'targets.status': { $in: ['queued', 'uninstalling'] },
+    });
   });
 });
 

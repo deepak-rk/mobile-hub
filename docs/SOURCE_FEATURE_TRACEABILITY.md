@@ -159,7 +159,7 @@ The reviews were *right* about everything I could verify that wasn't stale — i
 | Fail-closed stubs everywhere | **DONE** | ✅ Keep |
 | Hidden (not disabled) unavailable actions | **DONE** | ✅ Keep |
 | Dark-by-default + design tokens | **DONE** | ✅ Keep — do not adopt the reference's light shell |
-| Host operational diagnostics (disk, versions, active streams/runs) | **REIMPLEMENT** | Becomes important once the farm is genuinely multi-host. |
+| ~~Host operational diagnostics (disk, versions, active streams/runs)~~ | **DONE** | ✅ **Built and live-verified 2026-09-14.** Agent reports best-effort `diagnostics` (disk free/total via `fs.promises.statfs`, `process.version`) on every heartbeat — null (whole object or any one field) rather than zero when unreadable, never overwriting a stored value when an older agent omits the field. Hub composes live `activity` (runs/streams/installs/uninstalls) per host from the four owning services' own collections at request time, not stored on the host document. Rendered on the Hosts page (disk usage bar + Node version + non-zero activity chips). 12 new backend unit tests; confirmed against the real dev stack — real disk numbers (16 GB free / 952 GB total), real Node version, live in the browser. |
 | Separate "Infrastructure" nav | **DROP** | Servers→Hosts already covers it. Don't add a second host list. |
 
 ---
@@ -196,7 +196,7 @@ Sequenced by: *lies and safety gaps first, then unblocking chains, then features
 14. ~~**Appium orchestration**~~ **done 2026-09-01.** Per-device servers, persisted ports, adopt-don't-replace, up-front driver check. This is what makes (15) possible at all — there were no Allure results to extract before a real session existed.
 15. ~~**`testSummary` extraction** from Allure results~~ **done 2026-09-02**, including **per-run failure-reason grouping** — distinct reasons with how many tests hit each, since a failed count says how bad but not what. ~~Still open: **aggregating those reasons across runs**~~ **done 2026-09-05** — `computeFailureReasons()`, see the Analytics section above.
 16. **`BuildProvider.listBuilds()`** + build provenance → then changelog with the reference's safeguards.
-17. ~~Snapshotted run metadata~~ **done 2026-09-02.** ~~Still open: **uninstall**~~ **done 2026-09-12** — see the Device install section above. Host diagnostics remains open.
+17. ~~Snapshotted run metadata~~ **done 2026-09-02.** ~~Still open: **uninstall**~~ **done 2026-09-12** — see the Device install section above. ~~Host diagnostics remains open.~~ **done 2026-09-14** — see the disposition matrix above.
 
 ### Blocked — never lead with these
 

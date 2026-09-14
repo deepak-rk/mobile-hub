@@ -2,6 +2,7 @@ import { DeviceDiscovery, DiscoveredDevice } from './device-discovery';
 import { HubClient, HostCapabilities, PendingInstall, PendingUninstall } from './hub-client';
 import { runInstall } from './installer';
 import { runUninstall } from './uninstaller';
+import { collectDiagnostics } from './diagnostics';
 
 export interface AgentOptions {
   machineId: string;
@@ -61,6 +62,7 @@ export class DeviceAgent {
       os: this.opts.os,
       agentVersion: this.opts.agentVersion,
       capabilities: this.opts.capabilities,
+      diagnostics: await collectDiagnostics(),
     });
     this.startPendingInstalls(pendingInstalls);
     this.startPendingUninstalls(pendingUninstalls);

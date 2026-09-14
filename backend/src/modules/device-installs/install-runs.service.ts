@@ -184,6 +184,18 @@ export async function getActiveInstallUdids(): Promise<Set<string>> {
   return udids;
 }
 
+/**
+ * Install runs with at least one in-flight target on this machine, for host
+ * diagnostics. Counts runs, not individual targets — good enough for "is
+ * this host doing install work right now", not meant as a precise target tally.
+ */
+export async function getActiveInstallCountForMachine(machineId: string): Promise<number> {
+  return InstallRun.countDocuments({
+    'targets.machineId': machineId,
+    'targets.status': { $in: IN_FLIGHT_TARGET_STATUSES },
+  });
+}
+
 export interface InstalledDevice {
   deviceUdid: string;
   /** Null when the device has since been deregistered/never synced — the

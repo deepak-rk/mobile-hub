@@ -1,5 +1,11 @@
 import { Schema, model, Document } from 'mongoose';
 
+export interface IHostDiagnostics {
+  diskFreeBytes: number | null;
+  diskTotalBytes: number | null;
+  nodeVersion: string | null;
+}
+
 export interface IHost extends Document {
   machineId: string;
   hostname: string;
@@ -11,6 +17,14 @@ export interface IHost extends Document {
     androidSupport: boolean;
     iosSupport: boolean;
   };
+  /**
+   * Best-effort operational stats reported alongside a heartbeat. Null (the
+   * whole object, or any one field) rather than zero when unknown — an
+   * agent that predates this field, or a `statfs` call that failed on some
+   * unusual filesystem, must not report "0 bytes free" as if that were a
+   * measured fact.
+   */
+  diagnostics: IHostDiagnostics | null;
   lastHeartbeatAt: Date;
   createdAt: Date;
   updatedAt: Date;
@@ -27,6 +41,14 @@ const hostSchema = new Schema<IHost>(
       maxDevices: { type: Number, default: 0 },
       androidSupport: { type: Boolean, default: false },
       iosSupport: { type: Boolean, default: false },
+    },
+    diagnostics: {
+      type: {
+        diskFreeBytes: { type: Number, default: null },
+        diskTotalBytes: { type: Number, default: null },
+        nodeVersion: { type: String, default: null },
+      },
+      default: null,
     },
     lastHeartbeatAt: { type: Date, default: Date.now },
   },

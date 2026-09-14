@@ -8,19 +8,73 @@ import {
   Mono,
   Page,
   PageHeader,
+  ProgressBar,
   QueryBoundary,
   Summary,
 } from 'react-design-kit';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { icons, iconSize } from '@/lib/icons';
 import { useAuth } from '@/features/auth/useAuth';
-import { formatRelative } from 'ts-format-utils';
+import { formatBytes, formatRelative } from 'ts-format-utils';
 import { useHosts, useHostCredentials } from '../api/hosts.api';
 import { credentialFor } from '../lib/credentialFor';
-import type { HostAgentCredential } from '../types';
+import type { Host, HostAgentCredential } from '../types';
 import styles from './HostsPage.module.css';
 
 const OS_LABEL: Record<string, string> = { darwin: 'macOS', linux: 'Linux', win32: 'Windows' };
+
+function pluralize(count: number, noun: string): string {
+  return `${count} ${noun}${count === 1 ? '' : 's'}`;
+}
+
+/** Live counts as chips — only ever shows what's actually non-zero, so an idle host renders no row at all. */
+function ActivityChips({ activity }: { activity: Host['activity'] }) {
+  const chips = [
+    activity.runs > 0 ? pluralize(activity.runs, 'run') : null,
+    activity.streams > 0 ? pluralize(activity.streams, 'stream') : null,
+    activity.installs > 0 ? pluralize(activity.installs, 'install') : null,
+    activity.uninstalls > 0 ? pluralize(activity.uninstalls, 'uninstall') : null,
+  ].filter((c): c is string => c !== null);
+
+  if (chips.length === 0) return null;
+
+  return (
+    <div className={styles.platforms}>
+      {chips.map((chip) => (
+        <span key={chip} className={styles.chip}>
+          {chip}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+/** Best-effort host stats — absent entirely for an agent that predates this field. */
+function DiagnosticsPanel({ diagnostics }: { diagnostics: Host['diagnostics'] }) {
+  if (!diagnostics) return null;
+
+  const { diskFreeBytes, diskTotalBytes, nodeVersion } = diagnostics;
+  const diskUsedPercent =
+    diskFreeBytes !== null && diskTotalBytes !== null && diskTotalBytes > 0
+      ? ((diskTotalBytes - diskFreeBytes) / diskTotalBytes) * 100
+      : null;
+
+  return (
+    <div className={styles.diagnostics}>
+      {nodeVersion !== null ? (
+        <Meta>
+          <span>Node {nodeVersion}</span>
+        </Meta>
+      ) : null}
+      {diskUsedPercent !== null ? (
+        <ProgressBar
+          value={diskUsedPercent}
+          label={`${formatBytes(diskFreeBytes)} free of ${formatBytes(diskTotalBytes)}`}
+        />
+      ) : null}
+    </div>
+  );
+}
 
 /** Admin-only row — only ever rendered behind a `can('admin')` check. */
 function CredentialHealth({ credentials, machineId }: { credentials: HostAgentCredential[] | undefined; machineId: string }) {
@@ -100,6 +154,9 @@ export function HostsPage() {
                   {host.capabilities.androidSupport ? <span className={styles.chip}>Android</span> : null}
                   {host.capabilities.iosSupport ? <span className={styles.chip}>iOS</span> : null}
                 </div>
+
+                <ActivityChips activity={host.activity} />
+                <DiagnosticsPanel diagnostics={host.diagnostics} />
 
                 {isAdmin ? <CredentialHealth credentials={credentials} machineId={host.machineId} /> : null}
 

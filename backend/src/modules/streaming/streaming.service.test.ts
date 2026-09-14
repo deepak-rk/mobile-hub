@@ -1,6 +1,6 @@
 import { EventEmitter } from 'events';
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
-import { StreamingService, IDLE_TEARDOWN_MS } from './streaming.service';
+import { StreamingService, IDLE_TEARDOWN_MS, getActiveStreamCountForMachine } from './streaming.service';
 import { SyntheticCaptureSource } from './sources/synthetic.source';
 import { StreamSession } from './stream-session.model';
 import { env } from '../../config/env';
@@ -199,6 +199,20 @@ describe('per-host Android capture cap', () => {
     // No platform at all — the synthetic-source tests above never set one —
     // must still work exactly as before this cap existed.
     await expect(service.addViewer({ ...base, viewerId: 'v1', onFrame: () => {} })).resolves.toBeDefined();
+  });
+});
+
+describe('getActiveStreamCountForMachine', () => {
+  it('counts starting/active sessions scoped to the requested machine', async () => {
+    const countDocuments = vi.spyOn(StreamSession, 'countDocuments').mockResolvedValue(5 as never);
+
+    const count = await getActiveStreamCountForMachine('host-1');
+
+    expect(count).toBe(5);
+    expect(countDocuments).toHaveBeenCalledWith({
+      machineId: 'host-1',
+      captureStatus: { $in: ['starting', 'active'] },
+    });
   });
 });
 

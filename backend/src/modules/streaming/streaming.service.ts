@@ -305,5 +305,15 @@ function resolveCaptureSource(): CaptureSource {
   return new CompositeCaptureSource([new AdbMjpegCaptureSource(), new AdbH264CaptureSource()]);
 }
 
+/**
+ * Live captures on this machine, for host diagnostics — queries the durable
+ * `StreamSession` record rather than `streamingService.activeCaptureCount`
+ * (in-memory, whole-process, no machine filter), since diagnostics need a
+ * per-host number, not a global one.
+ */
+export async function getActiveStreamCountForMachine(machineId: string): Promise<number> {
+  return StreamSession.countDocuments({ machineId, captureStatus: { $in: ['starting', 'active'] } });
+}
+
 export const streamingService = new StreamingService();
 export { StreamingService, captureKey };

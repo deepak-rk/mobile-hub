@@ -668,6 +668,11 @@ export async function getExecutionRun(id: string): Promise<IExecutionRun | null>
   return ExecutionRun.findById(id);
 }
 
+/** Runs currently in flight on this machine — for host diagnostics, not the run list itself. */
+export async function getActiveRunCountForMachine(machineId: string): Promise<number> {
+  return ExecutionRun.countDocuments({ machineId, status: { $in: ['queued', 'preparing', 'running'] } });
+}
+
 /**
  * Cleans up any run left mid-flight by a backend crash/restart — the other
  * half of backend/CLAUDE.md's "guaranteed cleanup on success, failure, AND

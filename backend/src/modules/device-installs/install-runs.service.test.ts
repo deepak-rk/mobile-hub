@@ -10,6 +10,7 @@ import {
   UnknownDeviceError,
   triggerInstallRun,
   getPendingInstallsForMachine,
+  getActiveInstallCountForMachine,
   reportTargetProgress,
   getInstalledDevicesForBuild,
 } from './install-runs.service';
@@ -139,6 +140,20 @@ describe('getPendingInstallsForMachine', () => {
 
     // The agent must then show indeterminate progress, not a fabricated bar.
     expect(pending.sizeBytes).toBeNull();
+  });
+});
+
+describe('getActiveInstallCountForMachine', () => {
+  it('counts in-flight targets scoped to the requested machine', async () => {
+    const countDocuments = vi.spyOn(InstallRun, 'countDocuments').mockResolvedValue(2 as never);
+
+    const count = await getActiveInstallCountForMachine('host-1');
+
+    expect(count).toBe(2);
+    expect(countDocuments).toHaveBeenCalledWith({
+      'targets.machineId': 'host-1',
+      'targets.status': { $in: ['queued', 'downloading', 'transferring', 'installing'] },
+    });
   });
 });
 

@@ -14,6 +14,7 @@ import {
   recoverOrphanedRuns,
   sweepFinishedWorkspaces,
   computeCacheKey,
+  getActiveRunCountForMachine,
   DeviceLockedError,
 } from './execution.service';
 
@@ -441,6 +442,20 @@ describe('cancelExecutionRun', () => {
     vi.spyOn(ExecutionRun, 'findById').mockResolvedValue(null as never);
 
     expect(await cancelExecutionRun('nope')).toBeNull();
+  });
+});
+
+describe('getActiveRunCountForMachine', () => {
+  it('counts queued/preparing/running runs scoped to the requested machine', async () => {
+    const countDocuments = vi.spyOn(ExecutionRun, 'countDocuments').mockResolvedValue(4 as never);
+
+    const count = await getActiveRunCountForMachine('host-1');
+
+    expect(count).toBe(4);
+    expect(countDocuments).toHaveBeenCalledWith({
+      machineId: 'host-1',
+      status: { $in: ['queued', 'preparing', 'running'] },
+    });
   });
 });
 

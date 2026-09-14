@@ -110,6 +110,14 @@ export async function getActiveUninstallUdids(): Promise<Set<string>> {
   return udids;
 }
 
+/** Same shape as install-runs.service.ts's own getActiveInstallCountForMachine, for host diagnostics. */
+export async function getActiveUninstallCountForMachine(machineId: string): Promise<number> {
+  return UninstallRun.countDocuments({
+    'targets.machineId': machineId,
+    'targets.status': { $in: IN_FLIGHT_TARGET_STATUSES },
+  });
+}
+
 export interface ReportUninstallTargetProgressInput {
   status: UninstallTargetStatus;
   error?: string;

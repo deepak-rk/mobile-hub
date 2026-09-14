@@ -11,6 +11,19 @@ export interface Host {
   };
   status: 'online' | 'offline';
   lastHeartbeatAt: string;
+  /** Best-effort — absent for an agent that predates this field, or any one field null if that agent's own probe failed. */
+  diagnostics: {
+    diskFreeBytes: number | null;
+    diskTotalBytes: number | null;
+    nodeVersion: string | null;
+  } | null;
+  /** Live counts on this host, composed by the hub at request time — not stored on the host document. */
+  activity: {
+    runs: number;
+    streams: number;
+    installs: number;
+    uninstalls: number;
+  };
 }
 
 /**

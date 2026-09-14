@@ -9,6 +9,12 @@ export interface HostCapabilities {
   iosSupport: boolean;
 }
 
+export interface HostDiagnostics {
+  diskFreeBytes: number | null;
+  diskTotalBytes: number | null;
+  nodeVersion: string | null;
+}
+
 export interface PendingInstall {
   installRunId: string;
   deviceUdid: string;
@@ -61,6 +67,7 @@ export class HubClient {
     os: 'darwin' | 'linux' | 'win32';
     agentVersion: string;
     capabilities: HostCapabilities;
+    diagnostics?: HostDiagnostics;
   }): Promise<{ pendingInstalls: PendingInstall[]; pendingUninstalls: PendingUninstall[] }> {
     // The response body used to be ignored entirely — reading pendingInstalls
     // (and, as of this field, pendingUninstalls) off it is additive, not a

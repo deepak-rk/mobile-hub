@@ -2,8 +2,10 @@ import { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 import { listHosts, getHost, upsertHeartbeat } from './hosts.service';
 import { requireAgentToken } from '../agent-auth/agent-auth';
-import { getPendingInstallsForMachine } from '../device-installs/install-runs.service';
-import { getPendingUninstallsForMachine } from '../device-installs/uninstall-runs.service';
+import { getPendingInstallsForMachine, getActiveInstallCountForMachine } from '../device-installs/install-runs.service';
+import { getPendingUninstallsForMachine, getActiveUninstallCountForMachine } from '../device-installs/uninstall-runs.service';
+import { getActiveRunCountForMachine } from '../execution/execution.service';
+import { getActiveStreamCountForMachine } from '../streaming/streaming.service';
 import { ForbiddenError, NotFoundError, ValidationError } from '../../common/errors/app-error';
 
 const heartbeatBody = z.object({
@@ -16,11 +18,35 @@ const heartbeatBody = z.object({
     androidSupport: z.boolean(),
     iosSupport: z.boolean(),
   }),
+  diagnostics: z
+    .object({
+      diskFreeBytes: z.number().nonnegative().nullable(),
+      diskTotalBytes: z.number().nonnegative().nullable(),
+      nodeVersion: z.string().nullable(),
+    })
+    .optional(),
 });
+
+/** Live counts for a host's diagnostics panel — four independent collections, so fetched in parallel. */
+async function getActivityForMachine(machineId: string) {
+  const [runs, streams, installs, uninstalls] = await Promise.all([
+    getActiveRunCountForMachine(machineId),
+    getActiveStreamCountForMachine(machineId),
+    getActiveInstallCountForMachine(machineId),
+    getActiveUninstallCountForMachine(machineId),
+  ]);
+  return { runs, streams, installs, uninstalls };
+}
 
 export const hostsRoutes: FastifyPluginAsync = async (app) => {
   app.get('/', async () => {
-    return listHosts();
+    const hosts = await listHosts();
+    return Promise.all(
+      hosts.map(async (host) => {
+        const activity = await getActivityForMachine(host.machineId);
+        return { ...(host.toObject() as Record<string, unknown>), activity };
+      }),
+    );
   });
 
   app.post('/heartbeat', { preHandler: requireAgentToken }, async (req) => {
@@ -50,6 +76,6 @@ export const hostsRoutes: FastifyPluginAsync = async (app) => {
     const { machineId } = req.params as { machineId: string };
     const host = await getHost(machineId);
     if (!host) throw new NotFoundError('Host not found');
-    return host;
+    return { ...host.toObject(), activity: await getActivityForMachine(machineId) };
   });
 };

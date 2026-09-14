@@ -10,11 +10,15 @@ export async function upsertHeartbeat(data: {
   os: IHost['os'];
   agentVersion: string;
   capabilities: IHost['capabilities'];
+  /** Absent for an agent that predates this field — left untouched on that host's existing record rather than overwritten with nulls. */
+  diagnostics?: IHost['diagnostics'];
 }): Promise<IHost> {
+  const { diagnostics, ...rest } = data;
   const host = await Host.findOneAndUpdate(
     { machineId: data.machineId },
     {
-      ...data,
+      ...rest,
+      ...(diagnostics !== undefined ? { diagnostics } : {}),
       status: 'online',
       lastHeartbeatAt: new Date(),
     },
