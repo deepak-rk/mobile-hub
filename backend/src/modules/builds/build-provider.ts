@@ -1,5 +1,5 @@
 import { BuildProviderName } from '../../config/org-config.schema';
-import { IBuild } from './build.model';
+import { IBuild, IBuildConstraints } from './build.model';
 
 export interface BuildFetchContext {
   project: string;
@@ -12,6 +12,13 @@ export interface BuildFetchContext {
 export interface BuildFetchResult {
   sourceUrl: string;
   sizeBytes: number;
+  /**
+   * Install compatibility info, when a provider actually has one to report.
+   * No current provider populates this — it exists so a future one (a CI
+   * artifact API that carries min-OS/arch/feature-flag metadata, say) has
+   * somewhere to put it without a `builds.service.ts` change.
+   */
+  constraints?: IBuildConstraints;
 }
 
 /**

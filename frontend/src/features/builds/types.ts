@@ -1,3 +1,14 @@
+/**
+ * Install compatibility info a build provider *can* report — no current
+ * provider populates this. Null (the whole object) is the common case, not a
+ * loading state; render conditionally, never as an empty "N/A" row.
+ */
+export interface BuildConstraints {
+  minOsVersion: string | null;
+  architecture: string | null;
+  features: string[];
+}
+
 export interface Build {
   _id: string;
   project: string;
@@ -20,5 +31,7 @@ export interface Build {
   fetchedAt: string | null;
   /** Set when the retention GC removes this build's artifact from disk. */
   purgedAt: string | null;
+  /** Null when the provider that fetched this build didn't report any. */
+  constraints: BuildConstraints | null;
   createdAt: string;
 }

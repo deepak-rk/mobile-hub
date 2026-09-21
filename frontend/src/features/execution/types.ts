@@ -53,4 +53,10 @@ export interface ExecutionRun {
   startedAt: string | null;
   endedAt: string | null;
   createdAt: string;
+  /**
+   * 1-based position among other runs queued for the same device, oldest
+   * first — null unless `status === 'queued'`. Computed by the hub at
+   * request time, not a stored fact about the run.
+   */
+  queuePosition: number | null;
 }

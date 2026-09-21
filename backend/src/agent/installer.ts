@@ -13,6 +13,15 @@ const ADB_SHORT_TIMEOUT_MS = 10_000;
 const PROGRESS_REPORT_INTERVAL_MS = 1000;
 /** Where the artifact is staged on the device before `pm install` reads it. */
 const REMOTE_STAGING_DIR = '/data/local/tmp';
+/**
+ * Where builds are cached on this agent's own disk, keyed by build id, so a
+ * repeat install (a different device on this host, or a re-install after the
+ * agent restarted) skips re-downloading a build it already fetched. No
+ * eviction yet — a first pass, and the failure mode of not having one is disk
+ * space, not correctness; add a bound or an LRU sweep once real usage shows
+ * it's needed.
+ */
+const CACHE_DIR = path.join(os.homedir(), '.mobile-hub-agent', 'builds');
 
 /**
  * Throttles progress reports to the hub.
@@ -196,6 +205,88 @@ async function verifyPackageInstalled(adbPath: string, deviceUdid: string, packa
 }
 
 /**
+ * Dedupes concurrent downloads of the same build.
+ *
+ * `agent.ts#startPendingInstalls` fires one `runInstall` per pending target
+ * without awaiting the others — installing one build onto several devices on
+ * this host is exactly this case, several targets sharing one `buildId`. Without
+ * this, every one of them would race to write the same cached file at once.
+ * Keyed by `buildId`, process-local: this is agent-local disk state, not
+ * something another machine could race against, so an in-memory map is enough.
+ */
+const downloadsInFlight = new Map<string, Promise<void>>();
+
+/**
+ * Exported for testing: the part that decides whether a re-download is
+ * skipped. `cacheDir` defaults to the real per-agent cache and is only ever
+ * overridden by tests, to a temp directory — never by `runInstall` itself.
+ */
+export function cachedBuildPath(buildId: string, cacheDir: string = CACHE_DIR): string {
+  // Every path through this agent only ever installs Android — iOS returns
+  // early in `runInstall` before this is ever called — so `.apk` is safe here
+  // the same way it was already hardcoded in the old temp-file destination.
+  return path.join(cacheDir, `${buildId}.apk`);
+}
+
+/**
+ * Whether a cached copy is present *and verified* against the size the hub
+ * reports — a cached file is never trusted blindly. `sizeBytes: null` (the hub
+ * doesn't know the size) means the cache can't be verified, so it's treated as
+ * a miss rather than an unverified hit; better to re-download than to risk
+ * pushing a stale or corrupt file to a device.
+ */
+export function isCacheValid(buildId: string, sizeBytes: number | null, cacheDir: string = CACHE_DIR): boolean {
+  if (sizeBytes == null) return false;
+  try {
+    return fs.statSync(cachedBuildPath(buildId, cacheDir)).size === sizeBytes;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Returns a local path holding a verified copy of this build, downloading it
+ * only if the cache doesn't already have one.
+ */
+export async function ensureCachedBuild(
+  hub: HubClient,
+  buildId: string,
+  sizeBytes: number | null,
+  onProgress: (done: number, total: number | null) => void,
+  cacheDir: string = CACHE_DIR,
+): Promise<string> {
+  const dest = cachedBuildPath(buildId, cacheDir);
+  if (isCacheValid(buildId, sizeBytes, cacheDir)) {
+    onProgress(sizeBytes ?? 0, sizeBytes);
+    return dest;
+  }
+
+  const existing = downloadsInFlight.get(buildId);
+  if (existing) {
+    await existing;
+    // The download this awaited may have been started for a different caller
+    // — re-validate rather than assume its result satisfies this one too.
+    if (!isCacheValid(buildId, sizeBytes, cacheDir)) {
+      throw new Error(`Cached build ${buildId} failed validation after a shared in-flight download.`);
+    }
+    // A caller that only waited on someone else's download never saw its
+    // byte-level progress; report completion rather than leaving it at 0.
+    onProgress(sizeBytes ?? 0, sizeBytes);
+    return dest;
+  }
+
+  fs.mkdirSync(cacheDir, { recursive: true });
+  const download = hub.downloadArtifact(buildId, dest, onProgress);
+  downloadsInFlight.set(buildId, download);
+  try {
+    await download;
+  } finally {
+    downloadsInFlight.delete(buildId);
+  }
+  return dest;
+}
+
+/**
  * Downloads one build artifact and installs it onto the device that requested
  * it, reporting status back to the hub at each step.
  *
@@ -224,16 +315,15 @@ export async function runInstall(
     return;
   }
 
-  const destPath = path.join(os.tmpdir(), 'mobile-hub-installs', `${installRunId}-${deviceUdid}.apk`);
   const remotePath = `${REMOTE_STAGING_DIR}/mobile-hub-${installRunId}-${deviceUdid}.apk`;
-  fs.mkdirSync(path.dirname(destPath), { recursive: true });
 
   try {
     await hub.reportInstallProgress(installRunId, deviceUdid, { status: 'downloading', progress: 0 });
     const onDownload = throttledReporter(hub, installRunId, deviceUdid, 'downloading');
-    await hub.downloadArtifact(buildId, destPath, (done, total) =>
-      // Prefer the size the hub told us over Content-Length: a proxy using
-      // chunked encoding drops the header, and the hub always knows the size.
+    // Prefer the size the hub told us over Content-Length: a proxy using
+    // chunked encoding drops the header, and the hub always knows the size.
+    // Also what makes the cache verifiable — see `isCacheValid`.
+    const destPath = await ensureCachedBuild(hub, buildId, sizeBytes, (done, total) =>
       onDownload(done, total ?? sizeBytes),
     );
 
@@ -283,12 +373,10 @@ export async function runInstall(
       error: err instanceof Error ? err.message : String(err),
     });
   } finally {
-    fs.rm(destPath, { force: true }, () => {
-      // Best-effort cleanup — a leftover temp APK is a disk-space nuisance,
-      // not a correctness problem.
-    });
-    // The staged copy on the device is the same kind of nuisance, and leaving
-    // one per install would fill /data/local/tmp over time.
+    // The downloaded artifact is no longer cleaned up here — it lives in the
+    // persistent per-build cache now (`ensureCachedBuild`), kept across
+    // installs on purpose. Only the device-side staged copy is this run's own
+    // mess to clean up; leaving one per install would fill /data/local/tmp.
     void run(adbPath, ['-s', deviceUdid, 'shell', 'rm', '-f', remotePath], {
       timeout: ADB_SHORT_TIMEOUT_MS,
     }).catch(() => {});

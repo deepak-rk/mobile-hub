@@ -8,6 +8,9 @@ import {
   queryAggregates,
   computeFailureReasons,
   normalizeFailureMessage,
+  computeDeviceUtilisation,
+  computeFlakinessByConfigTuple,
+  computeTestCaseFlakiness,
 } from './analytics.service';
 
 /**
@@ -554,5 +557,174 @@ describe('computeFailureReasons', () => {
       'testSummary.failures.0': { $exists: true },
     });
     expect((calledWith.createdAt as { $gte: Date }).$gte.getTime()).toBeLessThan(Date.now());
+  });
+});
+
+/** `.select(...).lean()` chain, shared by computeDeviceUtilisation and computeFlakinessByConfigTuple. */
+function mockLeanRuns(runs: unknown[]) {
+  const lean = vi.fn().mockResolvedValue(runs);
+  const select = vi.fn().mockReturnValue({ lean });
+  return vi.spyOn(ExecutionRun, 'find').mockReturnValue({ select } as never);
+}
+
+describe('computeDeviceUtilisation', () => {
+  it('sums each device\'s busy time as a fraction of the window', async () => {
+    const now = Date.now();
+    mockLeanRuns([
+      {
+        deviceUdid: 'd1',
+        startedAt: new Date(now - 60_000),
+        endedAt: new Date(now - 30_000), // 30s busy
+        snapshot: { platform: 'android' },
+      },
+      {
+        deviceUdid: 'd2',
+        startedAt: new Date(now - 60_000),
+        endedAt: new Date(now), // 60s busy
+        snapshot: { platform: 'android' },
+      },
+    ]);
+
+    const result = await computeDeviceUtilisation({ days: 1 });
+
+    const d2 = result.find((r) => r.deviceUdid === 'd2')!;
+    const d1 = result.find((r) => r.deviceUdid === 'd1')!;
+    expect(d2.busyMs).toBe(60_000);
+    expect(d1.busyMs).toBe(30_000);
+    // Sorted by utilisation descending — the busier device first.
+    expect(result[0].deviceUdid).toBe('d2');
+  });
+
+  it('excludes a run still in flight (no endedAt) rather than counting a partial window', async () => {
+    mockLeanRuns([{ deviceUdid: 'd1', startedAt: new Date(), endedAt: null, snapshot: { platform: 'android' } }]);
+
+    const result = await computeDeviceUtilisation({});
+
+    expect(result).toEqual([]);
+  });
+
+  it('caps utilisation at 1 rather than reading above 100%', async () => {
+    const now = Date.now();
+    // A window far longer than the "busy" duration below would normally give
+    // a tiny fraction — construct the opposite (busy duration exceeding the
+    // requested window) to prove the cap holds even though the lock model
+    // should make this unreachable in practice.
+    mockLeanRuns([
+      {
+        deviceUdid: 'd1',
+        startedAt: new Date(now - 10 * 24 * 60 * 60 * 1000),
+        endedAt: new Date(now),
+        snapshot: { platform: 'android' },
+      },
+    ]);
+
+    const result = await computeDeviceUtilisation({ days: 1 });
+
+    expect(result[0].utilisation).toBe(1);
+  });
+
+  it('excludes a device once a platform filter is applied and its runs predate the snapshot', async () => {
+    mockLeanRuns([
+      { deviceUdid: 'd1', startedAt: new Date(), endedAt: new Date(), snapshot: null },
+    ]);
+
+    const result = await computeDeviceUtilisation({ platform: 'android' });
+
+    expect(result).toEqual([]);
+  });
+});
+
+describe('computeFlakinessByConfigTuple', () => {
+  it('scores a config tuple whose daily pass rate varies as flaky, and a consistently green one as 0', async () => {
+    mockLeanRuns([
+      // suite A on 'main': alternates day to day.
+      { project: 'p1', branch: 'main', suite: 'smoke', status: 'passed', failureKind: null, endedAt: new Date('2026-01-01T01:00:00Z'), snapshot: { platform: 'android', suiteKind: 'name' } },
+      { project: 'p1', branch: 'main', suite: 'smoke', status: 'failed', failureKind: 'test', endedAt: new Date('2026-01-02T01:00:00Z'), snapshot: { platform: 'android', suiteKind: 'name' } },
+      // suite A on 'release': always passes.
+      { project: 'p1', branch: 'release', suite: 'smoke', status: 'passed', failureKind: null, endedAt: new Date('2026-01-01T01:00:00Z'), snapshot: { platform: 'android', suiteKind: 'name' } },
+      { project: 'p1', branch: 'release', suite: 'smoke', status: 'passed', failureKind: null, endedAt: new Date('2026-01-02T01:00:00Z'), snapshot: { platform: 'android', suiteKind: 'name' } },
+    ]);
+
+    const result = await computeFlakinessByConfigTuple({ project: 'p1' });
+
+    const main = result.find((r) => r.branch === 'main')!;
+    const release = result.find((r) => r.branch === 'release')!;
+    expect(main.flakiness).toBeGreaterThan(0);
+    expect(release.flakiness).toBe(0);
+  });
+
+  it('excludes a cancelled run from the pass-rate calculation but still counts it as a run', async () => {
+    mockLeanRuns([
+      { project: 'p1', branch: 'main', suite: 'smoke', status: 'passed', failureKind: null, endedAt: new Date('2026-01-01T01:00:00Z'), snapshot: { platform: 'android', suiteKind: 'name' } },
+      { project: 'p1', branch: 'main', suite: 'smoke', status: 'cancelled', failureKind: null, endedAt: new Date('2026-01-01T02:00:00Z'), snapshot: { platform: 'android', suiteKind: 'name' } },
+    ]);
+
+    const [result] = await computeFlakinessByConfigTuple({ project: 'p1' });
+
+    expect(result.runs).toBe(2);
+    expect(result.passRate).toBe(1); // 1 of 1 *attributable* runs passed
+  });
+});
+
+describe('computeTestCaseFlakiness', () => {
+  function mockSortedRuns(runs: unknown[]) {
+    const lean = vi.fn().mockResolvedValue(runs);
+    const sort = vi.fn().mockReturnValue({ lean });
+    const select = vi.fn().mockReturnValue({ sort });
+    return vi.spyOn(ExecutionRun, 'find').mockReturnValue({ select } as never);
+  }
+
+  it('flags a test that alternates pass/fail across runs of the same configuration', async () => {
+    mockSortedRuns([
+      { project: 'p1', branch: 'main', suite: 'smoke', endedAt: new Date('2026-01-01'), snapshot: { platform: 'android' }, testSummary: { testCases: [{ id: 't1', name: 'opens home screen', status: 'passed' }] } },
+      { project: 'p1', branch: 'main', suite: 'smoke', endedAt: new Date('2026-01-02'), snapshot: { platform: 'android' }, testSummary: { testCases: [{ id: 't1', name: 'opens home screen', status: 'failed' }] } },
+      { project: 'p1', branch: 'main', suite: 'smoke', endedAt: new Date('2026-01-03'), snapshot: { platform: 'android' }, testSummary: { testCases: [{ id: 't1', name: 'opens home screen', status: 'passed' }] } },
+    ]);
+
+    const [result] = await computeTestCaseFlakiness({ project: 'p1' });
+
+    expect(result.testId).toBe('t1');
+    expect(result.alternations).toBe(2); // passed→failed, failed→passed
+    expect(result.recentStatuses).toEqual(['passed', 'failed', 'passed']);
+  });
+
+  it('never returns a test that is consistently green or consistently red', async () => {
+    mockSortedRuns([
+      { project: 'p1', branch: 'main', suite: 'smoke', endedAt: new Date('2026-01-01'), snapshot: { platform: 'android' }, testSummary: { testCases: [{ id: 't1', name: 'stable test', status: 'passed' }] } },
+      { project: 'p1', branch: 'main', suite: 'smoke', endedAt: new Date('2026-01-02'), snapshot: { platform: 'android' }, testSummary: { testCases: [{ id: 't1', name: 'stable test', status: 'passed' }] } },
+    ]);
+
+    const result = await computeTestCaseFlakiness({ project: 'p1' });
+
+    expect(result).toEqual([]);
+  });
+
+  it('keeps a separate history per configuration — the same test id under a different branch does not share alternation counts', async () => {
+    mockSortedRuns([
+      { project: 'p1', branch: 'main', suite: 'smoke', endedAt: new Date('2026-01-01'), snapshot: { platform: 'android' }, testSummary: { testCases: [{ id: 't1', name: 'x', status: 'passed' }] } },
+      { project: 'p1', branch: 'release', suite: 'smoke', endedAt: new Date('2026-01-02'), snapshot: { platform: 'android' }, testSummary: { testCases: [{ id: 't1', name: 'x', status: 'passed' }] } },
+    ]);
+
+    const result = await computeTestCaseFlakiness({ project: 'p1' });
+
+    // Neither config has more than one data point, so neither can show an
+    // alternation — proves they were never pooled into one series of two.
+    expect(result).toEqual([]);
+  });
+
+  it('caps history at the most recent MAX_TESTCASE_HISTORY runs, oldest evicted first', async () => {
+    const runs = Array.from({ length: 12 }, (_, i) => ({
+      project: 'p1',
+      branch: 'main',
+      suite: 'smoke',
+      endedAt: new Date(2026, 0, i + 1),
+      snapshot: { platform: 'android' },
+      testSummary: { testCases: [{ id: 't1', name: 'x', status: i % 2 === 0 ? 'passed' : 'failed' }] },
+    }));
+    mockSortedRuns(runs);
+
+    const [result] = await computeTestCaseFlakiness({ project: 'p1' });
+
+    expect(result.recentStatuses).toHaveLength(10);
   });
 });

@@ -16,15 +16,6 @@ import { ExecutionRun, IExecutionRun, RunStatus, StageName, FailureKind } from '
 import { publishExecutionEvent } from './execution.events';
 import { ConflictError } from '../../common/errors/app-error';
 
-// Both extend ConflictError (409) directly — matches what execution.routes.ts
-// was already mapping them to before typed errors existed, now baked in at
-// the throw site instead of a per-route instanceof check.
-export class DeviceLockedError extends ConflictError {
-  constructor(deviceUdid: string) {
-    super(`Device ${deviceUdid} is already locked`, 'DEVICE_LOCKED');
-  }
-}
-
 export class RunNotCancellableError extends ConflictError {
   constructor(status: string) {
     super(`Run is already ${status}`);
@@ -134,6 +125,10 @@ export async function triggerExecutionRun(
       // Filled in after `pulling`; there is nothing to resolve yet.
       commit: null,
     },
+    // Frozen for the same reason `snapshot` is: `dispatchQueuedRuns` may start
+    // this run long after the request that resolved these commands (a config
+    // override, or the config-derived default) has ended.
+    commands: { setup: input.setup ?? null, run: input.run },
     workspacePath,
     artifactsPath,
     logPath,
@@ -141,14 +136,13 @@ export async function triggerExecutionRun(
 
   const locked = await acquireLock(input.deviceUdid, input.triggeredBy, runId.toString(), `execution:${runId.toString()}`);
   if (!locked) {
-    run.status = 'failed';
-    // Nothing ran: the device was already busy. Recorded as a precondition
-    // failure so it is excluded from pass rate — this run says nothing at all
-    // about the application under test.
-    run.failureKind = 'precondition';
-    run.endedAt = new Date();
-    await run.save();
-    throw new DeviceLockedError(input.deviceUdid);
+    // The device is busy, not broken: leave the run `queued` (its create
+    // default) rather than failing it. `dispatchQueuedRuns` — run on a timer
+    // from server.ts, same shape as `markStaleHostsOffline`/
+    // `releaseExpiredLocks` — starts it once the device frees up. Returning
+    // it as-is rather than throwing is what makes this a queue instead of a
+    // 409: the caller sees a normal 201 with `status: 'queued'`.
+    return run;
   }
 
   // Orchestration runs in the background — a real run can take minutes, so
@@ -162,6 +156,87 @@ export async function triggerExecutionRun(
   });
 
   return run;
+}
+
+/**
+ * 1-based position of a queued run among others queued for the *same
+ * device*, oldest first — locking is per-device, so that's the only queue
+ * that actually exists. Null when the run isn't queued at all.
+ */
+export async function getQueuePosition(run: IExecutionRun): Promise<number | null> {
+  if (run.status !== 'queued') return null;
+  const ahead = await ExecutionRun.countDocuments({
+    deviceUdid: run.deviceUdid,
+    status: 'queued',
+    createdAt: { $lt: run.createdAt },
+  });
+  return ahead + 1;
+}
+
+/**
+ * How often `dispatchQueuedRuns` is polled from `server.ts`. Snappier than
+ * the lock-expiry/stale-host sweeps (60s/10s) because a queued run starting
+ * promptly once a device frees up is the entire point of building a real
+ * queue instead of a 409 — but not so tight it hammers Mongo on an idle farm.
+ */
+export const QUEUE_DISPATCH_INTERVAL_MS = 5_000;
+
+/**
+ * Starts whichever queued runs can now proceed, one per device per pass.
+ *
+ * Only the *oldest* queued run for a given device is ever attempted on one
+ * pass — a later run for the same device must not start ahead of an earlier
+ * one still waiting, which is what actually makes this FIFO rather than
+ * whichever run happens to win the lock race.
+ */
+export async function dispatchQueuedRuns(config: EffectiveConfig): Promise<number> {
+  const queued = await ExecutionRun.find({ status: 'queued' }).sort({ createdAt: 1 });
+  const attemptedDevices = new Set<string>();
+  let started = 0;
+
+  for (const candidate of queued) {
+    if (attemptedDevices.has(candidate.deviceUdid)) continue;
+    attemptedDevices.add(candidate.deviceUdid);
+
+    const locked = await acquireLock(
+      candidate.deviceUdid,
+      candidate.triggeredBy,
+      candidate.id as string,
+      `execution:${candidate.id as string}`,
+    );
+    if (!locked) continue; // still busy — leave it queued, try again next tick
+
+    // Re-read rather than trust the list above: a cancel could have landed
+    // between listing queued runs and winning this lock.
+    const run = await ExecutionRun.findById(candidate._id);
+    if (!run || run.status !== 'queued' || !run.commands) {
+      await releaseLock(candidate.deviceUdid, candidate.triggeredBy, true);
+      continue;
+    }
+
+    const automation = config.projects[run.project]?.automation ?? config.automation;
+    void runExecution(
+      run,
+      {
+        machineId: run.machineId,
+        deviceUdid: run.deviceUdid,
+        buildId: run.buildId?.toString(),
+        project: run.project,
+        branch: run.branch,
+        suite: run.suite,
+        triggeredBy: run.triggeredBy,
+        setup: run.commands.setup ?? undefined,
+        run: run.commands.run,
+      },
+      automation,
+      config.appium,
+    ).catch((err: unknown) => {
+      console.error(`Unhandled error running dequeued execution ${run.id as string}:`, err);
+    });
+    started += 1;
+  }
+
+  return started;
 }
 
 /**
@@ -653,6 +728,18 @@ export async function cancelExecutionRun(id: string): Promise<IExecutionRun | nu
   if (!(['queued', 'preparing', 'running'] as RunStatus[]).includes(run.status)) {
     throw new RunNotCancellableError(run.status);
   }
+
+  // A queued run has no process to kill and never acquired the device lock —
+  // `dispatchQueuedRuns` is what would otherwise start it, so removing it
+  // from the queue is just setting its own status directly, not signalling a
+  // live orchestration the way the running/preparing path below does.
+  if (run.status === 'queued') {
+    run.status = 'cancelled';
+    run.endedAt = new Date();
+    await run.save();
+    return run;
+  }
+
   cancelledRuns.add(id);
   // Kills the whole process tree, not just the direct child — a test runner
   // is npm -> node -> wdio -> ..., and orphaning the tail leaves a process

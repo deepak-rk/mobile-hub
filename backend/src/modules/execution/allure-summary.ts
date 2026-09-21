@@ -36,6 +36,8 @@ export interface TestSummary {
    * Empty when nothing failed.
    */
   failures: FailureGroup[];
+  /** One entry per distinct test (retries already collapsed) — see `TestCaseOutcome`. */
+  testCases: TestCaseOutcome[];
 }
 
 export interface FailureGroup {
@@ -43,6 +45,24 @@ export interface FailureGroup {
   message: string;
   /** How many distinct tests failed with this message. */
   count: number;
+}
+
+/**
+ * One test's outcome in this run — the identity + status pair needed to spot
+ * a *specific test* alternating pass/fail across runs of the same
+ * configuration, which no run-level or message-level aggregate can answer
+ * (both already existed; this answers a different question: not "how bad was
+ * this run" or "what keeps failing", but "which single test is unreliable").
+ *
+ * Bounded by suite size, same as `total` above — a device lab's suites run to
+ * the low hundreds of tests, not millions, so embedding one entry per test
+ * per run is the same order of magnitude as `stages` already is per run.
+ */
+export interface TestCaseOutcome {
+  /** `historyId`/`testCaseId`/`fullName` — whichever `keyOf` resolved for this test, stable across retries and reruns. */
+  id: string;
+  name: string;
+  status: 'passed' | 'failed' | 'broken' | 'skipped' | 'unknown';
 }
 
 export const ALLURE_RESULTS_DIRNAME = 'allure-results';
@@ -169,12 +189,21 @@ export function summarizeAllureResults(dir: string): TestSummary | null {
     unknown: 0,
     passRate: null,
     failures: [],
+    testCases: [],
   };
 
   const failureCounts = new Map<string, number>();
+  const KNOWN_STATUSES = new Set(['passed', 'failed', 'broken', 'skipped']);
+  const normalizeStatus = (status?: string): TestCaseOutcome['status'] =>
+    (KNOWN_STATUSES.has(status ?? '') ? status : 'unknown') as TestCaseOutcome['status'];
 
-  for (const result of latest.values()) {
+  for (const [key, result] of latest.entries()) {
     summary.total += 1;
+    summary.testCases.push({
+      id: key,
+      name: result.fullName ?? result.name ?? key,
+      status: normalizeStatus(result.status),
+    });
     switch (result.status) {
       case 'passed':
         summary.passed += 1;

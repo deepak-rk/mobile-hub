@@ -1,5 +1,9 @@
-import { describe, it, expect } from 'vitest';
-import { identifyInstalledPackage, parsePackageList } from './installer';
+import { describe, it, expect, afterEach } from 'vitest';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
+import { identifyInstalledPackage, parsePackageList, cachedBuildPath, isCacheValid, ensureCachedBuild } from './installer';
+import type { HubClient } from './hub-client';
 
 /**
  * Post-install verification's two pure parts. These are the pieces that
@@ -92,5 +96,109 @@ describe('identifyInstalledPackage', () => {
     // listInstalledPackages yields an empty map when adb fails; that must read
     // as unverified rather than as a change.
     expect(identifyInstalledPackage(new Map(), new Map())).toBeNull();
+  });
+});
+
+/**
+ * The agent's own per-build cache — skips re-downloading a build it already
+ * fetched. `cacheDir` is always a fresh temp directory here, never the real
+ * per-agent cache: `ensureCachedBuild`'s default argument is the only thing
+ * that ever points at `~/.mobile-hub-agent`, and no test exercises the default.
+ */
+describe('build cache (cachedBuildPath / isCacheValid / ensureCachedBuild)', () => {
+  let cacheDir: string;
+
+  afterEach(() => {
+    fs.rmSync(cacheDir, { recursive: true, force: true });
+  });
+
+  function freshCacheDir(): string {
+    cacheDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mh-agent-cache-'));
+    return cacheDir;
+  }
+
+  /** A fake hub whose `downloadArtifact` really writes bytes, like the real one. */
+  function fakeHub(bytes: Buffer, calls: string[] = []) {
+    return {
+      downloadArtifact: async (buildId: string, destPath: string, onProgress?: (d: number, t: number | null) => void) => {
+        calls.push(buildId);
+        fs.writeFileSync(destPath, bytes);
+        onProgress?.(bytes.length, bytes.length);
+      },
+    } as unknown as HubClient;
+  }
+
+  it('is invalid when the size is unknown, even if a file happens to exist', () => {
+    const dir = freshCacheDir();
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(cachedBuildPath('b1', dir), Buffer.alloc(10));
+    expect(isCacheValid('b1', null, dir)).toBe(false);
+  });
+
+  it('is invalid when nothing is cached yet', () => {
+    const dir = freshCacheDir();
+    expect(isCacheValid('b1', 10, dir)).toBe(false);
+  });
+
+  it('is invalid when the cached file size does not match', () => {
+    const dir = freshCacheDir();
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(cachedBuildPath('b1', dir), Buffer.alloc(10));
+    expect(isCacheValid('b1', 999, dir)).toBe(false);
+  });
+
+  it('is valid when the cached file size matches exactly', () => {
+    const dir = freshCacheDir();
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(cachedBuildPath('b1', dir), Buffer.alloc(10));
+    expect(isCacheValid('b1', 10, dir)).toBe(true);
+  });
+
+  it('downloads on a cache miss and leaves a valid cached file behind', async () => {
+    const dir = freshCacheDir();
+    const bytes = Buffer.alloc(50, 7);
+    const calls: string[] = [];
+    const hub = fakeHub(bytes, calls);
+
+    const dest = await ensureCachedBuild(hub, 'b1', 50, () => {}, dir);
+
+    expect(calls).toEqual(['b1']);
+    expect(fs.readFileSync(dest)).toEqual(bytes);
+  });
+
+  it('skips the download entirely on a cache hit', async () => {
+    const dir = freshCacheDir();
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(cachedBuildPath('b1', dir), Buffer.alloc(50));
+    const calls: string[] = [];
+    const hub = fakeHub(Buffer.alloc(50), calls);
+
+    await ensureCachedBuild(hub, 'b1', 50, () => {}, dir);
+
+    expect(calls).toEqual([]);
+  });
+
+  it('dedupes concurrent downloads of the same build', async () => {
+    // Installing one build onto several devices on the same host fires one
+    // runInstall per device without awaiting the others (agent.ts) — without
+    // dedup, every one of them would race to write the same cached file.
+    const dir = freshCacheDir();
+    const calls: string[] = [];
+    let resolveDownload: () => void = () => {};
+    const gate = new Promise<void>((r) => (resolveDownload = r));
+    const hub = {
+      downloadArtifact: async (buildId: string, destPath: string) => {
+        calls.push(buildId);
+        await gate; // held open until the test releases it
+        fs.writeFileSync(destPath, Buffer.alloc(30));
+      },
+    } as unknown as HubClient;
+
+    const first = ensureCachedBuild(hub, 'b1', 30, () => {}, dir);
+    const second = ensureCachedBuild(hub, 'b1', 30, () => {}, dir);
+    resolveDownload();
+    await Promise.all([first, second]);
+
+    expect(calls).toEqual(['b1']); // only one real download, not two
   });
 });

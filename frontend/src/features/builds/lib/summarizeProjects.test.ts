@@ -16,6 +16,7 @@ function build(overrides: Partial<Build>): Build {
     integrityValidatedAt: '2026-08-20T00:00:00.000Z',
     fetchedAt: '2026-08-20T00:00:00.000Z',
     purgedAt: null,
+    constraints: null,
     createdAt: '2026-08-20T00:00:00.000Z',
     ...overrides,
   };

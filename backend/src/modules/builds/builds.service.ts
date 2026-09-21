@@ -186,7 +186,7 @@ async function runFetch(
     // Persisting every chunk would be thousands of writes per artifact; a ~1s
     // sample is all a progress bar can express anyway.
     let lastPersistAt = 0;
-    const { sourceUrl, sizeBytes } = await provider.fetch(
+    const { sourceUrl, sizeBytes, constraints } = await provider.fetch(
       { project: input.project, platform: input.platform, version: input.version, artifactUrl: input.artifactUrl },
       destPath,
       (downloadedBytes, totalBytes) => {
@@ -227,6 +227,10 @@ async function runFetch(
     build.checksum = checksum;
     build.integrityValidatedAt = new Date();
     build.fetchedAt = new Date();
+    // Absent (not merely falsy) unless a provider actually reported one — no
+    // current provider does, and this must not default to an empty-but-present
+    // object that would read as "we checked, there are no constraints".
+    build.constraints = constraints ?? null;
     build.status = 'ready';
     await build.save();
     publishBuildEvent(build.id as string, { type: 'status', status: 'ready' });

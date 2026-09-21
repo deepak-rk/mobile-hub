@@ -8,6 +8,8 @@ import { useRunStream } from '../api/useRunStream';
 import type { ExecutionRun } from '../types';
 import { LogViewer } from '../components/LogViewer';
 import { useAuth } from '@/features/auth/useAuth';
+import { useDevice } from '@/features/devices/api/devices.api';
+import { DeviceStream } from '@/features/devices/components/DeviceStream';
 import { STAGE_LABELS, stageColor, stageIcon } from '../lib/stageMeta';
 import styles from './RunDetailPage.module.css';
 
@@ -137,6 +139,12 @@ export function RunDetailPage() {
   const hasStoredLog = Boolean(storedLog) || logLines.length > 0;
   const cancel = useCancelRun(runId ?? '');
   const rerun = useRerunExecution(runId ?? '');
+  // The device is only actually doing anything during `preparing`/`running` —
+  // a `queued` run hasn't touched it yet, and a terminal run is done with it,
+  // so a live view has nothing to show either way (and per the streaming
+  // module's own opt-in-capture design, must not be started for one).
+  const showLiveView = run ? run.status === 'preparing' || run.status === 'running' : false;
+  const { data: device } = useDevice(showLiveView ? run?.deviceUdid : undefined);
 
   // Cancel is only meaningful while the run is non-terminal, and only for
   // roles the backend will actually accept (guidelines §10).
@@ -221,6 +229,12 @@ export function RunDetailPage() {
                   <StatusBadge status={run.status} />
                 </div>
 
+                {run.status === 'queued' && run.queuePosition !== null ? (
+                  <p className={styles.queuedNote}>
+                    #{run.queuePosition} waiting for device <Mono>{run.deviceUdid}</Mono> to free up.
+                  </p>
+                ) : null}
+
                 <ol className={styles.stages}>
                   {run.stages.map((stage) => {
                     const Icon = stageIcon(stage.status);
@@ -251,6 +265,17 @@ export function RunDetailPage() {
             </Card>
 
             <div className={styles.sideColumn}>
+              {/* Only while the device is actually in play — see `showLiveView`
+                  above. Reuses the same component/hook the device detail page
+                  uses; this is composition, not a second streaming feature. */}
+              {showLiveView && device ? (
+                <Card>
+                  <CardBody>
+                    <DeviceStream device={device} />
+                  </CardBody>
+                </Card>
+              ) : null}
+
               {run.testSummary ? <TestSummaryPanel summary={run.testSummary} /> : null}
 
               <Card>

@@ -6,6 +6,19 @@
  * Capping and truncating keeps the row scannable; `title` keeps the full value
  * one hover away, so nothing is actually lost.
  */
+.statusCell {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  align-items: flex-start;
+}
+
+.queueNote {
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+  white-space: nowrap;
+}
+
 .truncate {
   display: block;
   max-width: 22ch;

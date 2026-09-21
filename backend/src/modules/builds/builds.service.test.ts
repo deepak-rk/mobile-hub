@@ -88,6 +88,33 @@ describe('triggerBuildFetch', () => {
     // which is how a working pipeline still failed at session creation. The id
     // comes from the claim upsert rather than being fixed by the fixture.
     expect(fs.existsSync(path.join(tmpDir, `${result.id as string}.apk`))).toBe(true);
+    // No provider populates this yet — absent must stay absent, not default to
+    // an empty-but-present object that would read as "checked, none found".
+    expect(result.constraints).toBeNull();
+  });
+
+  it('persists install compatibility constraints when a provider reports them', async () => {
+    const bytes = Buffer.from('a real fake artifact');
+    vi.spyOn(getProviderModule, 'getBuildProvider').mockReturnValue({
+      name: 'url',
+      fetch: async (_ctx, destPath) => {
+        fs.writeFileSync(destPath, bytes);
+        return {
+          sourceUrl: 'https://example.com/a.apk',
+          sizeBytes: bytes.length,
+          constraints: { minOsVersion: '26', architecture: 'arm64-v8a', features: ['biometric'] },
+        };
+      },
+    });
+    const doc = fakeDoc();
+    mockClaimWon(doc);
+
+    const result = await triggerBuildFetch(
+      { build: { provider: 'url' } } as never,
+      { project: 'p', platform: 'android', version: '1.0' },
+    );
+
+    expect(result.constraints).toEqual({ minOsVersion: '26', architecture: 'arm64-v8a', features: ['biometric'] });
   });
 
   it('rejects a 0-byte artifact and marks the build corrupt', async () => {

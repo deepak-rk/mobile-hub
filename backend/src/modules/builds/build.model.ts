@@ -1,5 +1,18 @@
 import { Schema, model, Document } from 'mongoose';
 
+/**
+ * Install compatibility info a `BuildProvider` *can* supply — nothing in this
+ * repo populates it yet (no provider extracts a min OS version, architecture,
+ * or feature-flag requirement from anywhere). Optional and nullable end to
+ * end on purpose: better to show nothing than to invent a value no provider
+ * actually reported.
+ */
+export interface IBuildConstraints {
+  minOsVersion: string | null;
+  architecture: string | null;
+  features: string[];
+}
+
 export interface IBuild extends Document {
   project: string;
   platform: 'android' | 'ios';
@@ -23,6 +36,8 @@ export interface IBuild extends Document {
   fetchedAt: Date | null;
   /** Set when the retention GC removes this build's artifact from disk. */
   purgedAt: Date | null;
+  /** Null when the provider that fetched this build didn't report any. */
+  constraints: IBuildConstraints | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -46,6 +61,14 @@ const buildSchema = new Schema<IBuild>(
     integrityValidatedAt: { type: Date, default: null },
     fetchedAt: { type: Date, default: null },
     purgedAt: { type: Date, default: null },
+    constraints: {
+      type: {
+        minOsVersion: { type: String, default: null },
+        architecture: { type: String, default: null },
+        features: { type: [String], default: [] },
+      },
+      default: null,
+    },
   },
   { timestamps: true },
 );

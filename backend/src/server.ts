@@ -4,7 +4,12 @@ import mongoose from 'mongoose';
 import { env } from './config/env';
 import { loadEffectiveConfig } from './config/config.service';
 import { markStaleHostsOffline, HOST_STALE_CHECK_INTERVAL_MS } from './modules/hosts/hosts.service';
-import { recoverOrphanedRuns, sweepFinishedWorkspaces } from './modules/execution/execution.service';
+import {
+  recoverOrphanedRuns,
+  sweepFinishedWorkspaces,
+  dispatchQueuedRuns,
+  QUEUE_DISPATCH_INTERVAL_MS,
+} from './modules/execution/execution.service';
 import {
   computeDailyAggregates,
   computeWeeklyAggregates,
@@ -155,6 +160,16 @@ async function start(): Promise<void> {
       });
   }, DEVICE_LOCK_SWEEP_INTERVAL_MS);
 
+  // Starts whichever queued runs can now proceed — the counterpart to
+  // triggerExecutionRun leaving a run `queued` instead of 409ing when its
+  // device is busy. `app.config` is read fresh each tick (the getter/setter
+  // decorator), so a config reload is honoured without restarting the sweep.
+  const queueDispatchInterval = setInterval(() => {
+    dispatchQueuedRuns(app.config).catch((err: unknown) => {
+      app.log.error(err, 'Queued-run dispatch failed');
+    });
+  }, QUEUE_DISPATCH_INTERVAL_MS);
+
   const shutdown = async (signal: string) => {
     app.log.info(`${signal} received — shutting down`);
     clearInterval(staleHostInterval);
@@ -162,6 +177,7 @@ async function start(): Promise<void> {
     clearInterval(weeklyAnalyticsInterval);
     clearInterval(buildGcInterval);
     clearInterval(deviceLockSweepInterval);
+    clearInterval(queueDispatchInterval);
     // No capture process may outlive the server.
     await streamingService.shutdown();
     // Same rule as captures: a server this process started must not outlive it.

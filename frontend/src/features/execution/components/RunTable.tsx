@@ -12,7 +12,21 @@ const columnHelper = createColumnHelper<ExecutionRun>();
 const columns = [
   columnHelper.accessor('status', {
     header: 'Status',
-    cell: (info) => <StatusBadge status={info.getValue()} />,
+    cell: (info) => {
+      const run = info.row.original;
+      return (
+        <div className={styles.statusCell}>
+          <StatusBadge status={info.getValue()} />
+          {/* Position is only ever meaningful while still queued — once a run
+              starts, "waiting" no longer describes it. */}
+          {run.status === 'queued' && run.queuePosition !== null ? (
+            <span className={styles.queueNote} title={`Waiting for device ${run.deviceUdid}`}>
+              #{run.queuePosition} waiting for device
+            </span>
+          ) : null}
+        </div>
+      );
+    },
   }),
   columnHelper.accessor('project', {
     header: 'Project',

@@ -15,7 +15,8 @@ import {
   sweepFinishedWorkspaces,
   computeCacheKey,
   getActiveRunCountForMachine,
-  DeviceLockedError,
+  getQueuePosition,
+  dispatchQueuedRuns,
 } from './execution.service';
 
 /**
@@ -133,18 +134,31 @@ const baseInput = {
 };
 
 describe('triggerExecutionRun', () => {
-  it('throws DeviceLockedError and never starts orchestration if the lock is unavailable', async () => {
+  it('leaves the run queued and never starts orchestration if the lock is unavailable', async () => {
     const doc = fakeRunDoc();
     vi.spyOn(ExecutionRun, 'create').mockResolvedValue(doc as never);
     vi.spyOn(devicesService, 'acquireLock').mockResolvedValue(null);
     const releaseLock = vi.spyOn(devicesService, 'releaseLock');
 
-    await expect(triggerExecutionRun({ ...baseInput, run: { command: 'node', args: ['-e', 'process.exit(0)'] } })).rejects.toThrow(
-      DeviceLockedError,
-    );
+    const run = await triggerExecutionRun({ ...baseInput, run: { command: 'node', args: ['-e', 'process.exit(0)'] } });
 
-    expect(doc.status).toBe('failed');
+    expect(run.status).toBe('queued');
     expect(releaseLock).not.toHaveBeenCalled(); // never acquired, so nothing to release
+  });
+
+  it('persists the resolved setup/run commands on the run, for dispatchQueuedRuns to use later', async () => {
+    const doc = fakeRunDoc();
+    const create = vi.spyOn(ExecutionRun, 'create').mockResolvedValue(doc as never);
+    vi.spyOn(devicesService, 'acquireLock').mockResolvedValue(null);
+
+    await triggerExecutionRun({
+      ...baseInput,
+      setup: { command: 'npm', args: ['ci'] },
+      run: { command: 'npx', args: ['wdio'] },
+    });
+
+    const passed = create.mock.calls[0][0] as { commands: { setup: unknown; run: unknown } };
+    expect(passed.commands).toEqual({ setup: { command: 'npm', args: ['ci'] }, run: { command: 'npx', args: ['wdio'] } });
   });
 
   it('marks pulling/restoring_cache as not-implemented, distinct from installing being genuinely skipped', async () => {
@@ -442,6 +456,75 @@ describe('cancelExecutionRun', () => {
     vi.spyOn(ExecutionRun, 'findById').mockResolvedValue(null as never);
 
     expect(await cancelExecutionRun('nope')).toBeNull();
+  });
+
+  it('cancels a queued run directly — no process to kill, no lock ever held', async () => {
+    const doc = fakeRunDoc({ status: 'queued' });
+    vi.spyOn(ExecutionRun, 'findById').mockResolvedValue(doc as never);
+
+    const run = await cancelExecutionRun('run-1');
+
+    expect(run?.status).toBe('cancelled');
+    expect(doc.endedAt).toBeInstanceOf(Date);
+    expect(doc.save).toHaveBeenCalled();
+  });
+});
+
+describe('getQueuePosition', () => {
+  it('returns null for a run that is not queued', async () => {
+    expect(await getQueuePosition(fakeRunDoc({ status: 'running' }) as never)).toBeNull();
+  });
+
+  it('returns 1-based position among runs queued for the same device, oldest first', async () => {
+    const countDocuments = vi.spyOn(ExecutionRun, 'countDocuments').mockResolvedValue(2 as never);
+    const createdAt = new Date('2026-01-01T00:00:00Z');
+
+    const position = await getQueuePosition(fakeRunDoc({ status: 'queued', deviceUdid: 'd1', createdAt }) as never);
+
+    expect(position).toBe(3); // 2 ahead + this one
+    expect(countDocuments).toHaveBeenCalledWith({ deviceUdid: 'd1', status: 'queued', createdAt: { $lt: createdAt } });
+  });
+});
+
+describe('dispatchQueuedRuns', () => {
+  const config = { projects: {}, automation: PLATFORM_DEFAULTS.automation, appium: PLATFORM_DEFAULTS.appium } as never;
+
+  it('starts the oldest queued run for a device once its lock is available', async () => {
+    const queued = fakeRunDoc({ status: 'queued', deviceUdid: 'd1', commands: { setup: null, run: { command: 'node', args: ['-e', 'process.exit(0)'] } } });
+    vi.spyOn(ExecutionRun, 'find').mockReturnValue({ sort: () => Promise.resolve([queued]) } as never);
+    vi.spyOn(devicesService, 'acquireLock').mockResolvedValue({} as never);
+    vi.spyOn(ExecutionRun, 'findById').mockResolvedValue(queued as never);
+    const released = waitForReleaseLock();
+
+    const started = await dispatchQueuedRuns(config);
+    await released;
+
+    expect(started).toBe(1);
+  });
+
+  it('does not attempt a second queued run for a device already attempted this pass', async () => {
+    const first = fakeRunDoc({ id: 'run-1', status: 'queued', deviceUdid: 'd1' });
+    const second = fakeRunDoc({ id: 'run-2', status: 'queued', deviceUdid: 'd1' });
+    vi.spyOn(ExecutionRun, 'find').mockReturnValue({ sort: () => Promise.resolve([first, second]) } as never);
+    const acquireLock = vi.spyOn(devicesService, 'acquireLock').mockResolvedValue(null); // device still busy
+
+    await dispatchQueuedRuns(config);
+
+    expect(acquireLock).toHaveBeenCalledTimes(1); // never tried `second` — same device, already attempted
+  });
+
+  it('releases the lock and skips a run that was cancelled between listing and winning the lock', async () => {
+    const queued = fakeRunDoc({ status: 'queued', deviceUdid: 'd1' });
+    vi.spyOn(ExecutionRun, 'find').mockReturnValue({ sort: () => Promise.resolve([queued]) } as never);
+    vi.spyOn(devicesService, 'acquireLock').mockResolvedValue({} as never);
+    // Re-read (inside dispatchQueuedRuns, after winning the lock) sees it was cancelled in the meantime.
+    vi.spyOn(ExecutionRun, 'findById').mockResolvedValue(fakeRunDoc({ status: 'cancelled' }) as never);
+    const releaseLock = vi.spyOn(devicesService, 'releaseLock').mockResolvedValue(null);
+
+    const started = await dispatchQueuedRuns(config);
+
+    expect(started).toBe(0);
+    expect(releaseLock).toHaveBeenCalled();
   });
 });
 

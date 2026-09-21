@@ -8,9 +8,11 @@ import { env } from '../../config/env';
 import {
   cancelExecutionRun,
   getExecutionRun,
+  getQueuePosition,
   listExecutionRuns,
   triggerExecutionRun,
 } from './execution.service';
+import type { IExecutionRun } from './execution-run.model';
 import { subscribeToExecutionEvents } from './execution.events';
 import { resolveInstallCommand, resolveRunCommand } from './automation-commands';
 import { discoverSuites, SuiteDiscoveryError } from './suites/suites.service';
@@ -43,9 +45,20 @@ export const executionRoutes: FastifyPluginAsync = async (app) => {
   // the decorator stays local and cannot collide with another module's.
   await app.register(fastifyStatic, { root: env.EXECUTION_ARTIFACTS_DIR, serve: false });
 
+  // Attaches `queuePosition` (null unless the run is genuinely queued) — a
+  // per-device rank computed at read time, not stored on the run itself,
+  // since it's only ever meaningful relative to whatever else is queued
+  // right now. Same "derive at request time" shape devices.routes.ts already
+  // uses for `activeInstall`.
+  const withQueuePosition = async (run: IExecutionRun) => ({
+    ...(run.toObject() as Record<string, unknown>),
+    queuePosition: await getQueuePosition(run),
+  });
+
   app.get('/', async (req) => {
     const { project, status, deviceUdid, suite } = req.query as Record<string, string>;
-    return listExecutionRuns({ project, status, deviceUdid, suite });
+    const runs = await listExecutionRuns({ project, status, deviceUdid, suite });
+    return Promise.all(runs.map(withQueuePosition));
   });
 
   /**
@@ -138,7 +151,7 @@ export const executionRoutes: FastifyPluginAsync = async (app) => {
     const { id } = req.params as { id: string };
     const run = await getExecutionRun(id);
     if (!run) throw new NotFoundError('Execution run not found');
-    return run;
+    return withQueuePosition(run);
   });
 
   app.post(
@@ -156,10 +169,11 @@ export const executionRoutes: FastifyPluginAsync = async (app) => {
       // that per-project override is the entire point of declaring one.
       const automation = app.config.projects[body.data.project]?.automation ?? app.config.automation;
       // Config decides how to install and run unless this trigger overrode it.
-      // DeviceLockedError (409) and UnsupportedFrameworkError (400, code
-      // NO_RUN_COMMAND — nothing configured and nothing supplied) are both
-      // typed AppErrors now; the global error handler in app.ts maps them,
-      // so nothing here needs to catch them itself.
+      // A busy device no longer 409s here — triggerExecutionRun queues the run
+      // instead (dispatchQueuedRuns starts it once the device frees up).
+      // UnsupportedFrameworkError (400, code NO_RUN_COMMAND — nothing
+      // configured and nothing supplied) is still a typed AppError; the
+      // global error handler in app.ts maps it, so nothing here catches it.
       const setup = body.data.setup ?? resolveInstallCommand(automation) ?? undefined;
       const runCommand = body.data.run ?? resolveRunCommand(automation, body.data.suite);
 

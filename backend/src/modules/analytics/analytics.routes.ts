@@ -1,6 +1,14 @@
 import { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
-import { computeDailyAggregates, computeFailureReasons, computeWeeklyAggregates, queryAggregates } from './analytics.service';
+import {
+  computeDailyAggregates,
+  computeDeviceUtilisation,
+  computeFailureReasons,
+  computeFlakinessByConfigTuple,
+  computeTestCaseFlakiness,
+  computeWeeklyAggregates,
+  queryAggregates,
+} from './analytics.service';
 import { ValidationError } from '../../common/errors/app-error';
 
 const listQuery = z.object({
@@ -15,6 +23,13 @@ const failureReasonsQuery = z.object({
   project: z.string().optional(),
   platform: z.enum(['android', 'ios', 'all']).optional(),
   suite: z.string().optional(),
+  days: z.coerce.number().int().positive().max(365).optional(),
+});
+
+/** Shared by the three new endpoints below — same trailing-window shape `failureReasonsQuery` already established. */
+const windowQuery = z.object({
+  project: z.string().optional(),
+  platform: z.enum(['android', 'ios', 'all']).optional(),
   days: z.coerce.number().int().positive().max(365).optional(),
 });
 
@@ -47,6 +62,33 @@ export const analyticsRoutes: FastifyPluginAsync = async (app) => {
       throw new ValidationError(query.error.message);
     }
     return computeFailureReasons(query.data);
+  });
+
+  /** What fraction of the window each device spent busy vs idle — capacity planning, not pass-rate. */
+  app.get('/device-utilisation', async (req) => {
+    const query = windowQuery.safeParse(req.query);
+    if (!query.success) {
+      throw new ValidationError(query.error.message);
+    }
+    return computeDeviceUtilisation(query.data);
+  });
+
+  /** Flakiness grouped by the full run configuration (suite+platform+branch), not just suite — see analytics.service.ts's doc comment. */
+  app.get('/flakiness/config', async (req) => {
+    const query = windowQuery.safeParse(req.query);
+    if (!query.success) {
+      throw new ValidationError(query.error.message);
+    }
+    return computeFlakinessByConfigTuple(query.data);
+  });
+
+  /** Flakiness at the individual test-case level — which named test, not which bucket. */
+  app.get('/flakiness/tests', async (req) => {
+    const query = windowQuery.safeParse(req.query);
+    if (!query.success) {
+      throw new ValidationError(query.error.message);
+    }
+    return computeTestCaseFlakiness(query.data);
   });
 
   app.post('/recompute', { preHandler: app.requireRole('operator', 'admin') }, async (req) => {

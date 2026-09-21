@@ -127,6 +127,12 @@
   color: var(--text-primary);
 }
 
+.queuedNote {
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+  margin: 0 0 var(--space-4);
+}
+
 .stages {
   list-style: none;
   margin: 0;

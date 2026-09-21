@@ -37,6 +37,25 @@ export interface IStage {
   error: string | null;
 }
 
+/** Structurally identical to execution.service.ts's `RunCommand` — kept separate to avoid a circular import. */
+export interface IExecutionCommand {
+  command: string;
+  args: string[];
+}
+
+/**
+ * The setup/run commands a trigger actually resolved to, frozen at creation
+ * time. A queued run may sit for a while before `dispatchQueuedRuns` picks it
+ * up — by then the request that computed these (config-derived, or an
+ * explicit override) is long gone, so what actually runs must be recorded
+ * here rather than re-derived, the same reasoning `snapshot` below already
+ * uses for platform/device/framework.
+ */
+export interface IRunCommands {
+  setup: IExecutionCommand | null;
+  run: IExecutionCommand;
+}
+
 export interface IExecutionRun extends Document {
   machineId: string;
   deviceUdid: string;
@@ -81,6 +100,13 @@ export interface IExecutionRun extends Document {
    * and uses the snapshot for everything since.
    */
   snapshot: IRunSnapshot | null;
+  /**
+   * The setup/run commands this trigger actually resolved to. See
+   * `IRunCommands`'s own doc comment. Null only for a run created before this
+   * field existed — such a run is already terminal, never queued, so
+   * `dispatchQueuedRuns` never needs to read a null value here.
+   */
+  commands: IRunCommands | null;
   startedAt: Date | null;
   endedAt: Date | null;
   createdAt: Date;
@@ -131,7 +157,29 @@ const testSummarySchema = new Schema<ITestSummary>(
       type: [new Schema({ message: String, count: Number }, { _id: false })],
       default: [],
     },
+    // Absent on runs recorded before this existed — analytics queries for it
+    // explicitly (`'testSummary.testCases.0': { $exists: true }`) rather than
+    // assuming every run has it.
+    testCases: {
+      type: [
+        new Schema(
+          { id: String, name: String, status: { type: String, enum: ['passed', 'failed', 'broken', 'skipped', 'unknown'] } },
+          { _id: false },
+        ),
+      ],
+      default: [],
+    },
   },
+  { _id: false },
+);
+
+const executionCommandSchema = new Schema<IExecutionCommand>(
+  { command: { type: String, required: true }, args: { type: [String], default: [] } },
+  { _id: false },
+);
+
+const runCommandsSchema = new Schema<IRunCommands>(
+  { setup: { type: executionCommandSchema, default: null }, run: { type: executionCommandSchema, required: true } },
   { _id: false },
 );
 
@@ -174,6 +222,7 @@ const executionRunSchema = new Schema<IExecutionRun>(
     // run ends, read with the run, and never queried on its own.
     testSummary: { type: testSummarySchema, default: null },
     snapshot: { type: runSnapshotSchema, default: null },
+    commands: { type: runCommandsSchema, default: null },
     startedAt: { type: Date, default: null },
     endedAt: { type: Date, default: null },
   },

@@ -110,6 +110,19 @@ export function BuildDetailDialog({ build, onClose }: { build: Build | null; onC
               },
               { term: 'On disk at', value: build.artifactPath ? <Mono>{build.artifactPath}</Mono> : '—' },
               { term: 'Source URL', value: build.artifactUrl ? <Mono>{build.artifactUrl}</Mono> : '—' },
+              // No current build provider reports these — conditional on the
+              // whole object, and each field within it, so a build with no
+              // compatibility info looks exactly like it did before this
+              // existed, not like an empty "N/A" row.
+              ...(build.constraints?.minOsVersion
+                ? [{ term: 'Min OS version', value: build.constraints.minOsVersion }]
+                : []),
+              ...(build.constraints?.architecture
+                ? [{ term: 'Architecture', value: build.constraints.architecture }]
+                : []),
+              ...(build.constraints?.features && build.constraints.features.length > 0
+                ? [{ term: 'Requires', value: build.constraints.features.join(', ') }]
+                : []),
               { term: 'Fetched', value: formatRelative(build.fetchedAt) },
               { term: 'Integrity validated', value: formatRelative(build.integrityValidatedAt) },
               ...(build.status === 'purged'

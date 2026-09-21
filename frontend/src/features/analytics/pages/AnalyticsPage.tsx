@@ -22,7 +22,13 @@ import { icons } from '@/lib/icons';
 import { formatPercent, formatRelative } from 'ts-format-utils';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { useExecutionRuns } from '@/features/execution/api/execution.api';
-import { useAnalytics, useFailureReasons } from '../api/analytics.api';
+import {
+  useAnalytics,
+  useConfigFlakiness,
+  useDeviceUtilisation,
+  useFailureReasons,
+  useTestCaseFlakiness,
+} from '../api/analytics.api';
 import { AnalyticsFilterBar } from '../components/AnalyticsFilterBar';
 import { useAnalyticsFilters } from '../hooks/useAnalyticsFilters';
 import type { AnalyticsAggregate, DeviceBreakdown, SuiteBreakdown } from '../types';
@@ -460,6 +466,101 @@ function FailureReasons({ project, platform }: { project?: string; platform?: 'a
   );
 }
 
+/**
+ * What fraction of the window each device spent busy vs idle — a
+ * capacity-planning question ("do we need more devices") distinct from
+ * pass-rate/duration, which answer "is the app healthy" instead.
+ */
+function DeviceUtilisation({ project, platform }: { project?: string; platform?: 'android' | 'ios' | 'all' }) {
+  const { data } = useDeviceUtilisation({ project, platform });
+  const rows = data?.slice(0, 8) ?? [];
+  if (rows.length === 0) return null;
+
+  return (
+    <Card>
+      <CardBody>
+        <div className={styles.breakdownTitle}>Device utilisation</div>
+        <ul className={styles.recentList}>
+          {rows.map((r) => (
+            <li key={r.deviceUdid} className={styles.recentRow}>
+              <span className={styles.rateBar}>
+                <ProgressBar value={r.utilisation * 100} />
+              </span>
+              <Link className={styles.recentSuite} to={`/execution?deviceUdid=${encodeURIComponent(r.deviceUdid)}`}>
+                <Mono>{r.deviceUdid}</Mono>
+              </Link>
+              <span className={styles.recentWhen}>
+                {formatPercent(r.utilisation)} busy · {r.runs} runs
+              </span>
+            </li>
+          ))}
+        </ul>
+      </CardBody>
+    </Card>
+  );
+}
+
+/**
+ * Flakiness grouped by the full run configuration (suite+platform+branch),
+ * not just suite — see analytics.service.ts's `computeFlakinessByConfigTuple`
+ * doc comment for why this is a distinct, additive measure from the
+ * suite-level one already shown per project section above.
+ */
+function ConfigFlakiness({ project, platform }: { project?: string; platform?: 'android' | 'ios' | 'all' }) {
+  const { data } = useConfigFlakiness({ project, platform });
+  const rows = (data ?? []).filter((r) => r.flakiness > 0).slice(0, 8);
+  if (rows.length === 0) return null;
+
+  return (
+    <Card>
+      <CardBody>
+        <div className={styles.breakdownTitle}>Flaky configurations (suite + branch)</div>
+        <ul className={styles.recentList}>
+          {rows.map((r) => (
+            <li key={`${r.project}::${r.platform}::${r.suite}::${r.branch}`} className={styles.recentRow}>
+              <span className={styles.recentSuite}>
+                {r.suite} <Mono>{r.branch}</Mono>
+              </span>
+              <span className={styles.recentWhen}>
+                {formatPercent(r.passRate)} pass · {r.runs} runs · flakiness {r.flakiness.toFixed(2)}
+              </span>
+            </li>
+          ))}
+        </ul>
+      </CardBody>
+    </Card>
+  );
+}
+
+/**
+ * Which one named test — not which suite or configuration bucket — is
+ * alternating pass/fail across recent runs. The most actionable of the three
+ * flakiness granularities, since it names the specific test to look at.
+ */
+function TestCaseFlakiness({ project, platform }: { project?: string; platform?: 'android' | 'ios' | 'all' }) {
+  const { data } = useTestCaseFlakiness({ project, platform });
+  const rows = data?.slice(0, 8) ?? [];
+  if (rows.length === 0) return null;
+
+  return (
+    <Card>
+      <CardBody>
+        <div className={styles.breakdownTitle}>Flaky tests</div>
+        <ul className={styles.recentList}>
+          {rows.map((r) => (
+            <li key={`${r.project}::${r.platform}::${r.suite}::${r.branch}::${r.testId}`} className={styles.recentRow}>
+              <span className={styles.recentSuite}>{r.testName}</span>
+              <span className={styles.recentWhen}>
+                {r.recentStatuses.join(' → ')} · {r.alternations} flip{r.alternations === 1 ? '' : 's'}
+              </span>
+            </li>
+          ))}
+        </ul>
+      </CardBody>
+    </Card>
+  );
+}
+
 export function AnalyticsPage() {
   const { project, setProject, platform, setPlatform, window, setWindow } = useAnalyticsFilters();
   // 'all' is the cross-platform rollup; picking a specific platform switches
@@ -520,6 +621,9 @@ export function AnalyticsPage() {
           ))}
           <RecentRuns project={project || undefined} />
           <FailureReasons project={project || undefined} platform={platform} />
+          <DeviceUtilisation project={project || undefined} platform={platform} />
+          <ConfigFlakiness project={project || undefined} platform={platform} />
+          <TestCaseFlakiness project={project || undefined} platform={platform} />
         </div>
       </QueryBoundary>
     </Page>
