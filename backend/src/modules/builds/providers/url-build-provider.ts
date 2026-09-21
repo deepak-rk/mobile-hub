@@ -3,9 +3,31 @@ import * as path from 'path';
 import { fileURLToPath } from 'url';
 import { Readable, Transform } from 'stream';
 import { pipeline } from 'stream/promises';
-import { BuildFetchContext, BuildFetchProgress, BuildFetchResult, BuildProvider } from '../build-provider';
+import {
+  BuildFetchContext,
+  BuildFetchProgress,
+  BuildFetchResult,
+  BuildListContext,
+  BuildListPage,
+  BuildListPagination,
+  BuildProvider,
+} from '../build-provider';
+import { IBuildProvenance } from '../build.model';
 
 const FETCH_TIMEOUT_MS = 60_000;
+
+/** Every field this provider can never know, filled in around whatever the caller supplies. */
+function provenanceFrom(fields: Partial<IBuildProvenance>): IBuildProvenance {
+  return {
+    buildNumber: null,
+    branch: null,
+    commitSha: null,
+    commitTitle: null,
+    sourceTimestamp: null,
+    sourceUrl: null,
+    ...fields,
+  };
+}
 
 export class UrlBuildProvider implements BuildProvider {
   readonly name = 'url' as const;
@@ -27,9 +49,15 @@ export class UrlBuildProvider implements BuildProvider {
       // A local copy has no meaningful transfer curve to report; it either
       // completes or throws.
       await fs.promises.copyFile(sourcePath, destPath);
-      const { size } = fs.statSync(destPath);
-      onProgress?.(size, size);
-      return { sourceUrl: ctx.artifactUrl, sizeBytes: size };
+      const stat = fs.statSync(destPath);
+      onProgress?.(stat.size, stat.size);
+      return {
+        sourceUrl: ctx.artifactUrl,
+        sizeBytes: stat.size,
+        // The copy's own mtime is just "when we fetched it", not a real
+        // source timestamp — the source file's own mtime is what's genuine.
+        provenance: provenanceFrom({ sourceUrl: ctx.artifactUrl, sourceTimestamp: fs.statSync(sourcePath).mtime }),
+      };
     }
 
     const res = await globalThis.fetch(ctx.artifactUrl, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
@@ -39,6 +67,10 @@ export class UrlBuildProvider implements BuildProvider {
 
     const header = res.headers.get('content-length');
     const totalBytes = header ? Number(header) : null;
+    // Best-effort only: an absent or unparseable Last-Modified must not fail
+    // a fetch whose actual job (getting the bytes) already succeeded.
+    const lastModified = res.headers.get('last-modified');
+    const sourceTimestamp = lastModified && !Number.isNaN(Date.parse(lastModified)) ? new Date(lastModified) : null;
     let downloadedBytes = 0;
     const counter = new Transform({
       transform(chunk: Buffer, _encoding, callback) {
@@ -51,6 +83,22 @@ export class UrlBuildProvider implements BuildProvider {
     await pipeline(Readable.fromWeb(res.body), counter, fs.createWriteStream(destPath));
 
     const { size } = fs.statSync(destPath);
-    return { sourceUrl: ctx.artifactUrl, sizeBytes: size };
+    return {
+      sourceUrl: ctx.artifactUrl,
+      sizeBytes: size,
+      provenance: provenanceFrom({ sourceUrl: ctx.artifactUrl, sourceTimestamp }),
+    };
+  }
+
+  /**
+   * A direct URL is supplied per-fetch, not discovered — there is no registry
+   * behind it to browse. Rejecting (rather than returning an empty page) is
+   * the honest signal: "zero builds available" and "this provider can't list
+   * at all" are different facts, and only the second is true here.
+   */
+  listBuilds(_ctx: BuildListContext, _pagination?: BuildListPagination): Promise<BuildListPage> {
+    return Promise.reject(
+      new Error("BuildProvider 'url' does not support listing — it fetches one artifactUrl at a time"),
+    );
   }
 }

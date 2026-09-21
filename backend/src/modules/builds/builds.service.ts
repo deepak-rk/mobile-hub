@@ -160,6 +160,28 @@ export async function triggerBuildFetch(config: EffectiveConfig, input: TriggerB
   return completed;
 }
 
+export interface ListAvailableBuildsInput {
+  project: string;
+  platform: IBuild['platform'];
+  cursor?: string;
+  limit?: number;
+}
+
+/**
+ * Browses builds available at the config-selected provider's source, without
+ * fetching one — distinct from `listBuilds` below, which reads this hub's own
+ * already-fetched `Build` catalog. Not wired to a route yet: nothing in the
+ * frontend has a browse-a-remote-source concept to drive it, so this exists
+ * for the provider layer to be exercised (and tested) ahead of that UI.
+ */
+export async function listAvailableBuilds(config: EffectiveConfig, input: ListAvailableBuildsInput) {
+  const provider = getBuildProvider(config.build.provider);
+  return provider.listBuilds(
+    { project: input.project, platform: input.platform },
+    { cursor: input.cursor, limit: input.limit },
+  );
+}
+
 /**
  * Filename an artifact is stored under.
  *
@@ -186,7 +208,7 @@ async function runFetch(
     // Persisting every chunk would be thousands of writes per artifact; a ~1s
     // sample is all a progress bar can express anyway.
     let lastPersistAt = 0;
-    const { sourceUrl, sizeBytes, constraints } = await provider.fetch(
+    const { sourceUrl, sizeBytes, constraints, provenance } = await provider.fetch(
       { project: input.project, platform: input.platform, version: input.version, artifactUrl: input.artifactUrl },
       destPath,
       (downloadedBytes, totalBytes) => {
@@ -231,6 +253,7 @@ async function runFetch(
     // current provider does, and this must not default to an empty-but-present
     // object that would read as "we checked, there are no constraints".
     build.constraints = constraints ?? null;
+    build.provenance = provenance ?? null;
     build.status = 'ready';
     await build.save();
     publishBuildEvent(build.id as string, { type: 'status', status: 'ready' });

@@ -1,6 +1,11 @@
 import { EventEmitter } from 'events';
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
-import { StreamingService, IDLE_TEARDOWN_MS, getActiveStreamCountForMachine } from './streaming.service';
+import {
+  StreamingService,
+  IDLE_TEARDOWN_MS,
+  getActiveStreamCountForMachine,
+  getDesiredStreamCapturesForMachine,
+} from './streaming.service';
 import { SyntheticCaptureSource } from './sources/synthetic.source';
 import { StreamSession } from './stream-session.model';
 import { env } from '../../config/env';
@@ -199,6 +204,100 @@ describe('per-host Android capture cap', () => {
     // No platform at all — the synthetic-source tests above never set one —
     // must still work exactly as before this cap existed.
     await expect(service.addViewer({ ...base, viewerId: 'v1', onFrame: () => {} })).resolves.toBeDefined();
+  });
+});
+
+describe('remote (agent-relayed) capture', () => {
+  it('does not touch the local capture source when remoteEnabled is set', async () => {
+    const localSource: CaptureSource = {
+      name: 'should-not-be-used',
+      supports: () => true,
+      start: () => {
+        throw new Error('local source must not start for a remote-enabled viewer');
+      },
+    };
+    const remote = new StreamingService(localSource);
+
+    await expect(
+      remote.addViewer({ ...base, viewerId: 'v1', remoteEnabled: true, onFrame: () => {} }),
+    ).resolves.toBeDefined();
+    expect(remote.activeCaptureCount).toBe(1);
+  });
+
+  it('delivers an ingested frame to every attached viewer, same as a locally-spawned capture', async () => {
+    const remote = new StreamingService(new SyntheticCaptureSource(10));
+    const frames: Buffer[] = [];
+    await remote.addViewer({ ...base, viewerId: 'v1', remoteEnabled: true, onFrame: (f) => frames.push(f) });
+
+    const accepted = remote.ingestRemoteFrame(base.machineId, base.deviceUdid, base.protocol, Buffer.from('hello'));
+
+    expect(accepted).toBe(true);
+    expect(frames.map((f) => f.toString())).toEqual(['hello']);
+  });
+
+  it('drops an ingested frame for a capture that no longer exists, without throwing', () => {
+    const remote = new StreamingService(new SyntheticCaptureSource(10));
+    expect(remote.ingestRemoteFrame('no-such-host', 'no-such-device', 'mjpeg', Buffer.from('x'))).toBe(false);
+  });
+
+  it('pushes an ingested error to viewers and tears the capture down, same as a local capture error', async () => {
+    const remote = new StreamingService(new SyntheticCaptureSource(10));
+    const seen: string[] = [];
+    await remote.addViewer({ ...base, viewerId: 'v1', remoteEnabled: true, onFrame: () => {}, onError: (m) => seen.push(m) });
+
+    const accepted = remote.ingestRemoteError(base.machineId, base.deviceUdid, base.protocol, 'device offline');
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(accepted).toBe(true);
+    expect(seen).toEqual(['device offline']);
+    expect(remote.activeCaptureCount).toBe(0);
+  });
+
+  it('persists isRemote on the StreamSession so the agent can discover it on heartbeat', async () => {
+    const findOneAndUpdate = vi.spyOn(StreamSession, 'findOneAndUpdate');
+    const remote = new StreamingService(new SyntheticCaptureSource(10));
+
+    await remote.addViewer({ ...base, viewerId: 'v1', remoteEnabled: true, onFrame: () => {} });
+
+    expect(findOneAndUpdate).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ isRemote: true }),
+      expect.anything(),
+    );
+  });
+
+  it('persists isRemote: false for a hub-local capture (default, unchanged behavior)', async () => {
+    const findOneAndUpdate = vi.spyOn(StreamSession, 'findOneAndUpdate');
+
+    await service.addViewer({ ...base, viewerId: 'v1', onFrame: () => {} });
+
+    expect(findOneAndUpdate).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ isRemote: false }),
+      expect.anything(),
+    );
+  });
+});
+
+describe('getDesiredStreamCapturesForMachine', () => {
+  it('queries for remote, currently-active-or-starting sessions on the requested machine', async () => {
+    const select = vi.fn().mockResolvedValue([
+      { deviceUdid: 'device-1', protocol: 'mjpeg' },
+      { deviceUdid: 'device-2', protocol: 'h264' },
+    ]);
+    const find = vi.spyOn(StreamSession, 'find').mockReturnValue({ select } as never);
+
+    const desired = await getDesiredStreamCapturesForMachine('host-1');
+
+    expect(find).toHaveBeenCalledWith({
+      machineId: 'host-1',
+      isRemote: true,
+      captureStatus: { $in: ['starting', 'active'] },
+    });
+    expect(desired).toEqual([
+      { deviceUdid: 'device-1', protocol: 'mjpeg' },
+      { deviceUdid: 'device-2', protocol: 'h264' },
+    ]);
   });
 });
 

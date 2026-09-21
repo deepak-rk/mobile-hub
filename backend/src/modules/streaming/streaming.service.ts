@@ -5,6 +5,7 @@ import { AdbMjpegCaptureSource } from './sources/adb-mjpeg.source';
 import { AdbH264CaptureSource } from './sources/adb-h264.source';
 import { SyntheticCaptureSource } from './sources/synthetic.source';
 import { CompositeCaptureSource } from './sources/composite.source';
+import { AgentRelayCaptureSource } from './sources/agent-relay.source';
 import { StreamSession, IStreamSession } from './stream-session.model';
 
 export class StreamingError extends Error {
@@ -42,6 +43,8 @@ interface LiveCapture {
   /** Viewer id -> its callbacks. One capture, many listeners. */
   viewers: Map<string, Viewer>;
   idleSince: number | null;
+  /** Agent-relayed (streaming.remoteEnabled) rather than hub-local — see AgentRelayCaptureSource. */
+  isRemote: boolean;
 }
 
 function captureKey(machineId: string, deviceUdid: string, protocol: StreamProtocol): string {
@@ -61,7 +64,15 @@ class StreamingService {
   private captures = new Map<string, LiveCapture>();
   private sweeper: ReturnType<typeof setInterval> | null = null;
 
-  constructor(private readonly source: CaptureSource = resolveCaptureSource()) {}
+  constructor(
+    private readonly source: CaptureSource = resolveCaptureSource(),
+    // Always available regardless of the primary source above — picked per
+    // capture-start based on the caller's `remoteEnabled`, not fixed at
+    // construction, since `streaming.remoteEnabled` is read from `app.config`
+    // per-request (mirrors how ensureAppiumServer/ensureRemoteAppiumServer
+    // branch on a config value passed per-call rather than baked in at boot).
+    private readonly remoteSource: CaptureSource = new AgentRelayCaptureSource(),
+  ) {}
 
   get sourceName(): string {
     return this.source.name;
@@ -78,15 +89,19 @@ class StreamingService {
     viewerId: string;
     platform?: 'android' | 'ios';
     isSimulator?: boolean;
+    /** `app.config.streaming.remoteEnabled` — see the constructor's `remoteSource` doc comment. */
+    remoteEnabled?: boolean;
     onFrame: FrameListener;
     onError?: ErrorListener;
   }): Promise<{ session: IStreamSession; detach: () => Promise<void> }> {
     const { machineId, deviceUdid, protocol, viewerId, onFrame, onError } = params;
+    const isRemote = params.remoteEnabled ?? false;
+    const source = isRemote ? this.remoteSource : this.source;
 
-    if (!this.source.supports(protocol)) {
+    if (!source.supports(protocol)) {
       throw new StreamingError(
         'UNSUPPORTED_PROTOCOL',
-        `Capture source '${this.source.name}' does not support protocol '${protocol}'.`,
+        `Capture source '${source.name}' does not support protocol '${protocol}'.`,
       );
     }
 
@@ -95,7 +110,7 @@ class StreamingService {
 
     if (!capture) {
       await this.assertCapacity(params);
-      capture = this.startCapture(key, machineId, deviceUdid, protocol, params.isSimulator ?? false);
+      capture = this.startCapture(key, machineId, deviceUdid, protocol, params.isSimulator ?? false, isRemote);
     }
 
     capture.viewers.set(viewerId, { onFrame, onError });
@@ -116,8 +131,10 @@ class StreamingService {
     deviceUdid: string,
     protocol: StreamProtocol,
     isSimulator: boolean,
+    isRemote: boolean,
   ): LiveCapture {
-    const handle = this.source.start({ deviceUdid, protocol });
+    const source = isRemote ? this.remoteSource : this.source;
+    const handle = source.start({ deviceUdid, protocol });
     const capture: LiveCapture = {
       key,
       machineId,
@@ -125,6 +142,7 @@ class StreamingService {
       protocol,
       handle,
       isSimulator,
+      isRemote,
       viewers: new Map(),
       idleSince: null,
     };
@@ -196,6 +214,7 @@ class StreamingService {
         captureStatus: 'active',
         capturePid: capture.handle.pid,
         isSimulator: capture.isSimulator,
+        isRemote: capture.isRemote,
         viewerIds,
         viewerCount: viewerIds.length,
         lastViewerJoinedAt: new Date(),
@@ -279,6 +298,28 @@ class StreamingService {
     this.sweeper = null;
   }
 
+  /**
+   * Feeds one frame an agent relayed for a device it owns into the matching
+   * live capture, exactly as if a hub-local child process had emitted it.
+   * Returns false (and drops the frame) when no capture is waiting for it —
+   * expected and harmless during the bounded window between the hub no
+   * longer wanting a capture and the agent noticing on its next heartbeat.
+   */
+  ingestRemoteFrame(machineId: string, deviceUdid: string, protocol: StreamProtocol, frame: Buffer): boolean {
+    const capture = this.captures.get(captureKey(machineId, deviceUdid, protocol));
+    if (!capture) return false;
+    capture.handle.emit('frame', frame);
+    return true;
+  }
+
+  /** Same shape as `ingestRemoteFrame`, for an agent reporting its capture broke. */
+  ingestRemoteError(machineId: string, deviceUdid: string, protocol: StreamProtocol, message: string): boolean {
+    const capture = this.captures.get(captureKey(machineId, deviceUdid, protocol));
+    if (!capture) return false;
+    capture.handle.emit('error', new Error(message));
+    return true;
+  }
+
   /** Live capture count — used by tests and diagnostics to prove sharing. */
   get activeCaptureCount(): number {
     return this.captures.size;
@@ -313,6 +354,29 @@ function resolveCaptureSource(): CaptureSource {
  */
 export async function getActiveStreamCountForMachine(machineId: string): Promise<number> {
   return StreamSession.countDocuments({ machineId, captureStatus: { $in: ['starting', 'active'] } });
+}
+
+/**
+ * Devices on this machine the hub currently wants agent-captured frames for —
+ * carried on the agent's heartbeat response, the same never-pushed-into
+ * shape `pendingInstalls`/`pendingAppiumRequests` already use. Unlike those,
+ * this is a continuous desired-state list rather than a one-shot request:
+ * streaming starts and stops as viewers come and go, so the agent reconciles
+ * against this list on every poll (start anything newly listed, stop
+ * anything it's running that's dropped off) rather than acting once and
+ * being done. Only ever non-empty when `streaming.remoteEnabled` — nothing
+ * sets `isRemote` otherwise, so this is an empty query result, not a
+ * behavior change, for every deployment that hasn't opted in.
+ */
+export async function getDesiredStreamCapturesForMachine(
+  machineId: string,
+): Promise<{ deviceUdid: string; protocol: StreamProtocol }[]> {
+  const sessions = await StreamSession.find({
+    machineId,
+    isRemote: true,
+    captureStatus: { $in: ['starting', 'active'] },
+  }).select('deviceUdid protocol');
+  return sessions.map((s) => ({ deviceUdid: s.deviceUdid, protocol: s.protocol }));
 }
 
 export const streamingService = new StreamingService();

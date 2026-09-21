@@ -16,4 +16,14 @@ describe('getBuildProvider', () => {
       provider.fetch({ project: 'p', platform: 'android', version: '1' }, '/tmp/x'),
     ).rejects.toThrow(/not implemented/i);
   });
+
+  it.each(['nexus', 's3', 'webhook'] as const)('listBuilds for "%s" also rejects rather than faking a page', async (name) => {
+    const provider = getBuildProvider(name);
+    await expect(provider.listBuilds({ project: 'p', platform: 'android' })).rejects.toThrow(/not implemented/i);
+  });
+
+  it("listBuilds for 'url' rejects — a direct URL has nothing to browse", async () => {
+    const provider = getBuildProvider('url');
+    await expect(provider.listBuilds({ project: 'p', platform: 'android' })).rejects.toThrow(/does not support listing/i);
+  });
 });

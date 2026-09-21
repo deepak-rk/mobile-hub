@@ -39,6 +39,11 @@ function fakeDoc(overrides: Partial<Record<string, unknown>> = {}) {
  * Mongoose query against no database never settles, which is exactly how these
  * tests started timing out rather than failing when the claim was introduced.
  */
+/** Every fake provider below only exercises `fetch` — `listBuilds` is irrelevant to this file, so it's a shared stub. */
+function notImplementedListBuilds() {
+  return Promise.reject(new Error('not implemented in test stub'));
+}
+
 function mockClaimWon(doc: Record<string, unknown>) {
   return vi.spyOn(Build, 'findOneAndUpdate').mockImplementation(((_filter: unknown, update: unknown) => {
     const insert = (update as { $setOnInsert?: { _id?: { toString(): string } } }).$setOnInsert;
@@ -66,6 +71,7 @@ describe('triggerBuildFetch', () => {
 
     vi.spyOn(getProviderModule, 'getBuildProvider').mockReturnValue({
       name: 'url',
+      listBuilds: notImplementedListBuilds,
       fetch: async (_ctx, destPath) => {
         fs.writeFileSync(destPath, bytes);
         return { sourceUrl: 'https://example.com/a.apk', sizeBytes: bytes.length };
@@ -91,12 +97,14 @@ describe('triggerBuildFetch', () => {
     // No provider populates this yet — absent must stay absent, not default to
     // an empty-but-present object that would read as "checked, none found".
     expect(result.constraints).toBeNull();
+    expect(result.provenance).toBeNull();
   });
 
   it('persists install compatibility constraints when a provider reports them', async () => {
     const bytes = Buffer.from('a real fake artifact');
     vi.spyOn(getProviderModule, 'getBuildProvider').mockReturnValue({
       name: 'url',
+      listBuilds: notImplementedListBuilds,
       fetch: async (_ctx, destPath) => {
         fs.writeFileSync(destPath, bytes);
         return {
@@ -117,9 +125,50 @@ describe('triggerBuildFetch', () => {
     expect(result.constraints).toEqual({ minOsVersion: '26', architecture: 'arm64-v8a', features: ['biometric'] });
   });
 
+  it('persists build provenance when a provider reports it', async () => {
+    const bytes = Buffer.from('a real fake artifact');
+    const sourceTimestamp = new Date('2026-09-01T00:00:00.000Z');
+    vi.spyOn(getProviderModule, 'getBuildProvider').mockReturnValue({
+      name: 'url',
+      listBuilds: notImplementedListBuilds,
+      fetch: async (_ctx, destPath) => {
+        fs.writeFileSync(destPath, bytes);
+        return {
+          sourceUrl: 'https://example.com/a.apk',
+          sizeBytes: bytes.length,
+          provenance: {
+            buildNumber: null,
+            branch: null,
+            commitSha: null,
+            commitTitle: null,
+            sourceTimestamp,
+            sourceUrl: 'https://example.com/a.apk',
+          },
+        };
+      },
+    });
+    const doc = fakeDoc();
+    mockClaimWon(doc);
+
+    const result = await triggerBuildFetch(
+      { build: { provider: 'url' } } as never,
+      { project: 'p', platform: 'android', version: '1.0' },
+    );
+
+    expect(result.provenance).toEqual({
+      buildNumber: null,
+      branch: null,
+      commitSha: null,
+      commitTitle: null,
+      sourceTimestamp,
+      sourceUrl: 'https://example.com/a.apk',
+    });
+  });
+
   it('rejects a 0-byte artifact and marks the build corrupt', async () => {
     vi.spyOn(getProviderModule, 'getBuildProvider').mockReturnValue({
       name: 'url',
+      listBuilds: notImplementedListBuilds,
       fetch: async () => ({ sourceUrl: 'https://example.com/a.apk', sizeBytes: 0 }),
     });
     const doc = fakeDoc();
@@ -135,6 +184,7 @@ describe('triggerBuildFetch', () => {
   it('marks the build corrupt and deletes the partial file on a size mismatch', async () => {
     vi.spyOn(getProviderModule, 'getBuildProvider').mockReturnValue({
       name: 'url',
+      listBuilds: notImplementedListBuilds,
       fetch: async (_ctx, destPath) => {
         fs.writeFileSync(destPath, Buffer.from('short'));
         // Reports more bytes than were actually written — the exact
@@ -158,6 +208,7 @@ describe('triggerBuildFetch', () => {
   it('marks the build corrupt if the provider itself fails', async () => {
     vi.spyOn(getProviderModule, 'getBuildProvider').mockReturnValue({
       name: 'url',
+      listBuilds: notImplementedListBuilds,
       fetch: async () => {
         throw new Error('network unreachable');
       },

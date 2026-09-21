@@ -4,6 +4,7 @@ import { runInstall } from './installer';
 import { runUninstall } from './uninstaller';
 import { collectDiagnostics } from './diagnostics';
 import { ensureLocalAppiumServer, assertDriverInstalled } from './appium-runner';
+import { StreamRelay } from './stream-runner';
 
 export interface AgentOptions {
   machineId: string;
@@ -51,6 +52,11 @@ export class DeviceAgent {
   // still starting must not have a second start attempt fired at it on the
   // next heartbeat before the first one resolves.
   private readonly inFlightAppiumRequests = new Set<string>();
+  // Reconciled against a desired-state list each tick rather than guarded by
+  // an in-flight set the way the above are — see stream-runner.ts's own doc
+  // comment for why streaming's start/stop shape differs from a one-shot
+  // request.
+  private readonly streamRelay = new StreamRelay(undefined, (level, msg) => this.log(level, msg));
 
   constructor(private readonly opts: AgentOptions) {}
 
@@ -64,17 +70,19 @@ export class DeviceAgent {
 
     // Heartbeat first: a host with zero devices must still show as online,
     // otherwise an empty lab looks like a dead agent.
-    const { pendingInstalls, pendingUninstalls, pendingAppiumRequests } = await this.opts.hub.heartbeat({
-      machineId: this.opts.machineId,
-      hostname: this.opts.hostname,
-      os: this.opts.os,
-      agentVersion: this.opts.agentVersion,
-      capabilities: this.opts.capabilities,
-      diagnostics: await collectDiagnostics(),
-    });
+    const { pendingInstalls, pendingUninstalls, pendingAppiumRequests, desiredStreamCaptures } =
+      await this.opts.hub.heartbeat({
+        machineId: this.opts.machineId,
+        hostname: this.opts.hostname,
+        os: this.opts.os,
+        agentVersion: this.opts.agentVersion,
+        capabilities: this.opts.capabilities,
+        diagnostics: await collectDiagnostics(),
+      });
     this.startPendingInstalls(pendingInstalls);
     this.startPendingUninstalls(pendingUninstalls);
     this.startPendingAppiumRequests(pendingAppiumRequests);
+    this.streamRelay.reconcile(this.opts.hub, this.opts.machineId, desiredStreamCaptures);
 
     const { upserted, markedOffline } = await this.opts.hub.syncDevices(this.opts.machineId, devices);
     return { devices, upserted, markedOffline };
@@ -193,6 +201,9 @@ export class DeviceAgent {
     this.running = false;
     if (this.timer) clearTimeout(this.timer);
     this.timer = null;
+    // Nothing here must outlive the process that owns it — a killed agent
+    // must not leave adb/xcrun capturing for a hub that can no longer reach it.
+    this.streamRelay.shutdown();
     this.log('info', 'agent stopped');
   }
 }

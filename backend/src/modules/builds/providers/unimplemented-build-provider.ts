@@ -1,5 +1,12 @@
 import { BuildProviderName } from '../../../config/org-config.schema';
-import { BuildFetchContext, BuildFetchResult, BuildProvider } from '../build-provider';
+import {
+  BuildFetchContext,
+  BuildFetchResult,
+  BuildListContext,
+  BuildListPage,
+  BuildListPagination,
+  BuildProvider,
+} from '../build-provider';
 
 /**
  * Placeholder for providers not yet implemented (nexus/s3/webhook). Exists so
@@ -11,6 +18,10 @@ export class UnimplementedBuildProvider implements BuildProvider {
   constructor(readonly name: BuildProviderName) {}
 
   fetch(_ctx: BuildFetchContext, _destPath: string): Promise<BuildFetchResult> {
+    return Promise.reject(new Error(`BuildProvider '${this.name}' is not implemented yet`));
+  }
+
+  listBuilds(_ctx: BuildListContext, _pagination?: BuildListPagination): Promise<BuildListPage> {
     return Promise.reject(new Error(`BuildProvider '${this.name}' is not implemented yet`));
   }
 }

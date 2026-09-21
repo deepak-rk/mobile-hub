@@ -12,6 +12,14 @@ export interface IStreamSession extends Document {
   viewerCount: number;
   /** iOS simulators are capped per host (xcrun drops frames past 8). */
   isSimulator: boolean;
+  /**
+   * True when this capture is agent-relayed (streaming.remoteEnabled) rather
+   * than a hub-local child process — see streaming.service.ts's
+   * AgentRelayCaptureSource. Read by getDesiredStreamCapturesForMachine so
+   * the owning agent knows which of its devices the hub still wants frames
+   * for, on every heartbeat.
+   */
+  isRemote: boolean;
   startedAt: Date;
   lastViewerJoinedAt: Date | null;
 }
@@ -31,6 +39,7 @@ const streamSessionSchema = new Schema<IStreamSession>(
     viewerIds: { type: [String], default: [] },
     viewerCount: { type: Number, default: 0 },
     isSimulator: { type: Boolean, default: false },
+    isRemote: { type: Boolean, default: false },
     startedAt: { type: Date, default: Date.now },
     lastViewerJoinedAt: { type: Date, default: null },
   },

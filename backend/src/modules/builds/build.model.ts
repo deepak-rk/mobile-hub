@@ -13,6 +13,22 @@ export interface IBuildConstraints {
   features: string[];
 }
 
+/**
+ * Provenance info a `BuildProvider` *can* supply about where a build came
+ * from. Nullable end to end, same reasoning as `IBuildConstraints`: today only
+ * `url-build-provider.ts` can genuinely populate `sourceUrl`/`sourceTimestamp`
+ * (from the fetch itself); the CI-metadata fields (build number, branch,
+ * commit) have no current source and stay null rather than being guessed at.
+ */
+export interface IBuildProvenance {
+  buildNumber: string | null;
+  branch: string | null;
+  commitSha: string | null;
+  commitTitle: string | null;
+  sourceTimestamp: Date | null;
+  sourceUrl: string | null;
+}
+
 export interface IBuild extends Document {
   project: string;
   platform: 'android' | 'ios';
@@ -38,6 +54,8 @@ export interface IBuild extends Document {
   purgedAt: Date | null;
   /** Null when the provider that fetched this build didn't report any. */
   constraints: IBuildConstraints | null;
+  /** Null when the provider that fetched this build didn't report any. */
+  provenance: IBuildProvenance | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -66,6 +84,17 @@ const buildSchema = new Schema<IBuild>(
         minOsVersion: { type: String, default: null },
         architecture: { type: String, default: null },
         features: { type: [String], default: [] },
+      },
+      default: null,
+    },
+    provenance: {
+      type: {
+        buildNumber: { type: String, default: null },
+        branch: { type: String, default: null },
+        commitSha: { type: String, default: null },
+        commitTitle: { type: String, default: null },
+        sourceTimestamp: { type: Date, default: null },
+        sourceUrl: { type: String, default: null },
       },
       default: null,
     },

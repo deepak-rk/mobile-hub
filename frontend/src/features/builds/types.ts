@@ -9,6 +9,20 @@ export interface BuildConstraints {
   features: string[];
 }
 
+/**
+ * Where a build came from, when the provider that fetched it actually knows.
+ * Null (the whole object) is the common case; render conditionally per field,
+ * same as `BuildConstraints` — never an empty "N/A" row.
+ */
+export interface BuildProvenance {
+  buildNumber: string | null;
+  branch: string | null;
+  commitSha: string | null;
+  commitTitle: string | null;
+  sourceTimestamp: string | null;
+  sourceUrl: string | null;
+}
+
 export interface Build {
   _id: string;
   project: string;
@@ -33,5 +47,7 @@ export interface Build {
   purgedAt: string | null;
   /** Null when the provider that fetched this build didn't report any. */
   constraints: BuildConstraints | null;
+  /** Null when the provider that fetched this build didn't report any. */
+  provenance: BuildProvenance | null;
   createdAt: string;
 }

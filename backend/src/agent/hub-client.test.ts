@@ -136,3 +136,44 @@ describe('HubClient.downloadArtifactDirect', () => {
     expect(fs.existsSync(`${dest}.part`)).toBe(false);
   });
 });
+
+describe('HubClient.postStreamFrame', () => {
+  it('POSTs the frame as a raw octet-stream body with the routing key in the query string', async () => {
+    const fetchSpy = vi.fn().mockResolvedValue({ ok: true, text: () => Promise.resolve('') });
+    vi.stubGlobal('fetch', fetchSpy);
+
+    await new HubClient('http://hub', 'tok').postStreamFrame('host-1', 'device-1', 'mjpeg', Buffer.from('frame-bytes'));
+
+    const [url, opts] = fetchSpy.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe('http://hub/api/hosts/stream-frame?machineId=host-1&deviceUdid=device-1&protocol=mjpeg');
+    expect(opts.method).toBe('POST');
+    expect(opts.body).toEqual(Buffer.from('frame-bytes'));
+    expect((opts.headers as Record<string, string>)['Content-Type']).toBe('application/octet-stream');
+    expect((opts.headers as Record<string, string>).Authorization).toBe('Bearer tok');
+  });
+
+  it('throws a HubError on a non-ok response', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 500, text: () => Promise.resolve('oops') }));
+
+    await expect(
+      new HubClient('http://hub').postStreamFrame('host-1', 'device-1', 'mjpeg', Buffer.from('x')),
+    ).rejects.toThrow(/stream-frame/);
+  });
+});
+
+describe('HubClient.postStreamError', () => {
+  it('POSTs a JSON body via the shared post() helper', async () => {
+    const fetchSpy = vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve({}) });
+    vi.stubGlobal('fetch', fetchSpy);
+
+    await new HubClient('http://hub', 'tok').postStreamError('host-1', 'device-1', 'mjpeg', 'device offline');
+
+    const [url, opts] = fetchSpy.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe('http://hub/api/hosts/stream-error?machineId=host-1');
+    expect(JSON.parse(opts.body as string)).toEqual({
+      deviceUdid: 'device-1',
+      protocol: 'mjpeg',
+      message: 'device offline',
+    });
+  });
+});

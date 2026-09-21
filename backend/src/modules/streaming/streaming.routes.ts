@@ -94,6 +94,7 @@ export const streamingRoutes: FastifyPluginAsync = async (app) => {
           viewerId,
           platform: device.platform,
           isSimulator: device.connectionType === 'simulator',
+          remoteEnabled: app.config.streaming.remoteEnabled,
           onFrame: (frame) => {
             if (socket.readyState === socket.OPEN) socket.send(frame);
           },

@@ -123,6 +123,22 @@ export function BuildDetailDialog({ build, onClose }: { build: Build | null; onC
               ...(build.constraints?.features && build.constraints.features.length > 0
                 ? [{ term: 'Requires', value: build.constraints.features.join(', ') }]
                 : []),
+              // Same conditional-per-field pattern as constraints above: no
+              // current provider populates the CI-metadata fields, so they
+              // stay absent from the list entirely rather than showing "—".
+              ...(build.provenance?.branch ? [{ term: 'Branch', value: build.provenance.branch }] : []),
+              ...(build.provenance?.commitSha
+                ? [{ term: 'Commit', value: <Mono>{build.provenance.commitSha}</Mono> }]
+                : []),
+              ...(build.provenance?.commitTitle
+                ? [{ term: 'Commit title', value: build.provenance.commitTitle }]
+                : []),
+              ...(build.provenance?.buildNumber
+                ? [{ term: 'Build number', value: build.provenance.buildNumber }]
+                : []),
+              ...(build.provenance?.sourceTimestamp
+                ? [{ term: 'Source timestamp', value: formatRelative(build.provenance.sourceTimestamp) }]
+                : []),
               { term: 'Fetched', value: formatRelative(build.fetchedAt) },
               { term: 'Integrity validated', value: formatRelative(build.integrityValidatedAt) },
               ...(build.status === 'purged'

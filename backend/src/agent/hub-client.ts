@@ -43,6 +43,14 @@ export interface PendingAppiumRequest {
   platform: 'android' | 'ios';
 }
 
+export type StreamProtocol = 'mjpeg' | 'h264';
+
+/** A device+protocol on this machine the hub currently wants frames relayed for — see stream-runner.ts. */
+export interface DesiredStreamCapture {
+  deviceUdid: string;
+  protocol: StreamProtocol;
+}
+
 export type InstallTargetStatus =
   | 'queued'
   | 'downloading'
@@ -149,14 +157,17 @@ export class HubClient {
     pendingInstalls: PendingInstall[];
     pendingUninstalls: PendingUninstall[];
     pendingAppiumRequests: PendingAppiumRequest[];
+    desiredStreamCaptures: DesiredStreamCapture[];
   }> {
     // The response body used to be ignored entirely — reading pendingInstalls
-    // (and, as of these fields, pendingUninstalls/pendingAppiumRequests) off
-    // it is additive, not a breaking change to this call's contract.
+    // (and, as of these fields, pendingUninstalls/pendingAppiumRequests/
+    // desiredStreamCaptures) off it is additive, not a breaking change to
+    // this call's contract.
     return this.post<{
       pendingInstalls: PendingInstall[];
       pendingUninstalls: PendingUninstall[];
       pendingAppiumRequests: PendingAppiumRequest[];
+      desiredStreamCaptures: DesiredStreamCapture[];
     }>('/api/hosts/heartbeat', params);
   }
 
@@ -169,6 +180,38 @@ export class HubClient {
    */
   async reportAppiumReady(machineId: string, deviceUdid: string, host: string, port: number): Promise<void> {
     await this.post(`/api/hosts/appium-ready?machineId=${encodeURIComponent(machineId)}`, { deviceUdid, host, port });
+  }
+
+  /**
+   * Relays one frame this agent captured locally for a device it owns — the
+   * reply half of a `DesiredStreamCapture` seen on a heartbeat. Raw binary,
+   * not JSON like every other call here: a frame is arbitrary image/video
+   * bytes, not a value worth base64-inflating through `post`'s JSON body.
+   */
+  async postStreamFrame(machineId: string, deviceUdid: string, protocol: StreamProtocol, frame: Buffer): Promise<void> {
+    const qs = new URLSearchParams({ machineId, deviceUdid, protocol }).toString();
+    const res = await fetch(`${this.baseUrl}/api/hosts/stream-frame?${qs}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/octet-stream',
+        ...(this.agentToken ? { Authorization: `Bearer ${this.agentToken}` } : {}),
+      },
+      body: frame,
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      throw new HubError(res.status, '/api/hosts/stream-frame', text || res.statusText);
+    }
+  }
+
+  /** Reports that this agent's local capture for a device broke, so viewers see why instead of a silent stall. */
+  async postStreamError(machineId: string, deviceUdid: string, protocol: StreamProtocol, message: string): Promise<void> {
+    await this.post(`/api/hosts/stream-error?machineId=${encodeURIComponent(machineId)}`, {
+      deviceUdid,
+      protocol,
+      message,
+    });
   }
 
   async syncDevices(machineId: string, devices: DiscoveredDevice[]): Promise<{ upserted: number; markedOffline: number }> {

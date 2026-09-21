@@ -89,6 +89,20 @@ const appiumConfigSchema = z
   })
   .strict();
 
+const streamingConfigSchema = z
+  .object({
+    // Off by default, same reasoning as appium.remoteEnabled above: the hub
+    // stops spawning adb/xcrun itself for a device and instead waits on the
+    // owning agent to capture and relay frames back (see
+    // streaming.service.ts's AgentRelayCaptureSource). Today's hub-local-only
+    // behavior must stay the default until this is proven. See
+    // docs/reference-review-2026-09-14/01-architecture-findings.md §1.3 for
+    // the identical gap already fixed for Appium — this is the same fix
+    // applied to streaming.
+    remoteEnabled: z.boolean().optional(),
+  })
+  .strict();
+
 const automationConfigSchema = z
   .object({
     framework: z.string().optional(),
@@ -136,6 +150,7 @@ export const partialConfigSchema = z
     build: buildConfigSchema.optional(),
     devices: deviceConfigSchema.optional(),
     appium: appiumConfigSchema.optional(),
+    streaming: streamingConfigSchema.optional(),
     automation: automationConfigSchema.optional(),
     // Keyed by project id — the same string that lands on ExecutionRun.project
     // and Build.project, so config and history line up without a mapping table.
@@ -157,6 +172,7 @@ export interface EffectiveConfig {
   };
   devices: { lockTtlMinutes: number | null; grantPermissionsOnInstall: boolean };
   appium: { enabled: boolean; host: string; basePort: number; remoteEnabled: boolean };
+  streaming: { remoteEnabled: boolean };
   automation: AutomationConfig;
   /** Declared projects, keyed by id. Empty when an org hasn't declared any. */
   projects: Record<string, ProjectConfig>;
@@ -242,6 +258,7 @@ export const PLATFORM_DEFAULTS: EffectiveConfig = {
   devices: { lockTtlMinutes: 45, grantPermissionsOnInstall: false },
   // Off by default: starting a server is a real side effect on the host.
   appium: { enabled: false, host: '127.0.0.1', basePort: 4723, remoteEnabled: false },
+  streaming: { remoteEnabled: false },
   automation: {
     framework: 'appium',
     configPath: 'wdio.conf.js',
