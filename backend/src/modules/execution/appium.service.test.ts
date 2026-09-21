@@ -44,8 +44,35 @@ describe('closeActiveSessions', () => {
 
     await closeActiveSessions(fakeDevice(4723), config);
 
-    // Only the /status probe — never got far enough to ask for sessions.
-    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    // Both base-path /status probes ('' then '/wd/hub') — neither answered,
+    // so it never got far enough to ask for sessions.
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it('adopts a foreign server still running under the legacy /wd/hub base path, and closes sessions at the same prefix', async () => {
+    // An org's own Appium fleet, not spawned by this hub, may still default to
+    // the pre-Appium-2 /wd/hub convention — the bare-path probe must not be
+    // the only one tried, and the DELETE must land at the same prefix the
+    // GET succeeded at, not the bare path.
+    const fetchSpy = vi.fn().mockImplementation((url: string, opts?: RequestInit) => {
+      // Checked in this order because '/status'.endsWith also matches
+      // '/wd/hub/status' — the more specific legacy path must be tested first.
+      if (url.endsWith('/wd/hub/status')) return Promise.resolve({ ok: true });
+      if (url.endsWith('/status')) return Promise.resolve({ ok: false }); // bare path: not this server
+      if (url.endsWith('/wd/hub/sessions')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ value: [{ id: 'legacy-sess' }] }) });
+      }
+      if (opts?.method === 'DELETE') return Promise.resolve({ ok: true });
+      throw new Error(`unexpected request: ${url}`);
+    });
+    vi.stubGlobal('fetch', fetchSpy);
+
+    await closeActiveSessions(fakeDevice(4723), config);
+
+    expect(fetchSpy).toHaveBeenCalledWith(
+      expect.stringContaining('/wd/hub/session/legacy-sess'),
+      expect.objectContaining({ method: 'DELETE' }),
+    );
   });
 
   it('deletes every active session reported by a running server (W3C {value: [...]} shape)', async () => {

@@ -152,14 +152,38 @@ export async function assertDriverInstalled(platform: string): Promise<void> {
   }
 }
 
+/**
+ * This hub always spawns its own servers with `--base-path /`, but
+ * `ensureAppiumServer`'s adopt-don't-replace path can hand back a server this
+ * hub never started — an org's own Appium fleet, commonly still run under the
+ * legacy `/wd/hub` prefix inherited from the old JSONWP/Selenium Grid
+ * convention. Every base path Appium is known to run under, most specific
+ * first so a server answering both isn't miscategorized.
+ */
+const APPIUM_BASE_PATHS = ['', '/wd/hub'];
+
+/**
+ * Which base path (if any) this endpoint is actually answering `/status`
+ * requests on. `null` means neither responded — same technique a real
+ * device-farm's own health check already used for exactly this cross-version
+ * gap: probe every known path and use whichever one returns a value.
+ */
+async function resolveAppiumPrefix(baseUrl: string): Promise<string | null> {
+  for (const prefix of APPIUM_BASE_PATHS) {
+    try {
+      const res = await fetch(`${baseUrl}${prefix}/status`, { signal: AbortSignal.timeout(STATUS_TIMEOUT_MS) });
+      if (res.ok) return prefix;
+    } catch {
+      // A refused connection or timeout on one base path says nothing about
+      // whether the other one would answer — keep trying.
+    }
+  }
+  return null;
+}
+
 /** Whether something is already answering as Appium on this endpoint. */
 async function isServerUp(endpoint: AppiumEndpoint): Promise<boolean> {
-  try {
-    const res = await fetch(`${endpoint.baseUrl}/status`, { signal: AbortSignal.timeout(STATUS_TIMEOUT_MS) });
-    return res.ok;
-  } catch {
-    return false;
-  }
+  return (await resolveAppiumPrefix(endpoint.baseUrl)) !== null;
 }
 
 /**
@@ -412,17 +436,20 @@ export async function closeActiveSessions(device: IDevice, config: EffectiveConf
     port: device.appiumPort,
     baseUrl: `http://${config.appium.host}:${device.appiumPort}`,
   };
-  if (!(await isServerUp(endpoint))) return;
+  const prefix = await resolveAppiumPrefix(endpoint.baseUrl);
+  if (prefix === null) return;
 
   try {
-    const res = await fetch(`${endpoint.baseUrl}/sessions`, { signal: AbortSignal.timeout(STATUS_TIMEOUT_MS) });
+    const res = await fetch(`${endpoint.baseUrl}${prefix}/sessions`, { signal: AbortSignal.timeout(STATUS_TIMEOUT_MS) });
     if (!res.ok) return;
     const body = (await res.json()) as { value?: Array<{ id?: string; sessionId?: string }> } | Array<{ id?: string }>;
     const sessions = Array.isArray(body) ? body : (body.value ?? []);
     for (const session of sessions) {
       const id = session.id ?? (session as { sessionId?: string }).sessionId;
       if (!id) continue;
-      await fetch(`${endpoint.baseUrl}/session/${id}`, {
+      // Same prefix as the GET above — a session opened under /wd/hub only
+      // closes at /wd/hub/session/:id, not the bare path.
+      await fetch(`${endpoint.baseUrl}${prefix}/session/${id}`, {
         method: 'DELETE',
         signal: AbortSignal.timeout(STATUS_TIMEOUT_MS),
       }).catch(() => undefined); // best-effort — a session that won't close cleanly must not block lock release
