@@ -63,7 +63,8 @@ function LockLine({ device }: { device: Device }) {
   );
 }
 
-function DeviceCard({
+/** Exported for `DeviceCard.test.tsx` — the multi-view "View live" regression. */
+export function DeviceCard({
   device,
   selectable,
   selected,
@@ -146,9 +147,19 @@ function DeviceCard({
         <span className={styles.seen}>Last seen {formatRelative(device.lastSeenAt)}</span>
         {/* An explicit, labelled action: the whole card being a link to the
             viewer was not discoverable. Navigation only — the viewer page
-            decides whether to open a capture, so the grid never starts one. */}
-        {!selectable && !offline ? (
-          <Link to={`/devices/${device.udid}`} className={styles.liveAction}>
+            decides whether to open a capture, so the grid never starts one.
+            Kept available during multi-view picking too — hiding it there
+            left no way to view a single device at all until 2+ were selected
+            (or the picker was cancelled first). Picking mode wraps the whole
+            card body in a <label> bound to the checkbox, so a bare click here
+            would *also* toggle selection via the browser's default label
+            forwarding; stopPropagation keeps this link's click just a link. */}
+        {!offline ? (
+          <Link
+            to={`/devices/${device.udid}`}
+            className={styles.liveAction}
+            onClick={(e) => selectable && e.stopPropagation()}
+          >
             <Button size="sm" variant="secondary">
               <icons.stream size={iconSize.control} aria-hidden="true" />
               View live

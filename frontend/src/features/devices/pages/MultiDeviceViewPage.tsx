@@ -1,3 +1,4 @@
+import { Link } from 'react-router-dom';
 import { Button, EmptyState, Page, PageHeader, QueryBoundary } from 'react-design-kit';
 import { icons } from '@/lib/icons';
 import { useDevices } from '../api/devices.api';
@@ -28,11 +29,21 @@ export function MultiDeviceViewPage() {
         title="Multi-view"
         subtitle={`Watch up to ${MULTI_VIEW_MAX} devices at once.`}
         actions={
-          selected.length > 0 ? (
-            <Button size="sm" variant="ghost" onClick={clear}>
-              Clear all
-            </Button>
-          ) : undefined
+          <>
+            {selected.length > 0 ? (
+              <Button size="sm" variant="ghost" onClick={clear}>
+                Clear all
+              </Button>
+            ) : null}
+            {/* Every other detail/sub-page in this app has a plain way back to
+                its parent list (see DeviceViewerPage/RunDetailPage) — this
+                page was missing the equivalent. */}
+            <Link to="/devices">
+              <Button size="sm" variant="ghost">
+                Back to devices
+              </Button>
+            </Link>
+          </>
         }
       />
 
