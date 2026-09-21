@@ -8,7 +8,7 @@ import { env } from '../../config/env';
 import { EffectiveConfig, PLATFORM_DEFAULTS } from '../../config/org-config.schema';
 import { acquireLock, getDevice, releaseLock } from '../devices/devices.service';
 import { getBuild } from '../builds/builds.service';
-import { assertDriverInstalled, ensureAppiumServer } from './appium.service';
+import { assertDriverInstalled, ensureAppiumServer, closeActiveSessions } from './appium.service';
 import { buildRunEnvironment, createRedactor } from './run-environment';
 import { classifySuite } from './automation-commands';
 import { summarizeRunResults, ALLURE_RESULTS_DIRNAME } from './allure-summary';
@@ -609,6 +609,18 @@ async function runExecution(
     // two reasons as the report above.
     collectTestSummary(run, logStream);
 
+    // Appium servers here are one-per-device and long-lived (reused across
+    // many runs), so killing this run's process tree does not close any
+    // WebDriver session it opened — that session lives inside a server this
+    // run doesn't own. Left alone, the *next* run's session-creation fails
+    // against a server that looks perfectly healthy. Best-effort: a device
+    // this run never got as far as reaching an Appium session for (e.g.
+    // cancelled during `pulling`) has nothing to clean up here.
+    if (appiumConfig?.enabled) {
+      const device = await getDevice(input.deviceUdid).catch(() => null);
+      if (device) await closeActiveSessions(device, { appium: appiumConfig } as EffectiveConfig).catch(() => undefined);
+    }
+
     run.endedAt = new Date();
     await run.save();
     logStream.end();
@@ -735,7 +747,7 @@ export async function sweepFinishedWorkspaces(): Promise<number> {
   return removed;
 }
 
-export async function recoverOrphanedRuns(): Promise<number> {
+export async function recoverOrphanedRuns(appiumConfig?: EffectiveConfig['appium']): Promise<number> {
   const orphaned = await ExecutionRun.find({ status: { $in: ['queued', 'preparing', 'running'] } });
   for (const run of orphaned) {
     const runningStage = run.stages.find((s) => s.status === 'running');
@@ -750,6 +762,13 @@ export async function recoverOrphanedRuns(): Promise<number> {
     run.endedAt = new Date();
     await run.save();
     await releaseLock(run.deviceUdid, run.triggeredBy, true);
+    // Same reason as runExecution's own finally block: a backend restart kills
+    // this process's runner children, but not a session left open inside a
+    // device's long-lived, separately-running Appium server.
+    if (appiumConfig?.enabled) {
+      const device = await getDevice(run.deviceUdid).catch(() => null);
+      if (device) await closeActiveSessions(device, { appium: appiumConfig } as EffectiveConfig).catch(() => undefined);
+    }
   }
   return orphaned.length;
 }

@@ -32,8 +32,19 @@ export interface AppiumEndpoint {
   baseUrl: string;
 }
 
-/** Live servers this process started, keyed by udid, so they are reused and can be shut down. */
+/**
+ * Live servers this process started, keyed by `machineId:udid` so they are
+ * reused and can be shut down. Not by udid alone: the device model's own
+ * compound `{machineId, udid}` index exists because the same UDID can appear
+ * on two different hosts (routine for emulators, whose udids are just
+ * `emulator-<port>`) — a udid-only key would let two unrelated devices
+ * collide in this map.
+ */
 const servers = new Map<string, ManagedProcess>();
+
+function serverKey(device: IDevice): string {
+  return `${device.machineId}:${device.udid}`;
+}
 
 const STATUS_TIMEOUT_MS = 2000;
 const STARTUP_TIMEOUT_MS = 60_000;
@@ -145,7 +156,7 @@ type StartOutcome =
 async function startServer(device: IDevice, endpoint: AppiumEndpoint): Promise<StartOutcome> {
   // A tracked process that is no longer answering has died; drop it so a fresh
   // one can take the port.
-  servers.delete(device.udid);
+  servers.delete(serverKey(device));
 
   // Kept so a server that dies during startup can say why. Without this the
   // only symptom was "did not become ready", which names a timeout rather than
@@ -178,13 +189,13 @@ async function startServer(device: IDevice, endpoint: AppiumEndpoint): Promise<S
     onStdout: collect,
     onStderr: collect,
   });
-  servers.set(device.udid, managed);
+  servers.set(serverKey(device), managed);
 
   // If it exits during startup, stop waiting on a poll that can never succeed.
   let exited = false;
   void managed.result.then(() => {
     exited = true;
-    servers.delete(device.udid);
+    servers.delete(serverKey(device));
   });
 
   const deadline = Date.now() + STARTUP_TIMEOUT_MS;
@@ -195,7 +206,7 @@ async function startServer(device: IDevice, endpoint: AppiumEndpoint): Promise<S
   }
 
   managed.cancel();
-  servers.delete(device.udid);
+  servers.delete(serverKey(device));
 
   const detail = startupOutput.trim();
   if (detail.includes('EADDRINUSE')) return { kind: 'port-busy' };
@@ -251,6 +262,55 @@ export async function ensureAppiumServer(device: IDevice, config: EffectiveConfi
         // The server's own words beat any guess this layer could make about why.
         (outcome.detail ? `\nAppium said:\n${outcome.detail}` : '\nAppium produced no output before failing.'),
     );
+  }
+}
+
+/**
+ * Closes any WebDriver session left open on this device's Appium server,
+ * without restarting the server itself.
+ *
+ * A cancelled or orphaned run releases the device lock, but the runner it
+ * killed may have left a session open inside a server that is deliberately
+ * long-lived (one per device, reused across many runs — see the module doc
+ * comment). Most mobile drivers only serve one session at a time, so a
+ * lingering session would make the *next* run's session-creation fail against
+ * a server that looks perfectly healthy, for a reason nothing on screen
+ * explains. Restarting the server would also fix this, but throws away the
+ * whole reason a persistent server exists (skipping Appium's own startup
+ * cost); asking it what session it's holding and deleting just that is the
+ * surgical version.
+ *
+ * A no-op, not an error, when no server is running for this device — there is
+ * nothing to clean up, and a run that never got as far as starting Appium is
+ * the common case for an early cancel.
+ */
+export async function closeActiveSessions(device: IDevice, config: EffectiveConfig): Promise<void> {
+  if (!device.appiumPort) return;
+
+  const endpoint: AppiumEndpoint = {
+    host: config.appium.host,
+    port: device.appiumPort,
+    baseUrl: `http://${config.appium.host}:${device.appiumPort}`,
+  };
+  if (!(await isServerUp(endpoint))) return;
+
+  try {
+    const res = await fetch(`${endpoint.baseUrl}/sessions`, { signal: AbortSignal.timeout(STATUS_TIMEOUT_MS) });
+    if (!res.ok) return;
+    const body = (await res.json()) as { value?: Array<{ id?: string; sessionId?: string }> } | Array<{ id?: string }>;
+    const sessions = Array.isArray(body) ? body : (body.value ?? []);
+    for (const session of sessions) {
+      const id = session.id ?? (session as { sessionId?: string }).sessionId;
+      if (!id) continue;
+      await fetch(`${endpoint.baseUrl}/session/${id}`, {
+        method: 'DELETE',
+        signal: AbortSignal.timeout(STATUS_TIMEOUT_MS),
+      }).catch(() => undefined); // best-effort — a session that won't close cleanly must not block lock release
+    }
+  } catch {
+    // Best-effort cleanup: the device lock still releases either way, and the
+    // next run's own session-creation will surface a real error if this
+    // server genuinely can't take a new session.
   }
 }
 

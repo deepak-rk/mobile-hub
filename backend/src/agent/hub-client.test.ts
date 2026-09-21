@@ -70,4 +70,24 @@ describe('HubClient.downloadArtifact', () => {
 
     expect(fs.statSync(dest).size).toBe(75);
   });
+
+  it('rejects a truncated download and leaves no file at the destination', async () => {
+    // Server claims 100 bytes but the body only actually carries 40 — the
+    // shape of a connection that closes early without erroring the stream.
+    mockArtifactResponse(Buffer.alloc(40, 5), { 'content-length': '100' });
+
+    await expect(new HubClient('http://hub').downloadArtifact('build-1', dest)).rejects.toThrow(/truncated/i);
+
+    expect(fs.existsSync(dest)).toBe(false);
+    expect(fs.existsSync(`${dest}.part`)).toBe(false);
+  });
+
+  it('rejects an empty download and leaves no file at the destination', async () => {
+    mockArtifactResponse(Buffer.alloc(0), { 'content-length': '0' });
+
+    await expect(new HubClient('http://hub').downloadArtifact('build-1', dest)).rejects.toThrow(/empty/i);
+
+    expect(fs.existsSync(dest)).toBe(false);
+    expect(fs.existsSync(`${dest}.part`)).toBe(false);
+  });
 });

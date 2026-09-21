@@ -94,6 +94,16 @@ export class HubClient {
    *
    * `totalBytes` is null when the server sends no `Content-Length`; callers
    * must then show indeterminate progress rather than inventing a percentage.
+   *
+   * Writes to `<destPath>.part` and only renames it to `destPath` once the
+   * byte count written matches `Content-Length` (when the hub sent one) —
+   * mirroring the integrity gate the hub's own fetch from a build provider
+   * already has (size check before marking a build `ready`). Without this, a
+   * connection that closes early but doesn't error the stream (a truncating
+   * intermediary, say) would leave a partial file at the real destination,
+   * indistinguishable from a complete one to anything reading `destPath`
+   * afterwards — the caller here (`installer.ts`) goes on to push whatever it
+   * finds straight to a device.
    */
   async downloadArtifact(
     buildId: string,
@@ -122,7 +132,26 @@ export class HubClient {
       },
     });
 
-    await pipeline(Readable.fromWeb(res.body), counter, fs.createWriteStream(destPath));
+    const partPath = `${destPath}.part`;
+    try {
+      await pipeline(Readable.fromWeb(res.body), counter, fs.createWriteStream(partPath));
+
+      if (downloadedBytes === 0) {
+        throw new HubError(res.status, path, 'Download produced an empty file.');
+      }
+      if (Number.isFinite(totalBytes) && downloadedBytes !== totalBytes) {
+        throw new HubError(
+          res.status,
+          path,
+          `Download truncated: expected ${totalBytes as number} bytes, got ${downloadedBytes}.`,
+        );
+      }
+
+      await fs.promises.rename(partPath, destPath);
+    } catch (err) {
+      await fs.promises.unlink(partPath).catch(() => undefined);
+      throw err;
+    }
   }
 
   async reportInstallProgress(

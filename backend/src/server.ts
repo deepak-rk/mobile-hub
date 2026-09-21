@@ -79,7 +79,7 @@ async function start(): Promise<void> {
     process.exit(1);
   }
 
-  const recovered = await recoverOrphanedRuns();
+  const recovered = await recoverOrphanedRuns(app.config.appium);
   if (recovered > 0) {
     app.log.warn(`Recovered ${recovered} execution run(s) left mid-flight by a previous restart`);
   }
