@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import * as path from 'path';
+import * as os from 'os';
+import * as fs from 'fs';
 import { run, resolveExecutable, isSuccess, describeOutcome, RunOutcome } from './process-supervisor';
 
 /**
@@ -121,6 +123,41 @@ describe('run', () => {
     delete process.env.MH_SUPERVISOR_LEAK_CHECK;
     expect(chunks.join('').trim()).toBe('undefined');
   });
+
+  it.runIf(process.platform === 'win32')(
+    'spawns a real .cmd shim without EINVAL — the exact bug found 2026-09-21',
+    async () => {
+      // Recent Node versions refuse to spawn a .bat/.cmd file directly at all
+      // (`spawn EINVAL`), closing a command-injection class the old implicit
+      // shell-out behavior allowed. A real `npm ci` install stage hit this in
+      // production against this exact environment; `npm --version` reproduces
+      // the identical failure in isolation. This is the regression guard.
+      const outcome = await run({ command: 'npm', args: ['--version'], cwd }).result;
+      expect(outcome.kind).toBe('exited');
+      expect(isSuccess(outcome)).toBe(true);
+    },
+  );
+
+  it.runIf(process.platform === 'win32')(
+    'tree-kills a .cmd-spawned process through the shell hop shell:true now requires',
+    async () => {
+      // Regression guard for the concern that motivated avoiding shell:true in
+      // the first place: on Windows, taskkill /T kills by PID tree regardless
+      // of an intermediate cmd.exe hop, so a cancel must still take down the
+      // real grandchild (cmd.exe -> the .cmd file -> node), not just the shell.
+      const cmdPath = path.join(os.tmpdir(), `mh-supervisor-test-${process.pid}.cmd`);
+      fs.writeFileSync(cmdPath, `@echo off\r\n"${process.execPath}" -e "setTimeout(() => {}, 60000)"\r\n`);
+      try {
+        const managed = run({ command: cmdPath, args: [], cwd });
+        await new Promise((r) => setTimeout(r, 500)); // let the real grandchild actually start
+        managed.cancel();
+        const outcome = await managed.result;
+        expect(outcome.kind).toBe('cancelled');
+      } finally {
+        fs.rmSync(cmdPath, { force: true });
+      }
+    },
+  );
 
   it('settles exactly once even if cancel is called after exit', async () => {
     const managed = run({ command: process.execPath, args: ['-e', 'process.exit(0)'], cwd });

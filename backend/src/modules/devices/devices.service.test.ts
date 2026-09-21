@@ -2,6 +2,7 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import { Device } from './device.model';
 import {
   syncDevices,
+  getDevice,
   acquireLock,
   releaseLock,
   renewLock,
@@ -85,6 +86,26 @@ describe('syncDevices', () => {
   });
 });
 
+describe('getDevice', () => {
+  it('falls back to a udid-only lookup when machineId is omitted', async () => {
+    const findOne = vi.fn().mockResolvedValue({});
+    vi.spyOn(Device, 'findOne').mockImplementation(findOne as never);
+
+    await getDevice('d1');
+
+    expect(findOne).toHaveBeenCalledWith({ udid: 'd1' });
+  });
+
+  it('narrows to the requested host when machineId is supplied — the same udid can exist on two hosts', async () => {
+    const findOne = vi.fn().mockResolvedValue({});
+    vi.spyOn(Device, 'findOne').mockImplementation(findOne as never);
+
+    await getDevice('d1', 'host-1');
+
+    expect(findOne).toHaveBeenCalledWith({ udid: 'd1', machineId: 'host-1' });
+  });
+});
+
 describe('acquireLock', () => {
   it('only succeeds if no lock currently exists (atomic filter)', async () => {
     const findOneAndUpdate = vi.fn().mockResolvedValue(null);
@@ -99,6 +120,19 @@ describe('acquireLock', () => {
     );
     // Mongo returning null means the atomic filter didn't match (already locked).
     expect(result).toBeNull();
+  });
+
+  it('narrows to the requested host when machineId is supplied — the same udid can exist on two hosts', async () => {
+    const findOneAndUpdate = vi.fn().mockResolvedValue({});
+    vi.spyOn(Device, 'findOneAndUpdate').mockImplementation(findOneAndUpdate as never);
+
+    await acquireLock('d1', 'user-1', 'sess-1', 'testing', 'host-1');
+
+    expect(findOneAndUpdate).toHaveBeenCalledWith(
+      { udid: 'd1', machineId: 'host-1', lock: null },
+      expect.objectContaining({ status: 'in-use' }),
+      { new: true },
+    );
   });
 });
 
@@ -124,6 +158,25 @@ describe('releaseLock', () => {
 
     expect(findOneAndUpdate).toHaveBeenCalledWith({ udid: 'd1' }, { lock: null, status: 'idle' }, { new: true });
   });
+
+  it('narrows to the requested host when machineId is supplied, for both the admin and owner filter shapes', async () => {
+    const findOneAndUpdate = vi.fn().mockResolvedValue({});
+    vi.spyOn(Device, 'findOneAndUpdate').mockImplementation(findOneAndUpdate as never);
+
+    await releaseLock('d1', 'user-1', false, 'host-1');
+    expect(findOneAndUpdate).toHaveBeenCalledWith(
+      { udid: 'd1', 'lock.heldBy': 'user-1', machineId: 'host-1' },
+      { lock: null, status: 'idle' },
+      { new: true },
+    );
+
+    await releaseLock('d1', 'admin-1', true, 'host-1');
+    expect(findOneAndUpdate).toHaveBeenCalledWith(
+      { udid: 'd1', machineId: 'host-1' },
+      { lock: null, status: 'idle' },
+      { new: true },
+    );
+  });
 });
 
 describe('renewLock', () => {
@@ -138,6 +191,16 @@ describe('renewLock', () => {
     expect(update).toHaveProperty('lock.acquiredAt');
     // The lock itself (holder, reason) is untouched — only the TTL clock moves.
     expect(update).not.toHaveProperty('status');
+  });
+
+  it('narrows to the requested host when machineId is supplied', async () => {
+    const findOneAndUpdate = vi.fn().mockResolvedValue({});
+    vi.spyOn(Device, 'findOneAndUpdate').mockImplementation(findOneAndUpdate as never);
+
+    await renewLock('d1', 'user-1', false, 'host-1');
+
+    const [filter] = findOneAndUpdate.mock.calls[0] as [Record<string, unknown>, Record<string, unknown>];
+    expect(filter).toEqual({ udid: 'd1', 'lock.heldBy': 'user-1', machineId: 'host-1' });
   });
 
   it('an admin can renew any held lock', async () => {

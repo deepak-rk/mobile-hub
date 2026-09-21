@@ -21,6 +21,14 @@ export interface PendingInstall {
   buildId: string;
   platform: 'android' | 'ios';
   sizeBytes: number | null;
+  /** The build's original source, straight off the hub's `Build.artifactUrl` — see installer.ts's use of it. */
+  artifactUrl: string | null;
+  /**
+   * Org-wide `devices.grantPermissionsOnInstall` toggle, carried per target
+   * since the agent has no access to org config itself — only what the hub
+   * tells it. Android only; see installer.ts's `grantRuntimePermissions`.
+   */
+  grantPermissions: boolean;
 }
 
 export interface PendingUninstall {
@@ -29,7 +37,20 @@ export interface PendingUninstall {
   packageName: string;
 }
 
-export type InstallTargetStatus = 'queued' | 'downloading' | 'transferring' | 'installing' | 'done' | 'error';
+/** A device on this machine the hub is waiting on an Appium endpoint for — see appium-runner.ts. */
+export interface PendingAppiumRequest {
+  deviceUdid: string;
+  platform: 'android' | 'ios';
+}
+
+export type InstallTargetStatus =
+  | 'queued'
+  | 'downloading'
+  | 'transferring'
+  | 'installing'
+  | 'granting-permissions'
+  | 'done'
+  | 'error';
 export type UninstallTargetStatus = 'queued' | 'uninstalling' | 'done' | 'error';
 
 export class HubError extends Error {
@@ -47,6 +68,62 @@ const REQUEST_TIMEOUT_MS = 10_000;
 // Build artifacts run to hundreds of MB — the plain request timeout above
 // would kill a real download partway through.
 const ARTIFACT_DOWNLOAD_TIMEOUT_MS = 5 * 60_000;
+
+/**
+ * Streams a fetch response's body to `destPath`, counting bytes for progress
+ * and gating on integrity before the file is considered real — shared by
+ * `downloadArtifact` (via the hub) and `downloadArtifactDirect` (straight from
+ * a build's origin), so both reject a truncated or empty transfer identically.
+ *
+ * Writes to `<destPath>.part` and only renames it to `destPath` once the byte
+ * count written matches `Content-Length` (when the server sent one) — without
+ * this, a connection that closes early but doesn't error the stream (a
+ * truncating intermediary, say) would leave a partial file at the real
+ * destination, indistinguishable from a complete one to anything reading
+ * `destPath` afterwards — the caller (`installer.ts`) goes on to push
+ * whatever it finds straight to a device.
+ */
+async function streamToFileWithIntegrityGate(
+  res: Response,
+  destPath: string,
+  errorLabel: string,
+  onProgress?: (downloadedBytes: number, totalBytes: number | null) => void,
+): Promise<void> {
+  if (!res.body) throw new HubError(res.status, errorLabel, 'Response had no body.');
+
+  const header = res.headers.get('content-length');
+  const totalBytes = header ? Number(header) : null;
+  let downloadedBytes = 0;
+
+  const counter = new Transform({
+    transform(chunk: Buffer, _encoding, callback) {
+      downloadedBytes += chunk.length;
+      onProgress?.(downloadedBytes, Number.isFinite(totalBytes) ? totalBytes : null);
+      callback(null, chunk);
+    },
+  });
+
+  const partPath = `${destPath}.part`;
+  try {
+    await pipeline(Readable.fromWeb(res.body), counter, fs.createWriteStream(partPath));
+
+    if (downloadedBytes === 0) {
+      throw new HubError(res.status, errorLabel, 'Download produced an empty file.');
+    }
+    if (Number.isFinite(totalBytes) && downloadedBytes !== totalBytes) {
+      throw new HubError(
+        res.status,
+        errorLabel,
+        `Download truncated: expected ${totalBytes as number} bytes, got ${downloadedBytes}.`,
+      );
+    }
+
+    await fs.promises.rename(partPath, destPath);
+  } catch (err) {
+    await fs.promises.unlink(partPath).catch(() => undefined);
+    throw err;
+  }
+}
 
 /** Thin wrapper over the two endpoints an agent talks to. */
 export class HubClient {
@@ -68,14 +145,30 @@ export class HubClient {
     agentVersion: string;
     capabilities: HostCapabilities;
     diagnostics?: HostDiagnostics;
-  }): Promise<{ pendingInstalls: PendingInstall[]; pendingUninstalls: PendingUninstall[] }> {
+  }): Promise<{
+    pendingInstalls: PendingInstall[];
+    pendingUninstalls: PendingUninstall[];
+    pendingAppiumRequests: PendingAppiumRequest[];
+  }> {
     // The response body used to be ignored entirely — reading pendingInstalls
-    // (and, as of this field, pendingUninstalls) off it is additive, not a
-    // breaking change to this call's contract.
-    return this.post<{ pendingInstalls: PendingInstall[]; pendingUninstalls: PendingUninstall[] }>(
-      '/api/hosts/heartbeat',
-      params,
-    );
+    // (and, as of these fields, pendingUninstalls/pendingAppiumRequests) off
+    // it is additive, not a breaking change to this call's contract.
+    return this.post<{
+      pendingInstalls: PendingInstall[];
+      pendingUninstalls: PendingUninstall[];
+      pendingAppiumRequests: PendingAppiumRequest[];
+    }>('/api/hosts/heartbeat', params);
+  }
+
+  /**
+   * Reports that this agent's own Appium server for `deviceUdid` is up and
+   * answering at `host:port` — the reply to a `PendingAppiumRequest` seen on
+   * a previous heartbeat. `machineId` travels as a query param (matching how
+   * `requireAgentToken`'s scoping check reads it hub-side) since the body is
+   * just the endpoint being reported, not this agent's own identity.
+   */
+  async reportAppiumReady(machineId: string, deviceUdid: string, host: string, port: number): Promise<void> {
+    await this.post(`/api/hosts/appium-ready?machineId=${encodeURIComponent(machineId)}`, { deviceUdid, host, port });
   }
 
   async syncDevices(machineId: string, devices: DiscoveredDevice[]): Promise<{ upserted: number; markedOffline: number }> {
@@ -95,15 +188,9 @@ export class HubClient {
    * `totalBytes` is null when the server sends no `Content-Length`; callers
    * must then show indeterminate progress rather than inventing a percentage.
    *
-   * Writes to `<destPath>.part` and only renames it to `destPath` once the
-   * byte count written matches `Content-Length` (when the hub sent one) —
-   * mirroring the integrity gate the hub's own fetch from a build provider
-   * already has (size check before marking a build `ready`). Without this, a
-   * connection that closes early but doesn't error the stream (a truncating
-   * intermediary, say) would leave a partial file at the real destination,
-   * indistinguishable from a complete one to anything reading `destPath`
-   * afterwards — the caller here (`installer.ts`) goes on to push whatever it
-   * finds straight to a device.
+   * The integrity gate (`.part` staging, atomic rename, size validation) is
+   * shared with `downloadArtifactDirect` below via `streamToFileWithIntegrityGate`
+   * — both paths must reject a truncated/empty transfer the same way.
    */
   async downloadArtifact(
     buildId: string,
@@ -119,39 +206,38 @@ export class HubClient {
       const text = await res.text().catch(() => '');
       throw new HubError(res.status, path, text || res.statusText);
     }
+    await streamToFileWithIntegrityGate(res, destPath, path, onProgress);
+  }
 
-    const header = res.headers.get('content-length');
-    const totalBytes = header ? Number(header) : null;
-    let downloadedBytes = 0;
-
-    const counter = new Transform({
-      transform(chunk: Buffer, _encoding, callback) {
-        downloadedBytes += chunk.length;
-        onProgress?.(downloadedBytes, Number.isFinite(totalBytes) ? totalBytes : null);
-        callback(null, chunk);
-      },
-    });
-
-    const partPath = `${destPath}.part`;
-    try {
-      await pipeline(Readable.fromWeb(res.body), counter, fs.createWriteStream(partPath));
-
-      if (downloadedBytes === 0) {
-        throw new HubError(res.status, path, 'Download produced an empty file.');
-      }
-      if (Number.isFinite(totalBytes) && downloadedBytes !== totalBytes) {
-        throw new HubError(
-          res.status,
-          path,
-          `Download truncated: expected ${totalBytes as number} bytes, got ${downloadedBytes}.`,
-        );
-      }
-
-      await fs.promises.rename(partPath, destPath);
-    } catch (err) {
-      await fs.promises.unlink(partPath).catch(() => undefined);
-      throw err;
+  /**
+   * Fetches a build directly from its original source — bypassing the hub as
+   * a byte proxy entirely — for whichever devices are attached to this agent.
+   *
+   * This is the "federated" half of build distribution: a hub proxying every
+   * artifact byte to every agent becomes a bandwidth bottleneck (and a single
+   * point of failure for a large transfer) the moment more than a couple of
+   * agents exist. Callers (`installer.ts`) treat this as an optimization, not
+   * a guarantee — a build only reachable through the hub (a `file://` source,
+   * or an origin this agent's own network can't reach) must still work via
+   * `downloadArtifact` above; this method throws like any other failed fetch
+   * rather than silently falling back itself, since the caller is what knows
+   * whether a fallback is appropriate.
+   *
+   * No `Authorization` header: the origin is an external source (whatever the
+   * configured `BuildProvider` fetched from), not this hub, and has its own
+   * auth story if it needs one — not this agent's shared/per-agent token.
+   */
+  async downloadArtifactDirect(
+    originUrl: string,
+    destPath: string,
+    onProgress?: (downloadedBytes: number, totalBytes: number | null) => void,
+  ): Promise<void> {
+    const res = await fetch(originUrl, { signal: AbortSignal.timeout(ARTIFACT_DOWNLOAD_TIMEOUT_MS) });
+    if (!res.ok || !res.body) {
+      const text = await res.text().catch(() => '');
+      throw new HubError(res.status, originUrl, text || res.statusText);
     }
+    await streamToFileWithIntegrityGate(res, destPath, originUrl, onProgress);
   }
 
   async reportInstallProgress(

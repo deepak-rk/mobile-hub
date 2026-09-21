@@ -53,6 +53,12 @@ const deviceConfigSchema = z
     // expiry entirely; a lock then only ever ends via explicit unlock or the
     // device going offline, the pre-2026-08-27 behaviour.
     lockTtlMinutes: z.number().int().positive().optional(),
+    // Off by default: automatically granting every dangerous/runtime
+    // permission an installed Android app declares is a real behavioural
+    // change to the app under test (it otherwise runs exactly as if a human
+    // tapped through the OS permission prompts), and not every org wants an
+    // install to imply that. Android only — see installer.ts.
+    grantPermissionsOnInstall: z.boolean().optional(),
   })
   .strict();
 
@@ -71,6 +77,15 @@ const appiumConfigSchema = z
     // that is written down cannot. This keeps that property for devices the
     // hub discovers rather than ones a human enumerated.
     basePort: z.number().int().positive().optional(),
+    // Off by default: this is a genuinely risky rearchitecture (the hub stops
+    // spawning Appium itself for a non-local device and instead waits on an
+    // agent to do it — see appium.service.ts#ensureRemoteAppiumServer), and
+    // today's hub-local-only behavior must stay the default until this is
+    // proven. See docs/reference-review-2026-09-14/01-architecture-findings.md
+    // §1.3 for the gap this closes: a device on a remote agent host cannot
+    // run tests today, since Appium (and adb beneath it) has no way to reach
+    // a device on a different physical machine.
+    remoteEnabled: z.boolean().optional(),
   })
   .strict();
 
@@ -140,8 +155,8 @@ export interface EffectiveConfig {
     webhook: { endpoint?: string };
     retention: { keepPerGroup: number; olderThanDays: number | null };
   };
-  devices: { lockTtlMinutes: number | null };
-  appium: { enabled: boolean; host: string; basePort: number };
+  devices: { lockTtlMinutes: number | null; grantPermissionsOnInstall: boolean };
+  appium: { enabled: boolean; host: string; basePort: number; remoteEnabled: boolean };
   automation: AutomationConfig;
   /** Declared projects, keyed by id. Empty when an org hasn't declared any. */
   projects: Record<string, ProjectConfig>;
@@ -224,9 +239,9 @@ export const PLATFORM_DEFAULTS: EffectiveConfig = {
   },
   // 45 min: long enough for someone actively testing on a device, short
   // enough that a crashed/forgotten client doesn't hold it all day.
-  devices: { lockTtlMinutes: 45 },
+  devices: { lockTtlMinutes: 45, grantPermissionsOnInstall: false },
   // Off by default: starting a server is a real side effect on the host.
-  appium: { enabled: false, host: '127.0.0.1', basePort: 4723 },
+  appium: { enabled: false, host: '127.0.0.1', basePort: 4723, remoteEnabled: false },
   automation: {
     framework: 'appium',
     configPath: 'wdio.conf.js',

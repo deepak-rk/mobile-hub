@@ -6,6 +6,8 @@ import * as path from 'path';
 import { HubClient, PendingInstall } from './hub-client';
 
 const run = promisify(execFile);
+/** `run`'s call shape, factored out so a test can inject a fake without mocking `child_process`/`promisify` itself. */
+type Runner = (command: string, args: string[], options: { timeout: number }) => Promise<{ stdout: string; stderr: string }>;
 const ADB_INSTALL_TIMEOUT_MS = 120_000;
 const ADB_PUSH_TIMEOUT_MS = 300_000;
 const ADB_SHORT_TIMEOUT_MS = 10_000;
@@ -205,6 +207,81 @@ async function verifyPackageInstalled(adbPath: string, deviceUdid: string, packa
 }
 
 /**
+ * Parses `adb shell dumpsys package <name>`'s "runtime permissions:" block
+ * into the names still ungranted.
+ *
+ * This targets Android's own **runtime/dangerous** permission group
+ * specifically — the one `pm grant` can actually act on (a normal or
+ * signature permission is auto-granted at install time and doesn't appear in
+ * this block at all, so there's nothing to filter by "dangerous" beyond
+ * reading the block dumpsys already separates out). Deliberately not parsed
+ * from the APK itself via `aapt`: that tool is not guaranteed present on this
+ * agent (`identifyInstalledPackage`'s own doc comment already established
+ * this for the same reason) — the device, not the artifact, is the source of
+ * truth here, same as everywhere else in this file.
+ *
+ * Exported for testing: dumpsys's exact per-line shape (trailing flags after
+ * `granted=`) is the part most likely to drift across Android versions.
+ */
+export function parseUngrantedRuntimePermissions(dumpsysOutput: string): string[] {
+  const lines = dumpsysOutput.split(/\r?\n/);
+  const startIdx = lines.findIndex((l) => /runtime permissions:\s*$/i.test(l.trim()));
+  if (startIdx === -1) return [];
+
+  const permissions: string[] = [];
+  // A permission entry always looks like `name: granted=true|false[, ...]`;
+  // the first line that doesn't match ends the block, since dumpsys nests
+  // strictly by section rather than by an explicit terminator.
+  const entry = /^([\w.]+):\s*granted=(true|false)/;
+  for (let i = startIdx + 1; i < lines.length; i++) {
+    const match = lines[i].trim().match(entry);
+    if (!match) break;
+    const [, name, granted] = match;
+    if (granted === 'false') permissions.push(name);
+  }
+  return permissions;
+}
+
+/**
+ * Best-effort: grants every declared-but-ungranted runtime permission via
+ * `pm grant`.
+ *
+ * Never throws. This runs after a real, successful, verified install — an
+ * individual permission failing to grant (already handled elsewhere, or a
+ * device that refuses it for its own reasons) is a secondary enhancement not
+ * landing, not a reason to report the install itself as failed. Even being
+ * unable to read the permission list at all is swallowed the same way.
+ */
+export async function grantRuntimePermissions(
+  adbPath: string,
+  deviceUdid: string,
+  packageName: string,
+  runFn: Runner = run,
+): Promise<{ granted: string[]; failed: string[] }> {
+  const granted: string[] = [];
+  const failed: string[] = [];
+  try {
+    const { stdout } = await runFn(adbPath, ['-s', deviceUdid, 'shell', 'dumpsys', 'package', packageName], {
+      timeout: ADB_SHORT_TIMEOUT_MS,
+    });
+    for (const permission of parseUngrantedRuntimePermissions(stdout)) {
+      try {
+        await runFn(adbPath, ['-s', deviceUdid, 'shell', 'pm', 'grant', packageName, permission], {
+          timeout: ADB_SHORT_TIMEOUT_MS,
+        });
+        granted.push(permission);
+      } catch {
+        failed.push(permission);
+      }
+    }
+  } catch {
+    // Couldn't even read the permission list — nothing to grant. The install
+    // this follows already succeeded and stays that way.
+  }
+  return { granted, failed };
+}
+
+/**
  * Dedupes concurrent downloads of the same build.
  *
  * `agent.ts#startPendingInstalls` fires one `runInstall` per pending target
@@ -245,8 +322,30 @@ export function isCacheValid(buildId: string, sizeBytes: number | null, cacheDir
 }
 
 /**
+ * Whether a build's origin is worth the agent trying to fetch directly,
+ * skipping the hub as a byte proxy.
+ *
+ * Only a plain `http(s)://` URL qualifies. A `file://` source names a path on
+ * the *hub's* own disk — this agent has no way to read it, and treating it as
+ * fetchable would just fail every time before falling back anyway. Anything
+ * else (an empty/missing `artifactUrl`, a scheme this agent doesn't
+ * recognize) is the same "not attemptable" case.
+ */
+function isDirectlyFetchable(artifactUrl: string | null): artifactUrl is string {
+  return artifactUrl !== null && /^https?:\/\//i.test(artifactUrl);
+}
+
+/**
  * Returns a local path holding a verified copy of this build, downloading it
  * only if the cache doesn't already have one.
+ *
+ * Tries the build's original source directly first when one is reachable
+ * (`isDirectlyFetchable`) — the hub only orchestrates in that case, never
+ * proxying the transfer. Any failure on that path (network error, non-200,
+ * an origin this agent's network can't reach) falls back to the existing
+ * via-hub download rather than failing the install outright — the direct
+ * path is an optimization, not a requirement; a build only reachable through
+ * the hub must keep working exactly as it did before this existed.
  */
 export async function ensureCachedBuild(
   hub: HubClient,
@@ -254,6 +353,7 @@ export async function ensureCachedBuild(
   sizeBytes: number | null,
   onProgress: (done: number, total: number | null) => void,
   cacheDir: string = CACHE_DIR,
+  artifactUrl: string | null = null,
 ): Promise<string> {
   const dest = cachedBuildPath(buildId, cacheDir);
   if (isCacheValid(buildId, sizeBytes, cacheDir)) {
@@ -276,7 +376,17 @@ export async function ensureCachedBuild(
   }
 
   fs.mkdirSync(cacheDir, { recursive: true });
-  const download = hub.downloadArtifact(buildId, dest, onProgress);
+  const download = (async () => {
+    if (isDirectlyFetchable(artifactUrl)) {
+      try {
+        await hub.downloadArtifactDirect(artifactUrl, dest, onProgress);
+        return;
+      } catch {
+        // Optimization failed — fall through to the hub, which must still work.
+      }
+    }
+    await hub.downloadArtifact(buildId, dest, onProgress);
+  })();
   downloadsInFlight.set(buildId, download);
   try {
     await download;
@@ -305,7 +415,7 @@ export async function runInstall(
   pending: PendingInstall,
   adbPath = process.env.ADB_PATH ?? 'adb',
 ): Promise<void> {
-  const { installRunId, deviceUdid, buildId, platform, sizeBytes } = pending;
+  const { installRunId, deviceUdid, buildId, platform, sizeBytes, artifactUrl } = pending;
 
   if (platform === 'ios') {
     await hub.reportInstallProgress(installRunId, deviceUdid, {
@@ -323,8 +433,13 @@ export async function runInstall(
     // Prefer the size the hub told us over Content-Length: a proxy using
     // chunked encoding drops the header, and the hub always knows the size.
     // Also what makes the cache verifiable — see `isCacheValid`.
-    const destPath = await ensureCachedBuild(hub, buildId, sizeBytes, (done, total) =>
-      onDownload(done, total ?? sizeBytes),
+    const destPath = await ensureCachedBuild(
+      hub,
+      buildId,
+      sizeBytes,
+      (done, total) => onDownload(done, total ?? sizeBytes),
+      undefined,
+      artifactUrl,
     );
 
     const localSize = fs.statSync(destPath).size;
@@ -361,6 +476,16 @@ export async function runInstall(
       await listInstalledPackages(adbPath, deviceUdid),
     );
     if (installedPackage) await verifyPackageInstalled(adbPath, deviceUdid, installedPackage);
+
+    // Org opt-in (off by default) and Android-only, and only meaningful once
+    // a package has been positively identified — a same-version reinstall
+    // that left nothing to attribute has nothing here to grant permissions
+    // to either. Never fails the install: see grantRuntimePermissions's own
+    // doc comment.
+    if (pending.grantPermissions && installedPackage) {
+      await hub.reportInstallProgress(installRunId, deviceUdid, { status: 'granting-permissions', progress: 100 });
+      await grantRuntimePermissions(adbPath, deviceUdid, installedPackage);
+    }
 
     await hub.reportInstallProgress(installRunId, deviceUdid, {
       status: 'done',

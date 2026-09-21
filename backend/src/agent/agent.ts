@@ -1,8 +1,9 @@
 import { DeviceDiscovery, DiscoveredDevice } from './device-discovery';
-import { HubClient, HostCapabilities, PendingInstall, PendingUninstall } from './hub-client';
+import { HubClient, HostCapabilities, PendingInstall, PendingUninstall, PendingAppiumRequest } from './hub-client';
 import { runInstall } from './installer';
 import { runUninstall } from './uninstaller';
 import { collectDiagnostics } from './diagnostics';
+import { ensureLocalAppiumServer, assertDriverInstalled } from './appium-runner';
 
 export interface AgentOptions {
   machineId: string;
@@ -13,6 +14,9 @@ export interface AgentOptions {
   pollIntervalMs: number;
   discovery: DeviceDiscovery;
   hub: HubClient;
+  /** Only exercised when the hub's appium.remoteEnabled is on — see appium-runner.ts. */
+  appiumHost: string;
+  appiumBasePort: number;
   log?: (level: 'info' | 'warn' | 'error', msg: string) => void;
 }
 
@@ -43,6 +47,10 @@ export class DeviceAgent {
   // key spaces (`installRunId:udid` vs `uninstallRunId:udid`) are otherwise
   // indistinguishable and a collision would silently drop a real re-poll.
   private readonly inFlightUninstalls = new Set<string>();
+  // Same guard, same reason, for Appium requests — a device whose server is
+  // still starting must not have a second start attempt fired at it on the
+  // next heartbeat before the first one resolves.
+  private readonly inFlightAppiumRequests = new Set<string>();
 
   constructor(private readonly opts: AgentOptions) {}
 
@@ -56,7 +64,7 @@ export class DeviceAgent {
 
     // Heartbeat first: a host with zero devices must still show as online,
     // otherwise an empty lab looks like a dead agent.
-    const { pendingInstalls, pendingUninstalls } = await this.opts.hub.heartbeat({
+    const { pendingInstalls, pendingUninstalls, pendingAppiumRequests } = await this.opts.hub.heartbeat({
       machineId: this.opts.machineId,
       hostname: this.opts.hostname,
       os: this.opts.os,
@@ -66,6 +74,7 @@ export class DeviceAgent {
     });
     this.startPendingInstalls(pendingInstalls);
     this.startPendingUninstalls(pendingUninstalls);
+    this.startPendingAppiumRequests(pendingAppiumRequests);
 
     const { upserted, markedOffline } = await this.opts.hub.syncDevices(this.opts.machineId, devices);
     return { devices, upserted, markedOffline };
@@ -102,6 +111,35 @@ export class DeviceAgent {
           this.log('error', `uninstall ${key} failed: ${err instanceof Error ? err.message : String(err)}`);
         })
         .finally(() => this.inFlightUninstalls.delete(key));
+    }
+  }
+
+  /**
+   * Same not-awaited, in-flight-guarded shape as installs/uninstalls above.
+   * Starts (or adopts) this agent's own Appium server for the device, then
+   * reports the endpoint back — the reply half of the heartbeat relay
+   * `appium.service.ts#ensureRemoteAppiumServer` waits on hub-side.
+   */
+  private startPendingAppiumRequests(pendingAppiumRequests: PendingAppiumRequest[]): void {
+    for (const pending of pendingAppiumRequests) {
+      if (this.inFlightAppiumRequests.has(pending.deviceUdid)) continue;
+      this.inFlightAppiumRequests.add(pending.deviceUdid);
+
+      void (async () => {
+        await assertDriverInstalled(pending.platform);
+        const endpoint = await ensureLocalAppiumServer(pending.deviceUdid, {
+          host: this.opts.appiumHost,
+          basePort: this.opts.appiumBasePort,
+        });
+        await this.opts.hub.reportAppiumReady(this.opts.machineId, pending.deviceUdid, endpoint.host, endpoint.port);
+      })()
+        .catch((err: unknown) => {
+          this.log(
+            'error',
+            `appium request for ${pending.deviceUdid} failed: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        })
+        .finally(() => this.inFlightAppiumRequests.delete(pending.deviceUdid));
     }
   }
 

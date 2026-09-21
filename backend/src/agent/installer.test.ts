@@ -1,8 +1,16 @@
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { identifyInstalledPackage, parsePackageList, cachedBuildPath, isCacheValid, ensureCachedBuild } from './installer';
+import {
+  identifyInstalledPackage,
+  parsePackageList,
+  cachedBuildPath,
+  isCacheValid,
+  ensureCachedBuild,
+  parseUngrantedRuntimePermissions,
+  grantRuntimePermissions,
+} from './installer';
 import type { HubClient } from './hub-client';
 
 /**
@@ -96,6 +104,125 @@ describe('identifyInstalledPackage', () => {
     // listInstalledPackages yields an empty map when adb fails; that must read
     // as unverified rather than as a change.
     expect(identifyInstalledPackage(new Map(), new Map())).toBeNull();
+  });
+});
+
+/**
+ * Parses `dumpsys package`'s "runtime permissions:" block — the one dumpsys
+ * already separates from normal/signature permissions, which is exactly the
+ * subset `pm grant` can act on. Not parsed from the APK via `aapt`: not
+ * guaranteed present on this agent, same reasoning as `identifyInstalledPackage`.
+ */
+describe('parseUngrantedRuntimePermissions', () => {
+  it('extracts only the ungranted permissions from a real-shaped dumpsys block', () => {
+    const dumpsys = [
+      'Packages:',
+      '  Package [com.wdiodemoapp] (abcdef):',
+      '    requested permissions:',
+      '      android.permission.CAMERA',
+      '      android.permission.RECORD_AUDIO',
+      '      android.permission.INTERNET',
+      '    install permissions:',
+      '      android.permission.INTERNET: granted=true',
+      '    runtime permissions:',
+      '      android.permission.CAMERA: granted=false',
+      '      android.permission.RECORD_AUDIO: granted=true',
+    ].join('\n');
+
+    expect(parseUngrantedRuntimePermissions(dumpsys)).toEqual(['android.permission.CAMERA']);
+  });
+
+  it('tolerates trailing flags after granted=', () => {
+    // Real dumpsys output often appends flags like `, flags=[ USER_SENSITIVE_WHEN_GRANTED ]`.
+    const dumpsys = ['runtime permissions:', '  android.permission.CAMERA: granted=false, flags=[ RESTRICTED ]'].join(
+      '\n',
+    );
+    expect(parseUngrantedRuntimePermissions(dumpsys)).toEqual(['android.permission.CAMERA']);
+  });
+
+  it('returns nothing when there is no runtime permissions block at all', () => {
+    // Some packages declare no dangerous permissions — dumpsys omits the
+    // section entirely rather than printing it empty.
+    expect(parseUngrantedRuntimePermissions('Packages:\n  Package [com.example] (abc):\n')).toEqual([]);
+  });
+
+  it('returns nothing when every runtime permission is already granted', () => {
+    const dumpsys = ['runtime permissions:', '  android.permission.CAMERA: granted=true'].join('\n');
+    expect(parseUngrantedRuntimePermissions(dumpsys)).toEqual([]);
+  });
+
+  it('stops at the first non-permission line, not just end of output', () => {
+    const dumpsys = [
+      'runtime permissions:',
+      '  android.permission.CAMERA: granted=false',
+      '  User 0:',
+      '    some unrelated per-user block',
+    ].join('\n');
+    expect(parseUngrantedRuntimePermissions(dumpsys)).toEqual(['android.permission.CAMERA']);
+  });
+});
+
+/**
+ * Best-effort permission granting — must never let one failed grant (or a
+ * completely unreadable permission list) turn into a failed install, since
+ * this always runs after a real, successful, verified install has already
+ * happened. `runFn` is injected so this never has to mock `child_process`
+ * itself (real `execFile` relies on a `util.promisify.custom` symbol a plain
+ * mock wouldn't carry, which would silently break the `{stdout}` shape every
+ * other function in this file also depends on).
+ */
+describe('grantRuntimePermissions', () => {
+  it('grants every ungranted runtime permission and reports it', async () => {
+    const dumpsys = ['runtime permissions:', '  android.permission.CAMERA: granted=false'].join('\n');
+    const runFn = vi
+      .fn()
+      .mockResolvedValueOnce({ stdout: dumpsys, stderr: '' }) // dumpsys query
+      .mockResolvedValueOnce({ stdout: '', stderr: '' }); // pm grant
+
+    const result = await grantRuntimePermissions('adb', 'd1', 'com.wdiodemoapp', runFn);
+
+    expect(result).toEqual({ granted: ['android.permission.CAMERA'], failed: [] });
+    expect(runFn).toHaveBeenLastCalledWith(
+      'adb',
+      ['-s', 'd1', 'shell', 'pm', 'grant', 'com.wdiodemoapp', 'android.permission.CAMERA'],
+      expect.anything(),
+    );
+  });
+
+  it('records one permission failing to grant without stopping the rest', async () => {
+    const dumpsys = [
+      'runtime permissions:',
+      '  android.permission.CAMERA: granted=false',
+      '  android.permission.RECORD_AUDIO: granted=false',
+    ].join('\n');
+    const runFn = vi
+      .fn()
+      .mockResolvedValueOnce({ stdout: dumpsys, stderr: '' })
+      .mockRejectedValueOnce(new Error('SecurityException'))
+      .mockResolvedValueOnce({ stdout: '', stderr: '' });
+
+    const result = await grantRuntimePermissions('adb', 'd1', 'com.wdiodemoapp', runFn);
+
+    expect(result.granted).toEqual(['android.permission.RECORD_AUDIO']);
+    expect(result.failed).toEqual(['android.permission.CAMERA']);
+  });
+
+  it('never throws when the permission list itself cannot be read', async () => {
+    const runFn = vi.fn().mockRejectedValue(new Error('device offline'));
+
+    await expect(grantRuntimePermissions('adb', 'd1', 'com.wdiodemoapp', runFn)).resolves.toEqual({
+      granted: [],
+      failed: [],
+    });
+  });
+
+  it('does nothing when there is nothing ungranted', async () => {
+    const runFn = vi.fn().mockResolvedValue({ stdout: 'runtime permissions:\n  android.permission.CAMERA: granted=true', stderr: '' });
+
+    const result = await grantRuntimePermissions('adb', 'd1', 'com.wdiodemoapp', runFn);
+
+    expect(result).toEqual({ granted: [], failed: [] });
+    expect(runFn).toHaveBeenCalledTimes(1); // only the dumpsys query, no grant attempted
   });
 });
 
@@ -200,5 +327,67 @@ describe('build cache (cachedBuildPath / isCacheValid / ensureCachedBuild)', () 
     await Promise.all([first, second]);
 
     expect(calls).toEqual(['b1']); // only one real download, not two
+  });
+
+  it('fetches directly from the build origin when one is given, skipping the hub entirely', async () => {
+    const dir = freshCacheDir();
+    const viaHubCalls: string[] = [];
+    const directCalls: string[] = [];
+    const bytes = Buffer.alloc(40, 3);
+    const hub = {
+      downloadArtifact: async (buildId: string) => {
+        viaHubCalls.push(buildId);
+      },
+      downloadArtifactDirect: async (originUrl: string, destPath: string) => {
+        directCalls.push(originUrl);
+        fs.writeFileSync(destPath, bytes);
+      },
+    } as unknown as HubClient;
+
+    const dest = await ensureCachedBuild(hub, 'b1', 40, () => {}, dir, 'https://origin.example/app.apk');
+
+    expect(directCalls).toEqual(['https://origin.example/app.apk']);
+    expect(viaHubCalls).toEqual([]);
+    expect(fs.readFileSync(dest)).toEqual(bytes);
+  });
+
+  it('falls back to the via-hub download when the direct fetch fails', async () => {
+    const dir = freshCacheDir();
+    const viaHubCalls: string[] = [];
+    const bytes = Buffer.alloc(40, 4);
+    const hub = {
+      downloadArtifact: async (buildId: string, destPath: string) => {
+        viaHubCalls.push(buildId);
+        fs.writeFileSync(destPath, bytes);
+      },
+      downloadArtifactDirect: async () => {
+        throw new Error('origin unreachable from this agent');
+      },
+    } as unknown as HubClient;
+
+    const dest = await ensureCachedBuild(hub, 'b1', 40, () => {}, dir, 'https://origin.example/app.apk');
+
+    expect(viaHubCalls).toEqual(['b1']);
+    expect(fs.readFileSync(dest)).toEqual(bytes);
+  });
+
+  it('never attempts a direct fetch for a file:// origin — that path is on the hub, not this agent', async () => {
+    const dir = freshCacheDir();
+    const viaHubCalls: string[] = [];
+    const directCalls: string[] = [];
+    const hub = {
+      downloadArtifact: async (buildId: string, destPath: string) => {
+        viaHubCalls.push(buildId);
+        fs.writeFileSync(destPath, Buffer.alloc(40));
+      },
+      downloadArtifactDirect: async (originUrl: string) => {
+        directCalls.push(originUrl);
+      },
+    } as unknown as HubClient;
+
+    await ensureCachedBuild(hub, 'b1', 40, () => {}, dir, 'file:///C:/hub-builds/b1.apk');
+
+    expect(directCalls).toEqual([]);
+    expect(viaHubCalls).toEqual(['b1']);
   });
 });

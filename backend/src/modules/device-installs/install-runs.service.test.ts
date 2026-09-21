@@ -113,14 +113,58 @@ describe('getPendingInstallsForMachine', () => {
     // has an honest denominator, even when the artifact response carries no
     // Content-Length (a proxy using chunked encoding drops it).
     vi.spyOn(Build, 'find').mockReturnValue({
-      select: vi.fn().mockResolvedValue([{ id: 'build-1', sizeBytes: 4242 }]),
+      select: vi.fn().mockResolvedValue([{ id: 'build-1', sizeBytes: 4242, artifactUrl: 'https://example.com/app.apk' }]),
     } as never);
 
     const pending = await getPendingInstallsForMachine('host-1');
 
     expect(pending).toEqual([
-      { installRunId: 'run-1', deviceUdid: 'd1', buildId: 'build-1', platform: 'android', sizeBytes: 4242 },
+      {
+        installRunId: 'run-1',
+        deviceUdid: 'd1',
+        buildId: 'build-1',
+        platform: 'android',
+        sizeBytes: 4242,
+        artifactUrl: 'https://example.com/app.apk',
+        grantPermissions: false,
+      },
     ]);
+  });
+
+  it('carries the org-wide grantPermissionsOnInstall toggle onto every pending target', async () => {
+    vi.spyOn(InstallRun, 'find').mockResolvedValue([
+      {
+        id: 'run-1',
+        buildId: { toString: () => 'build-1' },
+        platform: 'android',
+        targets: [{ deviceUdid: 'd1', machineId: 'host-1', status: 'queued' }],
+      },
+    ] as never);
+    vi.spyOn(Build, 'find').mockReturnValue({
+      select: vi.fn().mockResolvedValue([{ id: 'build-1', sizeBytes: 4242, artifactUrl: '' }]),
+    } as never);
+
+    const [pending] = await getPendingInstallsForMachine('host-1', true);
+
+    expect(pending.grantPermissions).toBe(true);
+  });
+
+  it('sends a null artifactUrl when the build has none (e.g. a file:// source, or none reported)', async () => {
+    vi.spyOn(InstallRun, 'find').mockResolvedValue([
+      {
+        id: 'run-1',
+        buildId: { toString: () => 'build-1' },
+        platform: 'android',
+        targets: [{ deviceUdid: 'd1', machineId: 'host-1', status: 'queued' }],
+      },
+    ] as never);
+    vi.spyOn(Build, 'find').mockReturnValue({
+      select: vi.fn().mockResolvedValue([{ id: 'build-1', sizeBytes: 4242, artifactUrl: '' }]),
+    } as never);
+
+    const [pending] = await getPendingInstallsForMachine('host-1');
+
+    expect(pending.artifactUrl).toBeNull();
   });
 
   it('sends a null size rather than guessing when the build record has none', async () => {
@@ -152,7 +196,7 @@ describe('getActiveInstallCountForMachine', () => {
     expect(count).toBe(2);
     expect(countDocuments).toHaveBeenCalledWith({
       'targets.machineId': 'host-1',
-      'targets.status': { $in: ['queued', 'downloading', 'transferring', 'installing'] },
+      'targets.status': { $in: ['queued', 'downloading', 'transferring', 'installing', 'granting-permissions'] },
     });
   });
 });

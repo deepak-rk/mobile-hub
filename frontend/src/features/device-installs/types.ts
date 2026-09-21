@@ -1,7 +1,7 @@
 export interface InstallTarget {
   deviceUdid: string;
   machineId: string;
-  status: 'queued' | 'downloading' | 'transferring' | 'installing' | 'done' | 'error';
+  status: 'queued' | 'downloading' | 'transferring' | 'installing' | 'granting-permissions' | 'done' | 'error';
   progress: number;
   error: string | null;
   startedAt: string | null;

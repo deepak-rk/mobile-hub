@@ -15,7 +15,13 @@ import { ConflictError, ValidationError } from '../../common/errors/app-error';
  * mid-transfer device read as idle again — the lie `activeInstall` exists to
  * prevent.
  */
-const IN_FLIGHT_TARGET_STATUSES: InstallTargetStatus[] = ['queued', 'downloading', 'transferring', 'installing'];
+const IN_FLIGHT_TARGET_STATUSES: InstallTargetStatus[] = [
+  'queued',
+  'downloading',
+  'transferring',
+  'installing',
+  'granting-permissions',
+];
 
 export class BuildNotReadyError extends ConflictError {
   constructor(status: string) {
@@ -123,6 +129,22 @@ export interface PendingInstall {
    * header entirely rather than degrading when it is absent.
    */
   sizeBytes: number | null;
+  /**
+   * The build's original source, straight off `Build.artifactUrl` — whatever
+   * the `BuildProvider` that fetched it reported as `sourceUrl`. Passed
+   * through as-is, including a `file://` URL the agent has no way to read (a
+   * path on the *hub's* disk) — the agent decides what's actually attemptable
+   * from its own network, the hub doesn't filter. Lets the agent skip the hub
+   * as a byte proxy and fetch directly from the origin when that's reachable,
+   * falling back to the hub otherwise; see `hub-client.ts`'s
+   * `downloadArtifactDirect`.
+   */
+  artifactUrl: string | null;
+  /**
+   * Org-wide `devices.grantPermissionsOnInstall` toggle, carried per target
+   * since the agent has no access to org config itself. Android only.
+   */
+  grantPermissions: boolean;
 }
 
 /**
@@ -133,7 +155,15 @@ export interface PendingInstall {
  * start it a second time; see agent.ts's in-flight tracking for the other
  * half of that guard.
  */
-export async function getPendingInstallsForMachine(machineId: string): Promise<PendingInstall[]> {
+export async function getPendingInstallsForMachine(
+  machineId: string,
+  // Org-wide toggle (EffectiveConfig.devices.grantPermissionsOnInstall),
+  // threaded through per target rather than looked up by the agent itself —
+  // the agent has no access to org config, only whatever the hub tells it.
+  // Defaults false so every existing caller (and every test predating this
+  // parameter) keeps today's exact behaviour without passing it.
+  grantPermissionsOnInstall = false,
+): Promise<PendingInstall[]> {
   const runs = await InstallRun.find({ 'targets.machineId': machineId, 'targets.status': 'queued' });
   if (runs.length === 0) return [];
 
@@ -141,8 +171,9 @@ export async function getPendingInstallsForMachine(machineId: string): Promise<P
   // lookup per target — this runs on every agent heartbeat, so it must not
   // scale with the number of devices being installed to.
   const buildIds = [...new Set(runs.map((r) => r.buildId.toString()))];
-  const builds = await Build.find({ _id: { $in: buildIds } }).select('sizeBytes');
+  const builds = await Build.find({ _id: { $in: buildIds } }).select('sizeBytes artifactUrl');
   const sizeByBuildId = new Map(builds.map((b) => [b.id as string, b.sizeBytes]));
+  const artifactUrlByBuildId = new Map(builds.map((b) => [b.id as string, b.artifactUrl || null]));
 
   const pending: PendingInstall[] = [];
   for (const run of runs) {
@@ -155,6 +186,8 @@ export async function getPendingInstallsForMachine(machineId: string): Promise<P
           buildId,
           platform: run.platform,
           sizeBytes: sizeByBuildId.get(buildId) ?? null,
+          artifactUrl: artifactUrlByBuildId.get(buildId) ?? null,
+          grantPermissions: grantPermissionsOnInstall,
         });
       }
     }

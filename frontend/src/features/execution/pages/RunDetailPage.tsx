@@ -144,7 +144,7 @@ export function RunDetailPage() {
   // so a live view has nothing to show either way (and per the streaming
   // module's own opt-in-capture design, must not be started for one).
   const showLiveView = run ? run.status === 'preparing' || run.status === 'running' : false;
-  const { data: device } = useDevice(showLiveView ? run?.deviceUdid : undefined);
+  const { data: device } = useDevice(showLiveView ? run?.deviceUdid : undefined, run?.machineId);
 
   // Cancel is only meaningful while the run is non-terminal, and only for
   // roles the backend will actually accept (guidelines §10).

@@ -1,8 +1,29 @@
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
 import { EffectiveConfig } from '../../config/org-config.schema';
 import * as supervisor from '../../common/process-supervisor';
 import { ManagedProcess } from '../../common/process-supervisor';
 import { Device, IDevice } from '../devices/device.model';
 import { buildRunEnvironment } from './run-environment';
+
+/**
+ * Writes `--default-capabilities`' JSON to a temp file and returns its path,
+ * rather than passing the JSON inline as an argument — found live 2026-09-21:
+ * on Windows, `appium` resolves to a `.cmd` shim, which (since
+ * `process-supervisor.ts`'s own Node-version-driven fix requires `shell: true`
+ * for any resolved `.cmd`/`.bat`) is now spawned through `cmd.exe`, whose own
+ * argument re-quoting strips the double quotes out of an inline JSON string —
+ * `{"appium:udid":"d1"}` arrived at Appium as `{appium:udid:d1}`, invalid on
+ * its face. Appium's CLI accepts a file path here as well as an inline
+ * string; a path has no characters cmd.exe's quoting can mangle, so this
+ * sidesteps the problem entirely rather than trying to out-escape it.
+ */
+function writeDefaultCapabilitiesFile(udid: string): string {
+  const file = path.join(os.tmpdir(), `mh-appium-caps-${udid.replace(/[^a-zA-Z0-9-]/g, '_')}.json`);
+  fs.writeFileSync(file, JSON.stringify({ 'appium:udid': udid }));
+  return file;
+}
 
 /**
  * Ensures an Appium server exists for a device, and tells a run where it is.
@@ -180,7 +201,7 @@ async function startServer(device: IDevice, endpoint: AppiumEndpoint): Promise<S
       // Only this device may be driven by this server, which is what makes
       // one-process-per-device a boundary rather than a convention.
       '--default-capabilities',
-      JSON.stringify({ 'appium:udid': device.udid }),
+      writeDefaultCapabilitiesFile(device.udid),
     ],
     cwd: process.cwd(),
     // The server spawns adb itself, so it needs the SDK root as much as the
@@ -230,6 +251,15 @@ async function startServer(device: IDevice, endpoint: AppiumEndpoint): Promise<S
  * after a backend restart failed against a server that was on its way out.
  */
 export async function ensureAppiumServer(device: IDevice, config: EffectiveConfig): Promise<AppiumEndpoint> {
+  // Devices are always agent-owned in this architecture — a hub-local spawn
+  // only actually works today because the dev agent happens to run on the
+  // same box as the hub, sharing its adb/USB access by accident, not by
+  // design. `remoteEnabled` is the opt-in switch to the *correct* path (the
+  // owning agent spawns its own Appium and the hub relays), left off by
+  // default so today's single-machine behavior is unchanged until proven —
+  // see docs/reference-review-2026-09-14/01-architecture-findings.md §1.3.
+  if (config.appium.remoteEnabled) return ensureRemoteAppiumServer(device, config);
+
   const port = await ensurePort(device, config);
   const host = config.appium.host;
   const endpoint: AppiumEndpoint = { host, port, baseUrl: `http://${host}:${port}` };
@@ -263,6 +293,96 @@ export async function ensureAppiumServer(device: IDevice, config: EffectiveConfi
         (outcome.detail ? `\nAppium said:\n${outcome.detail}` : '\nAppium produced no output before failing.'),
     );
   }
+}
+
+const REMOTE_REQUEST_TIMEOUT_MS = STARTUP_TIMEOUT_MS; // same startup budget the hub gives its own local spawn
+const REMOTE_POLL_MS = 1000;
+
+/**
+ * The remote counterpart to `ensureAppiumServer`'s hub-local path: instead of
+ * spawning Appium itself, the hub asks the device's *owning agent* to spawn
+ * (or adopt) its own local Appium server, and relays that endpoint to the
+ * caller once the agent reports it. This is what makes a device on a remote
+ * host actually testable — adb/xcrun need to run beside the device, and only
+ * the agent is ever beside it.
+ *
+ * The "ask" is a request recorded on the device record
+ * (`remoteAppiumRequestedAt`) — discovered by the agent on its own next
+ * heartbeat poll, same never-pushed-into shape already proven for installs
+ * and uninstalls — not a direct call into the agent, which this hub has no
+ * way to make (agents are never listening for inbound connections).
+ *
+ * An already-reported endpoint is health-checked before being trusted, not
+ * assumed live — the agent's server can die or restart between one run and
+ * the next the same way a hub-local one can (see `ensureAppiumServer`'s own
+ * doc comment for why "reported once" and "healthy now" are different
+ * claims). A stale one is cleared and re-requested rather than handed to a
+ * caller that would just fail against it.
+ */
+export async function ensureRemoteAppiumServer(device: IDevice, _config: EffectiveConfig): Promise<AppiumEndpoint> {
+  if (device.remoteAppium) {
+    const endpoint: AppiumEndpoint = {
+      host: device.remoteAppium.host,
+      port: device.remoteAppium.port,
+      baseUrl: `http://${device.remoteAppium.host}:${device.remoteAppium.port}`,
+    };
+    if (await isServerUp(endpoint)) return endpoint;
+    await Device.findByIdAndUpdate(device._id, { remoteAppium: null });
+  }
+
+  // Idempotent to set repeatedly — a run that arrives while another is
+  // already waiting just refreshes the timestamp, it doesn't fork a second
+  // request; the agent only ever reports one endpoint per device regardless
+  // of how many times this fired.
+  await Device.findByIdAndUpdate(device._id, { remoteAppiumRequestedAt: new Date() });
+
+  const deadline = Date.now() + REMOTE_REQUEST_TIMEOUT_MS;
+  while (Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, REMOTE_POLL_MS));
+    const fresh = await Device.findById(device._id).select('remoteAppium');
+    if (fresh?.remoteAppium) {
+      const { host, port } = fresh.remoteAppium;
+      return { host, port, baseUrl: `http://${host}:${port}` };
+    }
+  }
+
+  throw new AppiumUnavailableError(
+    `No agent reported an Appium endpoint for device ${device.udid} (machine ${device.machineId}) within ` +
+      `${REMOTE_REQUEST_TIMEOUT_MS / 1000}s. Check that an agent is running and polling for that machineId, ` +
+      `and that it can reach \`appium\` on its own PATH.`,
+  );
+}
+
+/**
+ * Devices on this machine the hub is waiting on an agent-hosted Appium
+ * endpoint for — carried on the agent's heartbeat response, the same
+ * never-pushed-into shape `pendingInstalls`/`pendingUninstalls` already use.
+ * Only devices actually missing a fresh endpoint are included, so a request
+ * the agent already satisfied on a previous poll naturally drops off without
+ * either side needing to track acknowledgement explicitly.
+ */
+export async function getPendingAppiumRequestsForMachine(
+  machineId: string,
+): Promise<{ deviceUdid: string; platform: 'android' | 'ios' }[]> {
+  const devices = await Device.find({
+    machineId,
+    remoteAppiumRequestedAt: { $ne: null },
+    remoteAppium: null,
+  }).select('udid platform');
+  return devices.map((d) => ({ deviceUdid: d.udid, platform: d.platform }));
+}
+
+/**
+ * Records the endpoint an agent reports after starting (or adopting) its own
+ * Appium server for one of its devices — the other half of the heartbeat
+ * relay `ensureRemoteAppiumServer` waits on. Clears the request marker in the
+ * same update so `getPendingAppiumRequestsForMachine` stops offering it.
+ */
+export async function reportRemoteAppiumReady(deviceUdid: string, machineId: string, host: string, port: number): Promise<void> {
+  await Device.findOneAndUpdate(
+    { udid: deviceUdid, machineId },
+    { remoteAppium: { host, port, readyAt: new Date() }, remoteAppiumRequestedAt: null },
+  );
 }
 
 /**

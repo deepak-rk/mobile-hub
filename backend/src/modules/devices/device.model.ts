@@ -22,6 +22,20 @@ export interface IDevice extends Omit<Document, 'model'> {
   isLocallyReachable: boolean;
   /** Port of this device's Appium server, assigned once and then stable. */
   appiumPort: number | null;
+  /**
+   * Set by the hub when it needs an agent-hosted Appium endpoint for this
+   * device (`appium.remoteEnabled`) and doesn't have a fresh one yet — the
+   * agent discovers this on its next heartbeat, starts (or adopts) its own
+   * local server, and reports the endpoint back, clearing this field.
+   * Null once satisfied or never requested.
+   */
+  remoteAppiumRequestedAt: Date | null;
+  /**
+   * The agent-reported endpoint for this device's Appium server, once it
+   * exists. Distinct from `appiumPort` (which is where the *hub* would spawn
+   * one for its own, hub-local path) — this is always agent-owned.
+   */
+  remoteAppium: { host: string; port: number; readyAt: Date } | null;
   lastSeenAt: Date;
   createdAt: Date;
   updatedAt: Date;
@@ -56,6 +70,15 @@ const deviceSchema = new Schema<IDevice>(
     },
     isLocallyReachable: { type: Boolean, default: true },
     appiumPort: { type: Number, default: null },
+    remoteAppiumRequestedAt: { type: Date, default: null },
+    remoteAppium: {
+      type: {
+        host: { type: String, required: true },
+        port: { type: Number, required: true },
+        readyAt: { type: Date, required: true },
+      },
+      default: null,
+    },
     lastSeenAt: { type: Date, default: Date.now },
   },
   { timestamps: true },

@@ -9,11 +9,23 @@ import { Schema, model, Document, Types } from 'mongoose';
  *                   to a TTY, so its output can't be parsed from a service).
  *  - `installing`   `pm install` on the device. Genuinely opaque — dexopt has
  *                   no byte ratio — so this phase shows a label, never a bar.
+ *  - `granting-permissions` best-effort `pm grant` of each dangerous/runtime
+ *                   permission the app declares — Android only, and only when
+ *                   `devices.grantPermissionsOnInstall` is on (off by
+ *                   default). Skipped entirely, not merely fast, when the org
+ *                   hasn't opted in — see `installer.ts`.
  *
  * The split exists so the opaque part is small and clearly labelled instead of
  * swallowing the two phases that can be measured.
  */
-export type InstallTargetStatus = 'queued' | 'downloading' | 'transferring' | 'installing' | 'done' | 'error';
+export type InstallTargetStatus =
+  | 'queued'
+  | 'downloading'
+  | 'transferring'
+  | 'installing'
+  | 'granting-permissions'
+  | 'done'
+  | 'error';
 
 export interface IInstallTarget {
   deviceUdid: string;
@@ -56,7 +68,11 @@ const installTargetSchema = new Schema<IInstallTarget>(
   {
     deviceUdid: { type: String, required: true },
     machineId: { type: String, required: true },
-    status: { type: String, enum: ['queued', 'downloading', 'transferring', 'installing', 'done', 'error'], default: 'queued' },
+    status: {
+      type: String,
+      enum: ['queued', 'downloading', 'transferring', 'installing', 'granting-permissions', 'done', 'error'],
+      default: 'queued',
+    },
     progress: { type: Number, default: 0 },
     error: { type: String, default: null },
     startedAt: { type: Date, default: null },

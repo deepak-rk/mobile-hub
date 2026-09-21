@@ -91,3 +91,48 @@ describe('HubClient.downloadArtifact', () => {
     expect(fs.existsSync(`${dest}.part`)).toBe(false);
   });
 });
+
+/**
+ * `downloadArtifactDirect` shares its integrity gate with `downloadArtifact`
+ * above (`streamToFileWithIntegrityGate`) — these tests exist to confirm that
+ * sharing actually holds, not to re-prove byte counting from scratch.
+ */
+describe('HubClient.downloadArtifactDirect', () => {
+  const dest = path.join(os.tmpdir(), `mh-artifact-direct-${Date.now()}.bin`);
+
+  afterEach(() => {
+    fs.rmSync(dest, { force: true });
+  });
+
+  it('fetches straight from the given origin URL, no Authorization header', async () => {
+    const body = Buffer.alloc(50, 9);
+    const fetchSpy = vi.fn().mockResolvedValue({
+      ok: true,
+      body: Readable.toWeb(Readable.from([body])),
+      headers: { get: (k: string) => (k.toLowerCase() === 'content-length' ? '50' : null) },
+    });
+    vi.stubGlobal('fetch', fetchSpy);
+
+    await new HubClient('http://hub', 'tok').downloadArtifactDirect('https://origin.example/app.apk', dest);
+
+    expect(fs.statSync(dest).size).toBe(50);
+    expect(fetchSpy).toHaveBeenCalledWith(
+      'https://origin.example/app.apk',
+      expect.objectContaining({ signal: expect.anything() as AbortSignal }),
+    );
+    // No agent token sent to an external origin — it isn't this hub.
+    const [, opts] = fetchSpy.mock.calls[0] as [string, RequestInit | undefined];
+    expect(opts?.headers).toBeUndefined();
+  });
+
+  it('rejects a truncated direct download the same way the via-hub path does', async () => {
+    mockArtifactResponse(Buffer.alloc(10, 1), { 'content-length': '100' });
+
+    await expect(
+      new HubClient('http://hub').downloadArtifactDirect('https://origin.example/app.apk', dest),
+    ).rejects.toThrow(/truncated/i);
+
+    expect(fs.existsSync(dest)).toBe(false);
+    expect(fs.existsSync(`${dest}.part`)).toBe(false);
+  });
+});

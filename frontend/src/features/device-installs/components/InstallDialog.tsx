@@ -108,6 +108,7 @@ export function InstallDialog({ build, onClose }: { build: Build | null; onClose
                 <p className={styles.phase}>{PHASE_LABELS[t.status]}…</p>
               ) : null}
               {t.status === 'installing' ? <p className={styles.phase}>Installing on device…</p> : null}
+              {t.status === 'granting-permissions' ? <p className={styles.phase}>Granting permissions…</p> : null}
               {t.status === 'error' && t.error ? <p className={styles.error}>{t.error}</p> : null}
             </li>
           ))}

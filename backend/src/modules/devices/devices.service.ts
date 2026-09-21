@@ -15,8 +15,18 @@ export async function listDevices(filters: {
   return Device.find(query).sort({ machineId: 1, name: 1 });
 }
 
-export async function getDevice(udid: string): Promise<IDevice | null> {
-  return Device.findOne({ udid });
+/**
+ * `machineId` is optional for backward compatibility, but genuinely
+ * disambiguating: the device model's own compound `{machineId, udid}` unique
+ * index exists because the same UDID can appear on more than one host
+ * (routine for emulators — `emulator-<port>` naming). Without it, this is a
+ * best-effort `{udid}`-only lookup that can silently match the wrong host's
+ * device the moment two hosts collide on a UDID — invisible with a single
+ * real host, which is why it went unnoticed until now (see docs/LESSONS.md,
+ * 2026-09-21). Callers that already know the machineId should always pass it.
+ */
+export async function getDevice(udid: string, machineId?: string): Promise<IDevice | null> {
+  return Device.findOne(machineId ? { udid, machineId } : { udid });
 }
 
 /**
@@ -71,15 +81,17 @@ export async function syncDevices(
   return { upserted: discovered.length, markedOffline: offlineResult.modifiedCount };
 }
 
+/** See `getDevice`'s doc comment — `machineId` is optional but genuinely disambiguating when supplied. */
 export async function acquireLock(
   udid: string,
   userId: string,
   sessionId: string,
   reason?: string,
+  machineId?: string,
 ): Promise<IDevice | null> {
   // Atomic: only succeeds if lock is currently null
   return Device.findOneAndUpdate(
-    { udid, lock: null },
+    machineId ? { udid, machineId, lock: null } : { udid, lock: null },
     {
       lock: { heldBy: userId, sessionId, acquiredAt: new Date(), reason },
       status: 'in-use',
@@ -88,8 +100,14 @@ export async function acquireLock(
   );
 }
 
-export async function releaseLock(udid: string, userId: string, isAdmin: boolean): Promise<IDevice | null> {
-  const filter = isAdmin ? { udid } : { udid, 'lock.heldBy': userId };
+export async function releaseLock(
+  udid: string,
+  userId: string,
+  isAdmin: boolean,
+  machineId?: string,
+): Promise<IDevice | null> {
+  const base = isAdmin ? { udid } : { udid, 'lock.heldBy': userId };
+  const filter = machineId ? { ...base, machineId } : base;
   return Device.findOneAndUpdate(filter, { lock: null, status: 'idle' }, { new: true });
 }
 
@@ -99,8 +117,14 @@ export async function releaseLock(udid: string, userId: string, isAdmin: boolean
  * survives the sweep below. Same owner-or-admin rule as `releaseLock`: the
  * two are the only ways a lock's lifecycle can be affected by its holder.
  */
-export async function renewLock(udid: string, userId: string, isAdmin: boolean): Promise<IDevice | null> {
-  const filter = isAdmin ? { udid, lock: { $ne: null } } : { udid, 'lock.heldBy': userId };
+export async function renewLock(
+  udid: string,
+  userId: string,
+  isAdmin: boolean,
+  machineId?: string,
+): Promise<IDevice | null> {
+  const base = isAdmin ? { udid, lock: { $ne: null } } : { udid, 'lock.heldBy': userId };
+  const filter = machineId ? { ...base, machineId } : base;
   return Device.findOneAndUpdate(filter, { 'lock.acquiredAt': new Date() }, { new: true });
 }
 

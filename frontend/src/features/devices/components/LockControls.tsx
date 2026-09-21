@@ -17,9 +17,9 @@ export function LockControls({ device }: { device: Device }) {
   const { user } = useAuth();
   const location = useLocation();
   const { show } = useToast();
-  const lock = useLockDevice(device.udid);
-  const unlock = useUnlockDevice(device.udid);
-  const renew = useRenewLock(device.udid);
+  const lock = useLockDevice(device.udid, device.machineId);
+  const unlock = useUnlockDevice(device.udid, device.machineId);
+  const renew = useRenewLock(device.udid, device.machineId);
   const [confirmForceUnlock, setConfirmForceUnlock] = useState(false);
 
   if (!user) {

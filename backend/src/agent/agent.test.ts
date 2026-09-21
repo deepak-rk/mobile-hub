@@ -6,7 +6,7 @@ import type { DeviceDiscovery } from './device-discovery';
 
 function fakeHub(overrides: Partial<HubClient> = {}) {
   return {
-    heartbeat: vi.fn().mockResolvedValue({ pendingInstalls: [], pendingUninstalls: [] }),
+    heartbeat: vi.fn().mockResolvedValue({ pendingInstalls: [], pendingUninstalls: [], pendingAppiumRequests: [] }),
     syncDevices: vi.fn().mockResolvedValue({ upserted: 0, markedOffline: 0 }),
     ...overrides,
   } as unknown as HubClient & { heartbeat: ReturnType<typeof vi.fn>; syncDevices: ReturnType<typeof vi.fn> };
@@ -22,6 +22,8 @@ function makeAgent(discovery: DeviceDiscovery, hub: ReturnType<typeof fakeHub>) 
     pollIntervalMs: 10_000,
     discovery,
     hub,
+    appiumHost: '127.0.0.1',
+    appiumBasePort: 4823,
     log: () => {}, // keep test output clean
   });
 }
@@ -109,6 +111,8 @@ describe('DeviceAgent.start', () => {
       pollIntervalMs: 5,
       discovery: new SyntheticDeviceDiscovery(),
       hub,
+      appiumHost: '127.0.0.1',
+      appiumBasePort: 4823,
       log: () => {},
     });
 

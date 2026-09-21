@@ -28,6 +28,7 @@ export type StatusKind =
   // device install target
   | 'transferring'
   | 'installing'
+  | 'granting-permissions'
   | 'done'
   | 'error'
   // host
@@ -83,6 +84,10 @@ export const statusMeta: Record<StatusKind, StatusMeta> = {
   // `installing` (dexopt), which is why they are separate statuses.
   transferring: { label: 'Copying to device', token: '--status-running', icon: icons.downloading, active: true },
   installing: { label: 'Installing', token: '--status-running', icon: icons.running, active: true },
+  // Org opt-in, off by default (`devices.grantPermissionsOnInstall`) — a
+  // distinct stage rather than folded into `installing`, so it's visible
+  // that this install did more than a plain `pm install -r`.
+  'granting-permissions': { label: 'Granting permissions', token: '--status-running', icon: icons.running, active: true },
   done: { label: 'Done', token: '--status-passed', icon: icons.passed },
   error: { label: 'Error', token: '--status-failed', icon: icons.failed },
 };

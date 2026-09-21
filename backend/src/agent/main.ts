@@ -20,6 +20,17 @@ const envSchema = z.object({
   AGENT_POLL_INTERVAL_MS: z.coerce.number().int().positive().default(10_000),
   AGENT_MAX_DEVICES: z.coerce.number().int().nonnegative().default(8),
   AGENT_DISCOVERY: z.string().optional(),
+  // Only used when the hub's `appium.remoteEnabled` is on (default off) —
+  // see appium-runner.ts. AGENT_APPIUM_HOST must be an address the *hub* can
+  // actually reach; 127.0.0.1 only makes sense when the hub and this agent
+  // are known to share a network namespace (e.g. one dev box), which is why
+  // it stays the default rather than something that looks production-ready
+  // but silently isn't for a genuinely separate machine.
+  AGENT_APPIUM_HOST: z.string().default('127.0.0.1'),
+  // Distinct from the hub's own default appium.basePort (4723) so the two
+  // can coexist on one machine without colliding — the shape this repo's own
+  // synthetic-second-agent validation relies on.
+  AGENT_APPIUM_BASE_PORT: z.coerce.number().int().positive().default(4823),
   // Preferred: a per-agent credential minted via POST /api/agent-credentials
   // (admin-only), scoped to this host's machineId and individually
   // revocable. Takes priority over AGENT_TOKEN below when both are set.
@@ -62,6 +73,8 @@ async function main(): Promise<void> {
     pollIntervalMs: env.AGENT_POLL_INTERVAL_MS,
     discovery,
     hub: new HubClient(env.HUB_URL, env.AGENT_CREDENTIAL_TOKEN ?? env.AGENT_TOKEN),
+    appiumHost: env.AGENT_APPIUM_HOST,
+    appiumBasePort: env.AGENT_APPIUM_BASE_PORT,
   });
 
   const shutdown = (signal: string) => {

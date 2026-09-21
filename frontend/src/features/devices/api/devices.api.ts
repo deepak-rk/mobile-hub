@@ -25,30 +25,37 @@ export function useDevices(filters: DeviceFilters = {}, options: { refetchInterv
   });
 }
 
-export function useDevice(udid: string | undefined) {
+export function useDevice(udid: string | undefined, machineId?: string) {
   return useQuery({
     queryKey: ['devices', udid],
-    queryFn: async () => (await api.get<Device>(`/devices/${udid}`)).data,
+    queryFn: async () => (await api.get<Device>(`/devices/${udid}`, { params: machineId ? { machineId } : undefined })).data,
     enabled: Boolean(udid),
   });
 }
 
-/** Acquire the device lock. Fails with 409 if someone already holds it. */
-export function useLockDevice(udid: string) {
+/**
+ * Acquire the device lock. Fails with 409 if someone already holds it.
+ *
+ * `machineId` disambiguates which host's device this is when the same UDID
+ * could exist on more than one (routine for emulators) — optional so an
+ * older caller keeps working, but every caller here has it on hand (the
+ * `Device` object already carries it), so there's no reason not to send it.
+ */
+export function useLockDevice(udid: string, machineId?: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (reason?: string) => (await api.post<Device>(`/devices/${udid}/lock`, { reason })).data,
+    mutationFn: async (reason?: string) => (await api.post<Device>(`/devices/${udid}/lock`, { reason, machineId })).data,
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ['devices'] });
     },
   });
 }
 
-/** Release the lock. The backend allows the holder, or any admin. */
-export function useUnlockDevice(udid: string) {
+/** Release the lock. The backend allows the holder, or any admin. See useLockDevice's note on `machineId`. */
+export function useUnlockDevice(udid: string, machineId?: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async () => (await api.post<Device>(`/devices/${udid}/unlock`)).data,
+    mutationFn: async () => (await api.post<Device>(`/devices/${udid}/unlock`, { machineId })).data,
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ['devices'] });
     },
@@ -57,12 +64,13 @@ export function useUnlockDevice(udid: string) {
 
 /**
  * Renews a held lock's TTL clock (resets `acquiredAt` to now) without
- * changing anything else about it. Same owner-or-admin rule as unlock.
+ * changing anything else about it. Same owner-or-admin rule as unlock, same
+ * `machineId` note as useLockDevice.
  */
-export function useRenewLock(udid: string) {
+export function useRenewLock(udid: string, machineId?: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async () => (await api.post<Device>(`/devices/${udid}/lock/renew`)).data,
+    mutationFn: async () => (await api.post<Device>(`/devices/${udid}/lock/renew`, { machineId })).data,
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ['devices'] });
     },

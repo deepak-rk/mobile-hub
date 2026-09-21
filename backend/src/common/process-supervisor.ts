@@ -58,11 +58,13 @@ export function describeOutcome(outcome: RunOutcome): string {
  * Resolves a bare command name to a real executable on Windows.
  *
  * Node's `spawn` without `shell: true` does not apply PATHEXT, so `npm` (a
- * `npm.cmd` shim) fails with ENOENT — confirmed live. `shell: true` "fixes"
- * that but breaks cancellation: the signal reaches the wrapping shell while
- * the real grandchild keeps running, which is why it was tried and reverted.
- * Resolving the extension explicitly keeps a direct parent/child relationship,
- * so tree-kill below still works.
+ * `npm.cmd` shim) fails with ENOENT — confirmed live. This resolves the real
+ * path so the caller knows exactly what it's spawning; `run()` below still
+ * has to pass `shell: true` for a resolved `.cmd`/`.bat` specifically, since
+ * recent Node versions refuse to spawn one directly at all (`EINVAL` — see
+ * `run()`'s own comment). Resolving the extension explicitly here, rather
+ * than leaning on `shell: true` alone, is what lets that decision be made
+ * per-extension instead of shelling out for every command.
  *
  * Returns the input unchanged on POSIX, when already extended, or when nothing
  * matches (letting spawn produce its own normal error).
@@ -166,7 +168,8 @@ export function run(opts: RunOptions): ManagedProcess {
     settle(outcome);
   };
 
-  const child = spawn(resolveExecutable(opts.command), opts.args, {
+  const resolved = resolveExecutable(opts.command);
+  const child = spawn(resolved, opts.args, {
     cwd: opts.cwd,
     env: opts.env,
     // Explicit stdio: an inherited/open stdin has left `adb` children hanging
@@ -175,6 +178,21 @@ export function run(opts: RunOptions): ManagedProcess {
     // POSIX: become a group leader so killTree can signal the whole group.
     // Windows has no groups; taskkill /T handles the tree instead.
     detached: process.platform !== 'win32',
+    // A `.cmd`/`.bat` resolved by resolveExecutable above cannot be spawned
+    // directly on Windows: recent Node versions reject it with `spawn EINVAL`
+    // rather than silently shelling out to it, closing a command-injection
+    // class the old implicit behavior allowed (confirmed live 2026-09-21 — a
+    // real `npm ci` install stage failed this way against a real Node 22
+    // install; `npm --version` reproduced the same EINVAL in isolation, and
+    // `shell: true` resolved it cleanly). Scoped to only these two extensions
+    // rather than every command, since a real `.exe` spawns fine as-is and
+    // gains nothing from the extra shell hop. `killTree`'s Windows path uses
+    // `taskkill /PID <pid> /T /F` — a tree-kill by PID, not a POSIX signal —
+    // so it still reaches the whole tree (cmd.exe -> npm.cmd -> node) through
+    // this shell hop the same as without it; the "shell breaks cancellation"
+    // constraint this file used to carry was a POSIX-signal concern that
+    // doesn't apply to Windows's tree-kill mechanism.
+    shell: process.platform === 'win32' && /\.(cmd|bat)$/i.test(resolved),
   });
 
   let cancelled = false;

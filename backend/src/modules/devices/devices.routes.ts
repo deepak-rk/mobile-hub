@@ -19,6 +19,12 @@ const syncBody = z.object({
   ),
 });
 
+// Optional on every device-scoped action below — see devices.service.ts's
+// getDevice() doc comment for why supplying it matters (the same UDID can
+// exist on two hosts) and why it stays optional (non-breaking: a caller that
+// doesn't have it yet keeps today's best-effort udid-only behavior).
+const machineIdBody = z.object({ machineId: z.string().min(1).optional() });
+
 export const devicesRoutes: FastifyPluginAsync = async (app) => {
   app.get('/', async (req) => {
     const { platform, status, machineId } = req.query as Record<string, string>;
@@ -50,16 +56,18 @@ export const devicesRoutes: FastifyPluginAsync = async (app) => {
 
   app.get('/:udid', async (req) => {
     const { udid } = req.params as { udid: string };
-    const device = await getDevice(udid);
+    const { machineId } = req.query as { machineId?: string };
+    const device = await getDevice(udid, machineId || undefined);
     if (!device) throw new NotFoundError('Device not found');
     return device;
   });
 
   app.post('/:udid/lock', { preHandler: app.authenticate }, async (req) => {
     const { udid } = req.params as { udid: string };
-    const { reason } = (req.body as { reason?: string }) ?? {};
+    const body = machineIdBody.extend({ reason: z.string().optional() }).safeParse(req.body ?? {});
+    if (!body.success) throw new ValidationError(body.error.message);
     const sessionId = `session-${Date.now()}`;
-    const device = await acquireLock(udid, req.user.sub, sessionId, reason);
+    const device = await acquireLock(udid, req.user.sub, sessionId, body.data.reason, body.data.machineId);
     if (!device) {
       throw new ConflictError('Device is already locked', 'DEVICE_LOCKED');
     }
@@ -72,8 +80,10 @@ export const devicesRoutes: FastifyPluginAsync = async (app) => {
   // has a real way to say "I'm still using this" once one does.
   app.post('/:udid/lock/renew', { preHandler: app.authenticate }, async (req) => {
     const { udid } = req.params as { udid: string };
+    const body = machineIdBody.safeParse(req.body ?? {});
+    if (!body.success) throw new ValidationError(body.error.message);
     const isAdmin = req.user.role === 'admin';
-    const device = await renewLock(udid, req.user.sub, isAdmin);
+    const device = await renewLock(udid, req.user.sub, isAdmin, body.data.machineId);
     if (!device) {
       throw new ForbiddenError('Cannot renew a lock you do not hold');
     }
@@ -82,8 +92,10 @@ export const devicesRoutes: FastifyPluginAsync = async (app) => {
 
   app.post('/:udid/unlock', { preHandler: app.authenticate }, async (req) => {
     const { udid } = req.params as { udid: string };
+    const body = machineIdBody.safeParse(req.body ?? {});
+    if (!body.success) throw new ValidationError(body.error.message);
     const isAdmin = req.user.role === 'admin';
-    const device = await releaseLock(udid, req.user.sub, isAdmin);
+    const device = await releaseLock(udid, req.user.sub, isAdmin, body.data.machineId);
     if (!device) {
       throw new ForbiddenError('Cannot release a lock you do not hold');
     }
