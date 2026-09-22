@@ -101,7 +101,28 @@ async function start(): Promise<void> {
   const address = await app.listen({ port: env.API_PORT, host: '0.0.0.0' });
   app.log.info(`Mobile Hub backend listening at ${address}`);
 
-  const staleHostInterval = setInterval(() => {
+  /**
+   * Runs a periodic task once now, then on its interval.
+   *
+   * `setInterval` alone only fires after a full period has elapsed, so any
+   * job whose interval is longer than this process's typical uptime never
+   * runs at all — every restart puts the first tick back a full period. That
+   * was real, not theoretical: daily analytics (hourly) and build GC (hourly)
+   * silently never ran in development, and weekly analytics (24h) would never
+   * run in any deployment that ships more than once a day. Found 2026-09-22
+   * because the analytics page read "recomputed hourly" above data that was
+   * 21 hours stale.
+   *
+   * The short sweeps (stale hosts, lock expiry, queue dispatch) were never
+   * affected — their periods are seconds — but they go through here too so
+   * there is one scheduling rule in this file rather than two.
+   */
+  function runNowAndEvery(task: () => void, intervalMs: number): ReturnType<typeof setInterval> {
+    task();
+    return setInterval(task, intervalMs);
+  }
+
+  const staleHostInterval = runNowAndEvery(() => {
     markStaleHostsOffline()
       .then(({ hosts, devices }) => {
         if (hosts > 0) {
@@ -116,7 +137,7 @@ async function start(): Promise<void> {
   // Reaps captures whose last viewer left more than the grace period ago.
   streamingService.startIdleSweeper((err) => app.log.error(err, 'Stream idle sweep failed'));
 
-  const analyticsInterval = setInterval(() => {
+  const analyticsInterval = runNowAndEvery(() => {
     computeDailyAggregates().catch((err: unknown) => {
       app.log.error(err, 'Failed to recompute daily analytics aggregates');
     });
@@ -124,7 +145,7 @@ async function start(): Promise<void> {
 
   // The current ISO week only changes as today's runs land in it, so a daily
   // cadence keeps it current without the hourly churn daily aggregates need.
-  const weeklyAnalyticsInterval = setInterval(() => {
+  const weeklyAnalyticsInterval = runNowAndEvery(() => {
     computeWeeklyAggregates().catch((err: unknown) => {
       app.log.error(err, 'Failed to recompute weekly analytics aggregates');
     });
@@ -136,7 +157,7 @@ async function start(): Promise<void> {
   // runtime (POST /api/config/reload), and an interval closing over the
   // original object would keep sweeping to a retention policy the operator
   // already changed — the exact stale-derivation trap docs/TODO.md flagged.
-  const buildGcInterval = setInterval(() => {
+  const buildGcInterval = runNowAndEvery(() => {
     runBuildGc(app.config)
       .then(({ purged, failures }) => {
         if (purged > 0) app.log.info(`Build GC purged ${purged} old build artifact(s)`);
@@ -150,7 +171,7 @@ async function start(): Promise<void> {
   // The *online* counterpart to markStaleHostsOffline above: releases a lock
   // whose holder crashed or walked away while the device kept heartbeating,
   // so it never went offline and that sweep never touched it.
-  const deviceLockSweepInterval = setInterval(() => {
+  const deviceLockSweepInterval = runNowAndEvery(() => {
     releaseExpiredLocks(app.config.devices.lockTtlMinutes)
       .then((released) => {
         if (released > 0) app.log.info(`Released ${released} expired device lock(s)`);
@@ -164,7 +185,7 @@ async function start(): Promise<void> {
   // triggerExecutionRun leaving a run `queued` instead of 409ing when its
   // device is busy. `app.config` is read fresh each tick (the getter/setter
   // decorator), so a config reload is honoured without restarting the sweep.
-  const queueDispatchInterval = setInterval(() => {
+  const queueDispatchInterval = runNowAndEvery(() => {
     dispatchQueuedRuns(app.config).catch((err: unknown) => {
       app.log.error(err, 'Queued-run dispatch failed');
     });
