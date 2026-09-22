@@ -123,7 +123,7 @@ describe('DeviceAgent.start', () => {
 
     await agent.start();
     await new Promise((r) => setTimeout(r, 60));
-    agent.stop();
+    await agent.stop();
 
     expect(hub.syncDevices.mock.calls.length).toBeGreaterThan(1);
   });

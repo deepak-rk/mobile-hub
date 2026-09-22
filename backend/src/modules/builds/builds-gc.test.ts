@@ -5,7 +5,7 @@ import * as path from 'path';
 import { Build } from './build.model';
 import { ExecutionRun } from '../execution/execution-run.model';
 import { env } from '../../config/env';
-import { runBuildGc, BUILD_GC_INTERVAL_MS } from './builds.service';
+import { runBuildGc, recoverOrphanedBuilds, BUILD_GC_INTERVAL_MS } from './builds.service';
 import { PLATFORM_DEFAULTS, EffectiveConfig } from '../../config/org-config.schema';
 
 /**
@@ -215,5 +215,49 @@ describe('runBuildGc', () => {
 
   it('exports an interval constant matching the other periodic jobs\' style', () => {
     expect(BUILD_GC_INTERVAL_MS).toBeGreaterThan(0);
+  });
+});
+
+/**
+ * Regression for a bug found 2026-09-22 that was purely a wiring omission:
+ * `recoverOrphanedBuilds` existed, was correct, and its own doc comment said
+ * "call once at server startup, before accepting traffic" — but nothing in
+ * the codebase ever called it. A restart mid-download therefore left the row
+ * at `downloading`, which holds the `one_inflight_fetch_per_version` partial
+ * unique index entry and permanently blocked every future fetch of that
+ * version. Verified live before the fix: repeated real fetch attempts kept
+ * returning the same wedged row with `downloadedBytes: 0` forever.
+ *
+ * The behavioural test below pins what the function does; `server.ts` calling
+ * it is what actually mattered, and is covered by the boot sequence itself.
+ */
+describe('recoverOrphanedBuilds', () => {
+  it('marks builds stuck mid-download corrupt and deletes their partial artifacts', async () => {
+    const stuck = fakeBuild({ id: 'stuck-1', status: 'downloading' });
+    const partial = writeArtifact('stuck-1', 'half a file');
+    vi.spyOn(Build, 'find').mockResolvedValue([stuck] as never);
+
+    const recovered = await recoverOrphanedBuilds();
+
+    expect(recovered).toBe(1);
+    // `corrupt`, not deleted: the record is the audit trail, and `corrupt`
+    // already means "not usable, re-fetching allowed" — which is what
+    // releases the unique-index entry that was blocking every retry.
+    expect(stuck.status).toBe('corrupt');
+    expect(stuck.save).toHaveBeenCalled();
+    expect(fs.existsSync(partial)).toBe(false);
+  });
+
+  it('covers validating too — that status is equally unreachable after a restart', async () => {
+    const stuck = fakeBuild({ id: 'stuck-2', status: 'validating' });
+    vi.spyOn(Build, 'find').mockResolvedValue([stuck] as never);
+
+    expect(await recoverOrphanedBuilds()).toBe(1);
+    expect(stuck.status).toBe('corrupt');
+  });
+
+  it('is a no-op when nothing was left mid-flight', async () => {
+    vi.spyOn(Build, 'find').mockResolvedValue([] as never);
+    expect(await recoverOrphanedBuilds()).toBe(0);
   });
 });

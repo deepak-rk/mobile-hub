@@ -3,7 +3,7 @@ import { HubClient, HostCapabilities, PendingInstall, PendingUninstall, PendingA
 import { runInstall } from './installer';
 import { runUninstall } from './uninstaller';
 import { collectDiagnostics } from './diagnostics';
-import { ensureLocalAppiumServer, assertDriverInstalled } from './appium-runner';
+import { ensureLocalAppiumServer, assertDriverInstalled, shutdownLocalAppiumServers } from './appium-runner';
 import { StreamRelay } from './stream-runner';
 
 export interface AgentOptions {
@@ -197,13 +197,21 @@ export class DeviceAgent {
     }
   }
 
-  stop(): void {
+  async stop(): Promise<void> {
     this.running = false;
     if (this.timer) clearTimeout(this.timer);
     this.timer = null;
     // Nothing here must outlive the process that owns it — a killed agent
     // must not leave adb/xcrun capturing for a hub that can no longer reach it.
     this.streamRelay.shutdown();
+    // The same rule, for the Appium servers this agent spawned. The helper
+    // existed and its own doc comment said "called on agent shutdown", but
+    // nothing called it (found 2026-09-22) — so every agent restart orphaned
+    // a live Appium process per device, each still holding its port and its
+    // connection to that device. Awaited, unlike the stream relay's
+    // synchronous teardown, because killing a server and confirming it
+    // actually exited is async.
+    await shutdownLocalAppiumServers();
     this.log('info', 'agent stopped');
   }
 }

@@ -16,7 +16,7 @@ import {
   ANALYTICS_RECOMPUTE_INTERVAL_MS,
   WEEKLY_RECOMPUTE_INTERVAL_MS,
 } from './modules/analytics/analytics.service';
-import { runBuildGc, BUILD_GC_INTERVAL_MS } from './modules/builds/builds.service';
+import { runBuildGc, recoverOrphanedBuilds, BUILD_GC_INTERVAL_MS } from './modules/builds/builds.service';
 import { releaseExpiredLocks, DEVICE_LOCK_SWEEP_INTERVAL_MS } from './modules/devices/devices.service';
 import { streamingService, recoverOrphanedStreamSessions } from './modules/streaming/streaming.service';
 import { shutdownAppiumServers } from './modules/execution/appium.service';
@@ -97,6 +97,19 @@ async function start(): Promise<void> {
   const staleStreams = await recoverOrphanedStreamSessions();
   if (staleStreams > 0) {
     app.log.warn(`Cleared ${staleStreams} stream session(s) left active by a previous restart`);
+  }
+
+  // And the same again for builds. `recoverOrphanedBuilds` existed, documented
+  // its own contract ("call once at server startup, before accepting
+  // traffic"), and was never actually called from anywhere — so a restart
+  // mid-download left the row at `downloading`, which holds the
+  // `one_inflight_fetch_per_version` index entry and permanently blocked
+  // every future fetch of that version. Verified 2026-09-22: repeated fetch
+  // attempts kept returning the same wedged row with downloadedBytes 0
+  // instead of ever downloading anything.
+  const staleBuilds = await recoverOrphanedBuilds();
+  if (staleBuilds > 0) {
+    app.log.warn(`Recovered ${staleBuilds} build(s) left mid-download by a previous restart`);
   }
 
   // Runs clean up their own workspace now, but nothing had cleared the backlog

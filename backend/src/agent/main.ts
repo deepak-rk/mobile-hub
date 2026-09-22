@@ -79,8 +79,15 @@ async function main(): Promise<void> {
 
   const shutdown = (signal: string) => {
     console.log(`${signal} received — stopping agent`);
-    agent.stop();
-    process.exit(0);
+    // Awaited before exiting: `stop()` now kills this agent's Appium servers,
+    // and exiting first would orphan the very processes it is there to reap.
+    // Failure still exits — a stuck teardown must not wedge the signal.
+    agent
+      .stop()
+      .catch((err: unknown) => {
+        console.error(`error during shutdown: ${err instanceof Error ? err.message : String(err)}`);
+      })
+      .finally(() => process.exit(0));
   };
   process.on('SIGTERM', () => shutdown('SIGTERM'));
   process.on('SIGINT', () => shutdown('SIGINT'));
