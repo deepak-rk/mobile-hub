@@ -52,6 +52,14 @@ export function MultiViewTile({ device, onRemove }: { device: Device; onRemove: 
           </div>
         )}
       </div>
+      {/* Which machine actually served this tile's capture — several tiles in
+          one grid can each come from a different host now that streaming has
+          capture-locality, so this is no longer implied by "the multi-view
+          page" the way it was when every tile was necessarily hub-local. */}
+      <span className={styles.host}>
+        <icons.host size={iconSize.dense} aria-hidden="true" />
+        {device.machineId}
+      </span>
     </div>
   );
 }

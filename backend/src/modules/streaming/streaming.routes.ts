@@ -4,7 +4,7 @@ import type { WebSocket } from 'ws';
 import type { JwtPayload } from 'fastify-auth-kit';
 import { getDevice } from '../devices/devices.service';
 import { StreamSession } from './stream-session.model';
-import { streamingService, StreamingError } from './streaming.service';
+import { streamingService, StreamingError, shouldDropFrameForBackpressure } from './streaming.service';
 import type { StreamProtocol } from './capture-source';
 import { NotFoundError } from '../../common/errors/app-error';
 
@@ -96,7 +96,13 @@ export const streamingRoutes: FastifyPluginAsync = async (app) => {
           isSimulator: device.connectionType === 'simulator',
           remoteEnabled: app.config.streaming.remoteEnabled,
           onFrame: (frame) => {
-            if (socket.readyState === socket.OPEN) socket.send(frame);
+            if (socket.readyState !== socket.OPEN) return;
+            // Skip, don't queue — see shouldDropFrameForBackpressure's doc
+            // comment. The next frame that fits is still the newest one
+            // available, since nothing is buffered here beyond `ws`'s own
+            // send queue.
+            if (shouldDropFrameForBackpressure(socket.bufferedAmount)) return;
+            socket.send(frame);
           },
           // Pushed once, right before teardown drops this viewer along with
           // everyone else's — without this a broken capture just looked like

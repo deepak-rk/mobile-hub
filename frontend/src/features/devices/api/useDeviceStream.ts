@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { buildSocketUrl, useObjectUrl, useResilientWebSocket } from 'use-resilient-websocket';
 import { TOKEN_STORAGE_KEY } from '@/services/api';
 
@@ -33,6 +33,17 @@ function readToken(): string | null {
   }
 }
 
+/** Tracks `document.visibilityState` — local to this hook since nothing else needs it yet. */
+function usePageVisible(): boolean {
+  const [visible, setVisible] = useState(() => document.visibilityState === 'visible');
+  useEffect(() => {
+    const onChange = () => setVisible(document.visibilityState === 'visible');
+    document.addEventListener('visibilitychange', onChange);
+    return () => document.removeEventListener('visibilitychange', onChange);
+  }, []);
+  return visible;
+}
+
 /**
  * Subscribes to a device's live view. Frames/segments arrive as binary WS
  * messages and are turned into object URLs via `useObjectUrl` (revokes the
@@ -64,10 +75,21 @@ export function useDeviceStream(udid: string | undefined, enabled: boolean, prot
   const [lastError, setLastError] = useState<string | null>(null);
   const retryKeyRef = useRef<string | null>(null);
   const frame = useObjectUrl();
+  const isPageVisible = usePageVisible();
 
   const token = enabled && udid ? readToken() : null;
+  // A backgrounded tab still burns capture/bandwidth/battery for a stream
+  // nobody is looking at — the existing zero-viewer idle grace only tears
+  // down a capture once *every* viewer is gone, so one forgotten background
+  // tab keeps it alive indefinitely. Gating only the socket (not `token`
+  // above, which drives the real "signed in?" check below) means going
+  // hidden closes this viewer's socket -> the backend's existing `detach()`
+  // -> the same idle-grace timer every other "last viewer left" case already
+  // goes through, reusing that teardown path instead of inventing a second
+  // one — and reports the honest 'idle' state (not a misleading
+  // 'unauthenticated') while paused.
   const url =
-    token && udid
+    token && udid && isPageVisible
       ? buildSocketUrl(`/api/devices/${udid}/stream`, {
           origin: import.meta.env.VITE_API_URL || undefined,
           query: { protocol, token },

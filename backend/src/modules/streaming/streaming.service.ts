@@ -24,6 +24,26 @@ export const IOS_SIMULATOR_STREAM_CAP = 8;
 export const IDLE_TEARDOWN_MS = 10 * 60 * 1000;
 export const IDLE_SWEEP_INTERVAL_MS = 60 * 1000;
 
+/**
+ * Newest-frame-wins backpressure threshold: a frame is skipped rather than
+ * queued once this many bytes are still waiting to reach a viewer. Without
+ * this, a viewer whose network can't keep up with the capture's frame rate
+ * builds an ever-growing backlog in the transport's own send buffer — every
+ * frame still arrives eventually, just later and later, until the picture is
+ * effectively playing back a lagging recording instead of a live view. A
+ * dropped frame is invisible: the next one that *does* fit under the
+ * threshold is always the newest available, and mjpeg/h264 frames are each
+ * independently decodable, so skipping one is never a corrupt picture, only
+ * a smaller one. Pulled out as its own pure function (rather than left
+ * inline in the WS route) specifically so it's unit-testable without a real
+ * socket.
+ */
+export const MAX_BUFFERED_FRAME_BYTES = 2 * 1024 * 1024;
+
+export function shouldDropFrameForBackpressure(bufferedAmount: number): boolean {
+  return bufferedAmount > MAX_BUFFERED_FRAME_BYTES;
+}
+
 export type FrameListener = (frame: Buffer) => void;
 /** Called once, right before the viewer's socket is about to stop receiving frames because the capture broke. */
 export type ErrorListener = (message: string) => void;

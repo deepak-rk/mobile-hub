@@ -3,8 +3,10 @@ import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 import {
   StreamingService,
   IDLE_TEARDOWN_MS,
+  MAX_BUFFERED_FRAME_BYTES,
   getActiveStreamCountForMachine,
   getDesiredStreamCapturesForMachine,
+  shouldDropFrameForBackpressure,
 } from './streaming.service';
 import { SyntheticCaptureSource } from './sources/synthetic.source';
 import { StreamSession } from './stream-session.model';
@@ -356,5 +358,20 @@ describe('capture errors', () => {
     await flaky.addViewer({ ...base, viewerId: 'v1', onFrame: () => {} }); // no onError passed
 
     expect(() => error('boom')).not.toThrow();
+  });
+});
+
+describe('shouldDropFrameForBackpressure', () => {
+  it('does not drop while under the threshold', () => {
+    expect(shouldDropFrameForBackpressure(0)).toBe(false);
+    expect(shouldDropFrameForBackpressure(MAX_BUFFERED_FRAME_BYTES - 1)).toBe(false);
+  });
+
+  it('does not drop exactly at the threshold — only strictly over', () => {
+    expect(shouldDropFrameForBackpressure(MAX_BUFFERED_FRAME_BYTES)).toBe(false);
+  });
+
+  it('drops once the buffered amount exceeds the threshold', () => {
+    expect(shouldDropFrameForBackpressure(MAX_BUFFERED_FRAME_BYTES + 1)).toBe(true);
   });
 });

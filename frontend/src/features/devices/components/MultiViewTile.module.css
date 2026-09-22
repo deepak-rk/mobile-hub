@@ -78,3 +78,14 @@
   color: var(--text-tertiary);
   font-size: var(--text-xs);
 }
+
+.host {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
