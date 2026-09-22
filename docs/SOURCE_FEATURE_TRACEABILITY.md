@@ -189,7 +189,7 @@ Sequenced by: *lies and safety gaps first, then unblocking chains, then features
 
 1. ~~**Byte progress, hub → agent.**~~ **DONE 2026-08-30.** Real byte counting, ~1s throttle, honest bar semantics. The lie the user actually saw.
 2. ~~**Install platform compatibility check.**~~ **DONE 2026-08-30.** `400 INCOMPATIBLE_DEVICE` before any run is created.
-3. **Byte progress, provider → hub** — **needs a decision first.** Requires backgrounding `POST /api/builds`, which breaks the sibling E2E's synchronous `status: 'ready'` assertion. See the Builds row above. Still the only genuinely open P0 item.
+3. ~~**Byte progress, provider → hub**~~ — **row was stale, corrected 2026-09-22.** This was already built weeks before this row was written (`51ace05`/`25733e4`) and was never actually blocked — see the Builds row above for the full correction. P0 is now fully closed; nothing here needs a decision.
 4. ~~**Concurrent-fetch guard.**~~ **Row corrected 2026-09-05 — was already done 2026-08-30**, same bundled commit as (5) below. Went unmarked because neither fix's commit message mentioned it.
 5. ~~**Cache key = package.json + lockfile + platform + Node.**~~ **Row corrected 2026-09-05 — was already done 2026-08-30.** Unit-tested 2026-09-05 (had zero tests despite its own doc comment saying otherwise).
 
