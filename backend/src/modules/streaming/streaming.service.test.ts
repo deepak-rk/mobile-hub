@@ -6,6 +6,7 @@ import {
   MAX_BUFFERED_FRAME_BYTES,
   getActiveStreamCountForMachine,
   getDesiredStreamCapturesForMachine,
+  recoverOrphanedStreamSessions,
   shouldDropFrameForBackpressure,
 } from './streaming.service';
 import { SyntheticCaptureSource } from './sources/synthetic.source';
@@ -314,6 +315,35 @@ describe('getActiveStreamCountForMachine', () => {
       machineId: 'host-1',
       captureStatus: { $in: ['starting', 'active'] },
     });
+  });
+});
+
+/**
+ * Regression for a real, compounding leak found 2026-09-22: a capture's
+ * liveness lives in process memory, but its `StreamSession` row outlives the
+ * process — and nothing reconciled the two at boot. Every restart while a
+ * capture was live left a row permanently claiming `active`, and those rows
+ * are exactly what `assertCapacity` counts against `ANDROID_STREAM_CAP`, so
+ * enough restarts would refuse every new stream on that host forever.
+ */
+describe('recoverOrphanedStreamSessions', () => {
+  it('clears every session still marked starting/active, since none can have survived the restart', async () => {
+    const updateMany = vi.spyOn(StreamSession, 'updateMany').mockResolvedValue({ modifiedCount: 3 } as never);
+
+    const cleared = await recoverOrphanedStreamSessions();
+
+    expect(cleared).toBe(3);
+    expect(updateMany).toHaveBeenCalledWith(
+      { captureStatus: { $in: ['starting', 'active'] } },
+      // Viewer bookkeeping is reset too — a stale row naming viewers that
+      // no longer exist is what made the leak visible in the first place.
+      { captureStatus: 'stopped', viewerCount: 0, viewerIds: [], capturePid: null },
+    );
+  });
+
+  it('reports zero when there was nothing stale to clear', async () => {
+    vi.spyOn(StreamSession, 'updateMany').mockResolvedValue({ modifiedCount: 0 } as never);
+    expect(await recoverOrphanedStreamSessions()).toBe(0);
   });
 });
 

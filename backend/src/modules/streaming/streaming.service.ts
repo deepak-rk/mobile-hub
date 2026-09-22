@@ -367,6 +367,34 @@ function resolveCaptureSource(): CaptureSource {
 }
 
 /**
+ * Marks every `starting`/`active` stream session stopped at boot.
+ *
+ * A capture's real liveness lives in `StreamingService`'s in-memory
+ * `captures` Map, which dies with the process — but the `StreamSession`
+ * record outlives it, and nothing reconciled the two. So every restart while
+ * a capture was live left a row permanently claiming `active`, with a viewer
+ * that no longer exists.
+ *
+ * That is not only a cosmetic wrong number on the hosts page: `assertCapacity`
+ * counts those rows against `ANDROID_STREAM_CAP` (default 3), so after three
+ * restarts-while-streaming a host could never start another capture again,
+ * with a message blaming load that was not there. Observed for real
+ * 2026-09-22 with a leftover row still naming a deleted user's viewer id.
+ *
+ * The counterpart to `recoverOrphanedRuns()` for execution, run from the same
+ * place at boot, for the same reason: this process cannot have inherited
+ * anyone else's child processes, so anything still marked live is stale by
+ * definition.
+ */
+export async function recoverOrphanedStreamSessions(): Promise<number> {
+  const { modifiedCount } = await StreamSession.updateMany(
+    { captureStatus: { $in: ['starting', 'active'] } },
+    { captureStatus: 'stopped', viewerCount: 0, viewerIds: [], capturePid: null },
+  );
+  return modifiedCount;
+}
+
+/**
  * Live captures on this machine, for host diagnostics — queries the durable
  * `StreamSession` record rather than `streamingService.activeCaptureCount`
  * (in-memory, whole-process, no machine filter), since diagnostics need a

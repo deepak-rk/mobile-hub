@@ -18,7 +18,7 @@ import {
 } from './modules/analytics/analytics.service';
 import { runBuildGc, BUILD_GC_INTERVAL_MS } from './modules/builds/builds.service';
 import { releaseExpiredLocks, DEVICE_LOCK_SWEEP_INTERVAL_MS } from './modules/devices/devices.service';
-import { streamingService } from './modules/streaming/streaming.service';
+import { streamingService, recoverOrphanedStreamSessions } from './modules/streaming/streaming.service';
 import { shutdownAppiumServers } from './modules/execution/appium.service';
 import { agentTokenIsConfigured } from './modules/agent-auth/agent-auth';
 import dynamicImport from './common/dynamic-import';
@@ -87,6 +87,16 @@ async function start(): Promise<void> {
   const recovered = await recoverOrphanedRuns(app.config.appium);
   if (recovered > 0) {
     app.log.warn(`Recovered ${recovered} execution run(s) left mid-flight by a previous restart`);
+  }
+
+  // Same reasoning as the runs above, for captures: a capture's liveness is
+  // in-process memory that died with the previous process, but its
+  // StreamSession row survived still claiming `active` — and those rows are
+  // what the per-host capture cap counts, so leaving them would eventually
+  // refuse every new stream on the host.
+  const staleStreams = await recoverOrphanedStreamSessions();
+  if (staleStreams > 0) {
+    app.log.warn(`Cleared ${staleStreams} stream session(s) left active by a previous restart`);
   }
 
   // Runs clean up their own workspace now, but nothing had cleared the backlog

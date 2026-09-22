@@ -13,6 +13,30 @@ const protocolQuery = z.object({
   token: z.string().optional(),
 });
 
+/**
+ * A WebSocket close reason must fit in **123 bytes** (RFC 6455); `ws` throws
+ * a `RangeError` past that rather than truncating.
+ *
+ * That throw is not survivable here: it happens inside this file's async
+ * socket handler, so it becomes an unhandled rejection and takes the whole
+ * backend process down. Observed for real 2026-09-22 — one viewer attaching
+ * to a device on a host already at its capture cap crashed the entire hub
+ * for every user, because the `ANDROID_CAPTURE_CAPACITY` message is ~170
+ * bytes and was passed to `close()` verbatim.
+ *
+ * Truncates by **bytes, not characters**: a `.slice(0, 120)` is not
+ * sufficient on its own, since 120 multi-byte UTF-8 characters (a non-Latin
+ * device name in an error message, say) still exceed 123 bytes. Cutting a
+ * multi-byte character in half would leave a replacement character, so any
+ * trailing one is dropped.
+ */
+export function safeCloseReason(text: string): string {
+  const MAX_CLOSE_REASON_BYTES = 123;
+  const bytes = Buffer.from(text, 'utf8');
+  if (bytes.length <= MAX_CLOSE_REASON_BYTES) return text;
+  return new TextDecoder('utf-8').decode(bytes.subarray(0, MAX_CLOSE_REASON_BYTES)).replace(/�+$/, '');
+}
+
 export const streamingRoutes: FastifyPluginAsync = async (app) => {
   app.get('/:udid/stream/status', async (req, reply) => {
     const { udid } = req.params as { udid: string };
@@ -113,7 +137,7 @@ export const streamingRoutes: FastifyPluginAsync = async (app) => {
           onError: (message) => {
             if (socket.readyState === socket.OPEN) {
               socket.send(JSON.stringify({ type: 'error', message }));
-              socket.close(1011, message.slice(0, 120));
+              socket.close(1011, safeCloseReason(message));
             }
           },
         });
@@ -138,12 +162,29 @@ export const streamingRoutes: FastifyPluginAsync = async (app) => {
         });
       } catch (err) {
         if (err instanceof StreamingError) {
-          socket.close(4013, err.message);
+          // The capacity messages are deliberately long and explain how to fix
+          // the situation — they must reach the user, but not verbatim as a
+          // close reason. The full text already went out as a JSON `error`
+          // frame above where one was sent; this is the protocol-limited echo.
+          socket.close(4013, safeCloseReason(err.message));
           return;
         }
         req.log.error(err, 'Failed to attach stream viewer');
         socket.close(1011, 'Failed to start stream');
       }
-    })();
+    })().catch((err: unknown) => {
+      // Last-resort net, same shape as triggerExecutionRun's: this IIFE is
+      // fire-and-forget, so anything escaping the try/catch above — including
+      // a throw from inside the catch block itself, which is exactly how the
+      // close-reason RangeError killed the process — becomes an unhandled
+      // rejection and terminates the backend for every user, not just this
+      // viewer. One socket must never be able to do that.
+      req.log.error(err, 'Unhandled error in stream socket handler');
+      try {
+        socket.close(1011, 'Failed to start stream');
+      } catch {
+        // The socket itself is the thing that failed; nothing left to do.
+      }
+    });
   });
 };
