@@ -28,6 +28,74 @@ function fakeDevice(appiumPort: number | null): IDevice {
   return { udid: 'd1', machineId: 'host-1', appiumPort } as unknown as IDevice;
 }
 
+describe('closeActiveSessions — remote-managed devices', () => {
+  const remoteConfig = {
+    appium: { enabled: true, host: '127.0.0.1', basePort: 4723, remoteEnabled: true },
+  } as EffectiveConfig;
+
+  function remoteDevice(): IDevice {
+    // The real shape on the remote path: appiumPort is NEVER assigned (that's
+    // the hub-local spawn's field), the agent-reported endpoint is the only
+    // place the real server lives.
+    return {
+      udid: 'd1',
+      machineId: 'host-1',
+      appiumPort: null,
+      remoteAppium: { host: '10.0.0.7', port: 4750, readyAt: new Date() },
+    } as unknown as IDevice;
+  }
+
+  /**
+   * Regression, found live 2026-09-22: this function built its endpoint from
+   * `config.appium.host` + `device.appiumPort` unconditionally — the
+   * *hub-local* pair. On the remote path `appiumPort` is null, so cleanup
+   * returned immediately and silently did nothing, leaking the exact
+   * orphaned WebDriver session this function exists to close.
+   */
+  it('targets the agent-reported endpoint, not the hub-local host/port', async () => {
+    const fetchSpy = vi.fn().mockImplementation((url: string, opts?: RequestInit) => {
+      if (url.endsWith('/status')) return Promise.resolve({ ok: true });
+      if (url.endsWith('/sessions')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ value: [{ id: 'remote-sess' }] }) });
+      }
+      if (opts?.method === 'DELETE') return Promise.resolve({ ok: true });
+      throw new Error(`unexpected request: ${url}`);
+    });
+    vi.stubGlobal('fetch', fetchSpy);
+
+    await closeActiveSessions(remoteDevice(), remoteConfig);
+
+    expect(fetchSpy).toHaveBeenCalledWith(
+      expect.stringContaining('http://10.0.0.7:4750'),
+      expect.anything() as RequestInit,
+    );
+    expect(fetchSpy).toHaveBeenCalledWith(
+      expect.stringContaining('/session/remote-sess'),
+      expect.objectContaining({ method: 'DELETE' }),
+    );
+    // Never touches the hub-local pair, which owns no server on this path.
+    expect(fetchSpy).not.toHaveBeenCalledWith(
+      expect.stringContaining('127.0.0.1:4723'),
+      expect.anything() as RequestInit,
+    );
+  });
+
+  it('falls back to the hub-local endpoint when remoteEnabled is off, even if a stale remoteAppium lingers', async () => {
+    const fetchSpy = vi.fn().mockResolvedValue({ ok: false });
+    vi.stubGlobal('fetch', fetchSpy);
+
+    await closeActiveSessions(
+      { ...remoteDevice(), appiumPort: 4723 } as unknown as IDevice,
+      config, // remoteEnabled absent/false
+    );
+
+    expect(fetchSpy).toHaveBeenCalledWith(
+      expect.stringContaining('127.0.0.1:4723'),
+      expect.anything() as RequestInit,
+    );
+  });
+});
+
 describe('closeActiveSessions', () => {
   it('does nothing when the device has never been assigned an Appium port', async () => {
     const fetchSpy = vi.fn();

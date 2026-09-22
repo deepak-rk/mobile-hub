@@ -53,6 +53,10 @@ function fakeRunDoc(overrides: Partial<Record<string, unknown>> = {}) {
     artifactsPath: path.join(artifactsDir, 'run-1'),
     logPath: path.join(artifactsDir, 'run-1', 'run.log'),
     deviceUdid: 'd1',
+    // Required on the real model, and load-bearing: every device/lock call
+    // this module makes scopes by it, since the same udid can exist on two
+    // hosts (device.model.ts's compound unique index exists for exactly that).
+    machineId: 'host-1',
     triggeredBy: 'user-1',
     ...overrides,
   };
@@ -265,7 +269,9 @@ describe('recoverOrphanedRuns', () => {
     );
     expect(execStage?.status).toBe('error');
     expect(execStage?.error).toBe('Backend restarted mid-run');
-    expect(releaseLock).toHaveBeenCalledWith('d1', 'user-1', true);
+    // machineId is passed through: releasing by udid alone could release a
+    // same-udid device on a different host (see fakeRunDoc's own note).
+    expect(releaseLock).toHaveBeenCalledWith('d1', 'user-1', true, 'host-1');
   });
 
   it('does nothing when no run is mid-flight', async () => {

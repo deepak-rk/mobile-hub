@@ -429,13 +429,30 @@ export async function reportRemoteAppiumReady(deviceUdid: string, machineId: str
  * the common case for an early cancel.
  */
 export async function closeActiveSessions(device: IDevice, config: EffectiveConfig): Promise<void> {
-  if (!device.appiumPort) return;
+  // Mirrors ensureAppiumServer's own branch: a remote-managed device's real
+  // server lives at device.remoteAppium, never at config.appium.host +
+  // device.appiumPort (that pair is specifically the hub-local spawn path -
+  // see device.model.ts's own doc comment on the two fields). Getting this
+  // wrong silently no-ops cleanup for every remote device, since
+  // device.appiumPort is never set on that path at all - found live
+  // 2026-09-22, the exact session-leak this function exists to prevent,
+  // just on the path that didn't exist when it was first written.
+  const endpoint: AppiumEndpoint | null =
+    config.appium.remoteEnabled && device.remoteAppium
+      ? {
+          host: device.remoteAppium.host,
+          port: device.remoteAppium.port,
+          baseUrl: `http://${device.remoteAppium.host}:${device.remoteAppium.port}`,
+        }
+      : device.appiumPort
+        ? {
+            host: config.appium.host,
+            port: device.appiumPort,
+            baseUrl: `http://${config.appium.host}:${device.appiumPort}`,
+          }
+        : null;
+  if (!endpoint) return;
 
-  const endpoint: AppiumEndpoint = {
-    host: config.appium.host,
-    port: device.appiumPort,
-    baseUrl: `http://${config.appium.host}:${device.appiumPort}`,
-  };
   const prefix = await resolveAppiumPrefix(endpoint.baseUrl);
   if (prefix === null) return;
 

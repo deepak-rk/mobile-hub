@@ -91,7 +91,7 @@ export async function triggerExecutionRun(
   // A best-effort read: a device that cannot be resolved leaves the fields
   // null rather than blocking the trigger, since the lock acquisition below
   // is what actually decides whether this run may proceed.
-  const device = await getDevice(input.deviceUdid).catch(() => null);
+  const device = await getDevice(input.deviceUdid, input.machineId).catch(() => null);
 
   const run = await ExecutionRun.create({
     _id: runId,
@@ -134,7 +134,13 @@ export async function triggerExecutionRun(
     logPath,
   });
 
-  const locked = await acquireLock(input.deviceUdid, input.triggeredBy, runId.toString(), `execution:${runId.toString()}`);
+  const locked = await acquireLock(
+    input.deviceUdid,
+    input.triggeredBy,
+    runId.toString(),
+    `execution:${runId.toString()}`,
+    input.machineId,
+  );
   if (!locked) {
     // The device is busy, not broken: leave the run `queued` (its create
     // default) rather than failing it. `dispatchQueuedRuns` — run on a timer
@@ -203,6 +209,7 @@ export async function dispatchQueuedRuns(config: EffectiveConfig): Promise<numbe
       candidate.triggeredBy,
       candidate.id as string,
       `execution:${candidate.id as string}`,
+      candidate.machineId,
     );
     if (!locked) continue; // still busy — leave it queued, try again next tick
 
@@ -210,7 +217,7 @@ export async function dispatchQueuedRuns(config: EffectiveConfig): Promise<numbe
     // between listing queued runs and winning this lock.
     const run = await ExecutionRun.findById(candidate._id);
     if (!run || run.status !== 'queued' || !run.commands) {
-      await releaseLock(candidate.deviceUdid, candidate.triggeredBy, true);
+      await releaseLock(candidate.deviceUdid, candidate.triggeredBy, true, candidate.machineId);
       continue;
     }
 
@@ -624,7 +631,7 @@ async function runExecution(
     // spun one up. Failing to get one is infrastructure, never a test result.
     if (appiumConfig?.enabled) {
       try {
-        const device = await getDevice(input.deviceUdid);
+        const device = await getDevice(input.deviceUdid, input.machineId);
         if (device) {
           // Cheap and up front: a missing driver otherwise surfaces only after
           // the runner has started and tried to open a session.
@@ -692,7 +699,7 @@ async function runExecution(
     // this run never got as far as reaching an Appium session for (e.g.
     // cancelled during `pulling`) has nothing to clean up here.
     if (appiumConfig?.enabled) {
-      const device = await getDevice(input.deviceUdid).catch(() => null);
+      const device = await getDevice(input.deviceUdid, input.machineId).catch(() => null);
       if (device) await closeActiveSessions(device, { appium: appiumConfig } as EffectiveConfig).catch(() => undefined);
     }
 
@@ -718,7 +725,7 @@ async function runExecution(
     }
     // isAdmin: true — a system-initiated release must succeed regardless of
     // ownership edge cases; this is cleanup, not a user-initiated unlock.
-    await releaseLock(input.deviceUdid, input.triggeredBy, true);
+    await releaseLock(input.deviceUdid, input.triggeredBy, true, input.machineId);
   }
 }
 
@@ -848,12 +855,12 @@ export async function recoverOrphanedRuns(appiumConfig?: EffectiveConfig['appium
     run.failureKind = 'infra';
     run.endedAt = new Date();
     await run.save();
-    await releaseLock(run.deviceUdid, run.triggeredBy, true);
+    await releaseLock(run.deviceUdid, run.triggeredBy, true, run.machineId);
     // Same reason as runExecution's own finally block: a backend restart kills
     // this process's runner children, but not a session left open inside a
     // device's long-lived, separately-running Appium server.
     if (appiumConfig?.enabled) {
-      const device = await getDevice(run.deviceUdid).catch(() => null);
+      const device = await getDevice(run.deviceUdid, run.machineId).catch(() => null);
       if (device) await closeActiveSessions(device, { appium: appiumConfig } as EffectiveConfig).catch(() => undefined);
     }
   }
