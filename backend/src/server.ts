@@ -147,9 +147,12 @@ async function start(): Promise<void> {
 
   const staleHostInterval = runNowAndEvery(() => {
     markStaleHostsOffline()
-      .then(({ hosts, devices }) => {
+      .then(({ hosts, devices, abandonedInstalls }) => {
         if (hosts > 0) {
-          app.log.warn(`${hosts} host(s) stopped heartbeating; took ${devices} device(s) offline with them`);
+          app.log.warn(
+            `${hosts} host(s) stopped heartbeating; took ${devices} device(s) offline with them` +
+              (abandonedInstalls > 0 ? `, and failed ${abandonedInstalls} install/uninstall target(s) they abandoned` : ''),
+          );
         }
       })
       .catch((err: unknown) => {

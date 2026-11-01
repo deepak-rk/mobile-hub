@@ -1,5 +1,7 @@
 import { Host, IHost } from './host.model';
 import { Device } from '../devices/device.model';
+import { failAbandonedInstallTargets } from '../device-installs/install-runs.service';
+import { failAbandonedUninstallTargets } from '../device-installs/uninstall-runs.service';
 
 const OFFLINE_AFTER_MS = 30_000; // mark offline after 30s of no heartbeat
 export const HOST_STALE_CHECK_INTERVAL_MS = 10_000; // how often markStaleHostsOffline should be polled
@@ -49,11 +51,15 @@ export async function getHost(machineId: string): Promise<IHost | null> {
  * host stops reporting a device: a lock on something unreachable can never be
  * released by its holder.
  */
-export async function markStaleHostsOffline(): Promise<{ hosts: number; devices: number }> {
+export async function markStaleHostsOffline(): Promise<{
+  hosts: number;
+  devices: number;
+  abandonedInstalls: number;
+}> {
   const cutoff = new Date(Date.now() - OFFLINE_AFTER_MS);
 
   const stale = await Host.find({ lastHeartbeatAt: { $lt: cutoff }, status: 'online' }).select('machineId');
-  if (stale.length === 0) return { hosts: 0, devices: 0 };
+  if (stale.length === 0) return { hosts: 0, devices: 0, abandonedInstalls: 0 };
 
   const machineIds = stale.map((h) => h.machineId);
 
@@ -63,5 +69,23 @@ export async function markStaleHostsOffline(): Promise<{ hosts: number; devices:
     { status: 'offline', isLocallyReachable: false, lock: null },
   );
 
-  return { hosts: hostResult.modifiedCount, devices: deviceResult.modifiedCount };
+  // The agent that was doing this host's installs/uninstalls is gone, so
+  // anything it had started is abandoned. It is never retried on its own:
+  // the agent only ever picks up `queued` targets, so one left at
+  // `transferring` sat in that status forever — no retry, no error, and the
+  // device kept reporting an active install while simultaneously being
+  // marked offline above. Deliberately scoped to hosts that genuinely
+  // stopped heartbeating rather than run at hub startup: these targets are
+  // the agent's work, not the hub's, so a hub restart must leave a still-live
+  // install alone.
+  const [installs, uninstalls] = await Promise.all([
+    failAbandonedInstallTargets(machineIds),
+    failAbandonedUninstallTargets(machineIds),
+  ]);
+
+  return {
+    hosts: hostResult.modifiedCount,
+    devices: deviceResult.modifiedCount,
+    abandonedInstalls: installs + uninstalls,
+  };
 }

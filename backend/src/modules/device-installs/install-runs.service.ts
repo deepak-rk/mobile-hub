@@ -218,6 +218,50 @@ export async function getActiveInstallUdids(): Promise<Set<string>> {
 }
 
 /**
+ * The started-but-not-finished statuses — everything in-flight except
+ * `queued`.
+ *
+ * `queued` is deliberately excluded: that target has not been picked up by
+ * any agent yet, so when the host comes back its agent will discover and run
+ * it normally (`getPendingInstallsForMachine` queries exactly `queued`).
+ * Failing it would turn a recoverable wait into a permanent error.
+ */
+const ABANDONED_ON_HOST_LOSS: InstallTargetStatus[] = IN_FLIGHT_TARGET_STATUSES.filter((s) => s !== 'queued');
+
+/**
+ * Fails install targets that an agent started and then disappeared mid-way.
+ *
+ * Only ever called for hosts that have genuinely stopped heartbeating (see
+ * `markStaleHostsOffline`) — **not** at hub startup, which would be wrong:
+ * these targets belong to the agent, not the hub, so a hub restart leaves
+ * them legitimately still running and failing them would both lie and
+ * invite a duplicate install.
+ *
+ * Without this they were stuck forever (found 2026-09-22): the agent only
+ * ever picks up `queued` targets, so one it abandoned at `transferring` was
+ * never retried and never failed — the install silently never finished, with
+ * no error anywhere, and `getActiveInstallUdids` kept reporting the device as
+ * installing, so it showed an "Installing" badge indefinitely while also
+ * being marked offline.
+ */
+export async function failAbandonedInstallTargets(machineIds: string[]): Promise<number> {
+  if (machineIds.length === 0) return 0;
+  const match = { machineId: { $in: machineIds }, status: { $in: ABANDONED_ON_HOST_LOSS } };
+  const result = await InstallRun.updateMany(
+    { targets: { $elemMatch: match } },
+    {
+      $set: {
+        'targets.$[t].status': 'error',
+        'targets.$[t].error': 'Host agent stopped responding mid-install',
+        'targets.$[t].endedAt': new Date(),
+      },
+    },
+    { arrayFilters: [{ 't.machineId': match.machineId, 't.status': match.status }] },
+  );
+  return result.modifiedCount;
+}
+
+/**
  * Install runs with at least one in-flight target on this machine, for host
  * diagnostics. Counts runs, not individual targets — good enough for "is
  * this host doing install work right now", not meant as a precise target tally.

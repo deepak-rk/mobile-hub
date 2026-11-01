@@ -110,6 +110,28 @@ export async function getActiveUninstallUdids(): Promise<Set<string>> {
   return udids;
 }
 
+/**
+ * The uninstall counterpart to `failAbandonedInstallTargets` — see that
+ * function for the full reasoning. `queued` is excluded for the same reason:
+ * the returning agent picks those up normally.
+ */
+export async function failAbandonedUninstallTargets(machineIds: string[]): Promise<number> {
+  if (machineIds.length === 0) return 0;
+  const match = { machineId: { $in: machineIds }, status: 'uninstalling' };
+  const result = await UninstallRun.updateMany(
+    { targets: { $elemMatch: match } },
+    {
+      $set: {
+        'targets.$[t].status': 'error',
+        'targets.$[t].error': 'Host agent stopped responding mid-uninstall',
+        'targets.$[t].endedAt': new Date(),
+      },
+    },
+    { arrayFilters: [{ 't.machineId': match.machineId, 't.status': match.status }] },
+  );
+  return result.modifiedCount;
+}
+
 /** Same shape as install-runs.service.ts's own getActiveInstallCountForMachine, for host diagnostics. */
 export async function getActiveUninstallCountForMachine(machineId: string): Promise<number> {
   return UninstallRun.countDocuments({
