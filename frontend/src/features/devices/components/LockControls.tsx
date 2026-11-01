@@ -14,7 +14,7 @@ import styles from './LockControls.module.css';
  * nobody clicks a button that can only 401.
  */
 export function LockControls({ device }: { device: Device }) {
-  const { user } = useAuth();
+  const { user, can } = useAuth();
   const location = useLocation();
   const { show } = useToast();
   const lock = useLockDevice(device.udid, device.machineId);
@@ -31,6 +31,15 @@ export function LockControls({ device }: { device: Device }) {
         to lock this device.
       </p>
     );
+  }
+
+  // This component's own rule, applied to the base lock action rather than
+  // only to force-unlock: a `viewer` is read-only, and holding a lock takes a
+  // device out of service for everyone (it blocks operators' execution runs).
+  // The backend gates these routes the same way — until 2026-09-23 neither
+  // side did, so a viewer could lock any device and renew it indefinitely.
+  if (!can('operator', 'admin')) {
+    return <p className={styles.signedOut}>Locking a device requires an operator or admin role.</p>;
   }
 
   const isOffline = device.status === 'offline' || device.status === 'unreachable';

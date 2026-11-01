@@ -62,7 +62,15 @@ export const devicesRoutes: FastifyPluginAsync = async (app) => {
     return device;
   });
 
-  app.post('/:udid/lock', { preHandler: app.authenticate }, async (req) => {
+  // operator/admin, not merely authenticated: holding a device lock takes it
+  // out of service for the whole lab — a queued execution run cannot start
+  // against a locked device — and the holder can renew it indefinitely. These
+  // three were the only human-facing mutating routes in the codebase guarded
+  // by `app.authenticate` alone (found 2026-09-23), which let a read-only
+  // `viewer` deny every operator access to any device. Every other action
+  // (trigger, cancel, install, uninstall, purge, stream-stop, recompute)
+  // already required a role.
+  app.post('/:udid/lock', { preHandler: app.requireRole('operator', 'admin') }, async (req) => {
     const { udid } = req.params as { udid: string };
     const body = machineIdBody.extend({ reason: z.string().optional() }).safeParse(req.body ?? {});
     if (!body.success) throw new ValidationError(body.error.message);
@@ -78,7 +86,7 @@ export const devicesRoutes: FastifyPluginAsync = async (app) => {
   // without changing anything else about it. Nothing calls this yet — no
   // frontend wiring in this pass — but the endpoint exists so a lock holder
   // has a real way to say "I'm still using this" once one does.
-  app.post('/:udid/lock/renew', { preHandler: app.authenticate }, async (req) => {
+  app.post('/:udid/lock/renew', { preHandler: app.requireRole('operator', 'admin') }, async (req) => {
     const { udid } = req.params as { udid: string };
     const body = machineIdBody.safeParse(req.body ?? {});
     if (!body.success) throw new ValidationError(body.error.message);
@@ -90,7 +98,13 @@ export const devicesRoutes: FastifyPluginAsync = async (app) => {
     return device;
   });
 
-  app.post('/:udid/unlock', { preHandler: app.authenticate }, async (req) => {
+  // Same gate as lock/renew above, for consistency: once only operators can
+  // acquire a lock, only operators can hold one. A lock a viewer acquired
+  // before this change still clears on its own via `releaseExpiredLocks`
+  // (devices.lockTtlMinutes), and an admin can force-unlock it at any time —
+  // so nothing becomes permanently stuck. The service layer's own
+  // owner-or-admin rule is unchanged and still applies on top of this.
+  app.post('/:udid/unlock', { preHandler: app.requireRole('operator', 'admin') }, async (req) => {
     const { udid } = req.params as { udid: string };
     const body = machineIdBody.safeParse(req.body ?? {});
     if (!body.success) throw new ValidationError(body.error.message);
