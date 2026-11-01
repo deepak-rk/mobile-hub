@@ -6,6 +6,12 @@ Newest first. See root `CLAUDE.md` § Self-review for when to add an entry.
 
 ---
 
+## 2026-09-23 (later)
+
+**An authorization gap that was invisible to every check except comparing routes against each other.** The three device-lock routes asked only `app.authenticate` — "are you signed in?" — with no role requirement, while all eleven other human-facing mutating routes required `requireRole(...)`. So a read-only `viewer` could lock any device and renew that lock indefinitely; a locked device cannot start a queued execution run, which makes it a denial-of-service available to the *least*-privileged role. The frontend had the identical gap, and `LockControls.tsx`'s own doc comment stated the rule it was violating ("actions are hidden rather than disabled when the caller can't perform them, so nobody clicks a button that can only 401") while checking only signed-in and admin-force-unlock, never the base action.
+
+Nothing local could have caught this: each file is internally consistent, both sides agree with each other, types pass, and the comment describes correct intent. It only appeared when every mutating route was listed next to its guard and the odd ones out were visibly three. **Rule now**: authorization is a property of the *set* of routes, not of any one route — audit it by enumerating every mutating endpoint with its guard in one table and looking for the outlier, not by reading handlers one at a time. And the related trap: **frontend and backend agreeing is not evidence either is right.** Both were wrong here in exactly the same way, which is the expected outcome when one was written from the other rather than from the policy. The test to write is the one that pins the *whole set* — the catch-all here fails any mutating device route left on authentication alone, which is the shape of the bug rather than one instance of it.
+
 ## 2026-09-23
 
 **The fifth instance of "in-flight state with no owner to finish it" — and the one where the obvious fix would have been a bug.** An agent that died mid-install left its target at `downloading`/`transferring`/`installing` permanently: `getPendingInstallsForMachine` hands the agent only `queued` targets, so a started-then-abandoned one was never re-picked-up, and no hub-side sweep ever failed it. The install never completed, never errored, and `getActiveInstallUdids` kept counting it — so the device displayed an "Installing" badge forever *while simultaneously being marked offline* by the stale-host sweep. Two contradictory facts about one device, both rendered.

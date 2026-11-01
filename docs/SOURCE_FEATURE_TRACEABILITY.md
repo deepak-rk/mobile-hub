@@ -169,6 +169,7 @@ The reviews were *right* about everything I could verify that wasn't stale — i
 | Capability | Disposition | Verified state |
 |---|---|---|
 | Lock TTL + renew, stale-host sweep | **DONE** | ✅ Keep |
+| **Role-gating on device lock/unlock/renew** | **DONE 2026-09-23 — was a real authorization gap** | ✅ These three were the only human-facing mutating routes in the codebase guarded by `app.authenticate` alone (no role), while all eleven others required `requireRole(...)`. A read-only `viewer` could therefore lock any device and renew it indefinitely — and a locked device cannot start a queued execution run, making it a denial-of-service available to the least-privileged role. The frontend had the identical gap: `LockControls.tsx`'s own doc comment stated the rule it was breaking, while checking only signed-in and admin-force-unlock. Both sides now gate on operator/admin (frontend via the same `can('operator','admin')` helper every other action already used). New `devices.routes.test.ts` pins the guard each route declares, including a catch-all that fails *any* mutating device route left on authentication alone; verified to fail against the pre-fix code. See `docs/LESSONS.md` 2026-09-23 (later) — the lesson is that authorization is a property of the route *set*, so it is only auditable by listing every endpoint beside its guard. |
 | Per-agent revocable credentials | **DONE** | ✅ Keep — better than one shared token |
 | Fail-closed stubs everywhere | **DONE** | ✅ Keep |
 | Hidden (not disabled) unavailable actions | **DONE** | ✅ Keep |
