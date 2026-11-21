@@ -1,0 +1,61 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: Backend (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: package-lock.json
+      # package-lock.json pins the extracted public packages as git+ssh URLs;
+      # CI has no SSH key, so fetch them over HTTPS instead.
+      - name: Fetch git dependencies over HTTPS
+        run: git config --global url."https://github.com/".insteadOf "ssh://git@github.com/"
+      - run: npm ci
+      # Typecheck, lint and build once (ubuntu); the Windows leg exists for the
+      # win32-only tests (e.g. process-supervisor cmd.exe quoting).
+      - if: matrix.os == 'ubuntu-latest'
+        run: npm run typecheck --workspace=backend
+      - if: matrix.os == 'ubuntu-latest'
+        run: npm run lint --workspace=backend
+      - run: npm run test --workspace=backend
+      - if: matrix.os == 'ubuntu-latest'
+        run: npm run build --workspace=backend
+
+  frontend:
+    name: Frontend
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - name: Fetch git dependencies over HTTPS
+        run: git config --global url."https://github.com/".insteadOf "ssh://git@github.com/"
+      - run: npm ci
+      - run: npm run typecheck --workspace=frontend
+      - run: npm run lint --workspace=frontend
+      - run: npm run test --workspace=frontend
+      - run: npm run build --workspace=frontend
