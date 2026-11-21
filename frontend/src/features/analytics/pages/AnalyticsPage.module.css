@@ -209,6 +209,10 @@
   max-width: 40%;
 }
 
+.deviceHost {
+  color: var(--text-tertiary);
+}
+
 .recentWhen {
   flex: none;
   color: var(--text-tertiary);

@@ -22,7 +22,13 @@ export interface IAnalyticsAggregate extends Document {
   /** How many runs contributed to the two above — the rest reported no tests. */
   runsWithTestResults: number;
   avgDurationMs: number;
-  byDevice: Array<{ deviceUdid: string; runs: number; passRate: number }>;
+  /**
+   * Keyed by machineId + deviceUdid (serials like emulator-5554 repeat per
+   * host). `machineId` is optional: rows written before it existed keyed on
+   * udid alone. Only the current day/week is recomputed, so past buckets keep
+   * that shape — readers must tolerate its absence.
+   */
+  byDevice: Array<{ machineId?: string; deviceUdid: string; runs: number; passRate: number }>;
   /**
    * `suiteKind` is how the suite was addressed — a Cucumber tag and a feature
    * path select different test sets, so they are bucketed separately even
@@ -56,7 +62,7 @@ const analyticsAggregateSchema = new Schema<IAnalyticsAggregate>(
     testPassRate: { type: Number, default: 0 },
     runsWithTestResults: { type: Number, default: 0 },
     avgDurationMs: { type: Number, default: 0 },
-    byDevice: [{ deviceUdid: String, runs: Number, passRate: Number }],
+    byDevice: [{ machineId: String, deviceUdid: String, runs: Number, passRate: Number }],
     bySuite: [{ suite: String, suiteKind: String, runs: Number, passRate: Number, flakiness: Number }],
     computedAt: { type: Date, default: Date.now },
   },

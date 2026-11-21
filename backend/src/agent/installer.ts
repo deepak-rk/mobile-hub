@@ -194,16 +194,33 @@ async function listInstalledPackages(adbPath: string, deviceUdid: string): Promi
  * there. Throws when a positively-identified package has no path, which is the
  * one case that is unambiguously a failed install reported as a success — the
  * reference platform had no such check and this one should not inherit that.
+ *
+ * A check that could not run at all (adb timed out, device dropped off the
+ * bus) proves nothing either way, and `pm install` already said `Success` — so
+ * that is "unverified", not "failed". It resolves to a warning message for the
+ * caller to attach to the `done` report instead of throwing, which would have
+ * marked a working install as an error. Resolves to null when verified.
  */
-async function verifyPackageInstalled(adbPath: string, deviceUdid: string, packageName: string): Promise<void> {
-  const { stdout } = await run(adbPath, ['-s', deviceUdid, 'shell', 'pm', 'path', packageName], {
-    timeout: ADB_SHORT_TIMEOUT_MS,
-  });
+export async function verifyPackageInstalled(
+  adbPath: string,
+  deviceUdid: string,
+  packageName: string,
+  runFn: Runner = run,
+): Promise<string | null> {
+  let stdout: string;
+  try {
+    ({ stdout } = await runFn(adbPath, ['-s', deviceUdid, 'shell', 'pm', 'path', packageName], {
+      timeout: ADB_SHORT_TIMEOUT_MS,
+    }));
+  } catch (err) {
+    return `Installed, but could not verify ${packageName} on ${deviceUdid}: ${err instanceof Error ? err.message : String(err)}`;
+  }
   if (!/^package:/m.test(stdout)) {
     throw new Error(
       `pm install reported success but ${packageName} has no installed path on ${deviceUdid} — the install did not take`,
     );
   }
+  return null;
 }
 
 /**
@@ -475,7 +492,7 @@ export async function runInstall(
       packagesBefore,
       await listInstalledPackages(adbPath, deviceUdid),
     );
-    if (installedPackage) await verifyPackageInstalled(adbPath, deviceUdid, installedPackage);
+    const verifyWarning = installedPackage ? await verifyPackageInstalled(adbPath, deviceUdid, installedPackage) : null;
 
     // Org opt-in (off by default) and Android-only, and only meaningful once
     // a package has been positively identified — a same-version reinstall
@@ -491,6 +508,9 @@ export async function runInstall(
       status: 'done',
       progress: 100,
       ...(installedPackage ? { packageName: installedPackage } : {}),
+      // The target schema has no separate warning field; `error` on a `done`
+      // target carries a non-fatal note (here: verification could not run).
+      ...(verifyWarning ? { error: verifyWarning } : {}),
     });
   } catch (err) {
     await hub.reportInstallProgress(installRunId, deviceUdid, {

@@ -151,7 +151,12 @@ export const hostsRoutes: FastifyPluginAsync = async (app) => {
       if (req.agentMachineId && req.agentMachineId !== machineId) {
         throw new ForbiddenError('This credential is scoped to a different machineId.', 'AGENT_MACHINE_MISMATCH');
       }
-      streamingService.ingestRemoteFrame(machineId, deviceUdid, protocol, req.body as Buffer);
+      // A 0-byte (or missing/non-binary) body is not a frame — fanning it out
+      // would hand every viewer an empty message. Dropped; still 204, as above.
+      const frame = req.body;
+      if (Buffer.isBuffer(frame) && frame.length > 0) {
+        streamingService.ingestRemoteFrame(machineId, deviceUdid, protocol, frame);
+      }
       return reply.code(204).send();
     },
   );

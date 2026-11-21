@@ -1,4 +1,9 @@
 export interface DeviceBreakdown {
+  /**
+   * The device's host. Device identity is machineId + udid (emulator serials
+   * repeat on every host). Absent on aggregates stored before it was added.
+   */
+  machineId?: string;
   deviceUdid: string;
   runs: number;
   passRate: number;

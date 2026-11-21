@@ -10,6 +10,7 @@ import {
   ensureCachedBuild,
   parseUngrantedRuntimePermissions,
   grantRuntimePermissions,
+  verifyPackageInstalled,
 } from './installer';
 import type { HubClient } from './hub-client';
 
@@ -232,6 +233,26 @@ describe('grantRuntimePermissions', () => {
  * per-agent cache: `ensureCachedBuild`'s default argument is the only thing
  * that ever points at `~/.mobile-hub-agent`, and no test exercises the default.
  */
+describe('verifyPackageInstalled', () => {
+  it('resolves null when the package manager reports an installed path', async () => {
+    const runFn = vi.fn().mockResolvedValue({ stdout: 'package:/data/app/base.apk\n', stderr: '' });
+    await expect(verifyPackageInstalled('adb', 'd1', 'com.example', runFn)).resolves.toBeNull();
+  });
+
+  it('throws when the package has no installed path — a real failed install', async () => {
+    const runFn = vi.fn().mockResolvedValue({ stdout: '', stderr: '' });
+    await expect(verifyPackageInstalled('adb', 'd1', 'com.example', runFn)).rejects.toThrow(/did not take/);
+  });
+
+  it('returns a warning instead of throwing when the check itself cannot run (e.g. adb timeout)', async () => {
+    // `pm install` already said Success; a verify that never ran is unknown,
+    // not a failure — throwing here made runInstall report the target `error`.
+    const runFn = vi.fn().mockRejectedValue(new Error('Command failed: timed out'));
+    const warning = await verifyPackageInstalled('adb', 'd1', 'com.example', runFn);
+    expect(warning).toMatch(/could not verify com\.example on d1: .*timed out/);
+  });
+});
+
 describe('build cache (cachedBuildPath / isCacheValid / ensureCachedBuild)', () => {
   let cacheDir: string;
 

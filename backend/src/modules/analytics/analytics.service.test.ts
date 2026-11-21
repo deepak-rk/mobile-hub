@@ -41,7 +41,7 @@ function run(overrides: Partial<Record<string, unknown>> = {}) {
  */
 function stubRuns(
   runs: ReturnType<typeof run>[],
-  devices: { udid: string; platform: string }[],
+  devices: { udid: string; platform: string; machineId?: string }[],
   history: Array<{ bySuite: Array<{ suite: string; passRate: number }> }> = [],
 ) {
   vi.spyOn(ExecutionRun, 'find').mockResolvedValue(runs as never);
@@ -284,6 +284,51 @@ describe('computeDailyAggregates', () => {
     // runsWithTestResults is what tells "all failed" from "nothing reported".
     expect(summary?.testPassRate).toBe(0);
     expect(summary?.runsWithTestResults).toBe(0);
+  });
+
+  it('keeps the same serial on two hosts as two byDevice rows, not one blended pass rate', async () => {
+    // emulator-5554 exists on every host — udid alone is not a device identity.
+    stubRuns(
+      [
+        run({ machineId: 'host-a', deviceUdid: 'emulator-5554', status: 'passed', snapshot: { platform: 'android' } }),
+        run({ machineId: 'host-b', deviceUdid: 'emulator-5554', status: 'failed', snapshot: { platform: 'android' } }),
+      ],
+      [],
+    );
+    const upsert = vi.fn().mockResolvedValue({ id: 'agg' });
+    vi.spyOn(AnalyticsAggregate, 'findOneAndUpdate').mockImplementation(upsert as never);
+
+    await computeDailyAggregates(new Date('2026-01-01T12:00:00Z'));
+
+    const calls = upsert.mock.calls as UpsertCall[];
+    const summary = calls.find(([filter]) => filter.platform === 'android')?.[1] as {
+      byDevice: Array<{ machineId?: string; deviceUdid: string; runs: number; passRate: number }>;
+    };
+    expect(summary.byDevice).toHaveLength(2);
+    expect(summary.byDevice).toEqual(
+      expect.arrayContaining([
+        { machineId: 'host-a', deviceUdid: 'emulator-5554', runs: 1, passRate: 1 },
+        { machineId: 'host-b', deviceUdid: 'emulator-5554', runs: 1, passRate: 0 },
+      ]),
+    );
+  });
+
+  it("resolves a legacy run's platform from its own host's device, not another host's same serial", async () => {
+    stubRuns(
+      [run({ machineId: 'host-b', deviceUdid: 'shared-serial' })], // no snapshot: falls back to the live join
+      [
+        { machineId: 'host-b', udid: 'shared-serial', platform: 'android' },
+        { machineId: 'host-a', udid: 'shared-serial', platform: 'ios' },
+      ],
+    );
+    const upsert = vi.fn().mockResolvedValue({ id: 'agg' });
+    vi.spyOn(AnalyticsAggregate, 'findOneAndUpdate').mockImplementation(upsert as never);
+
+    await computeDailyAggregates(new Date('2026-01-01T12:00:00Z'));
+
+    const platforms = (upsert.mock.calls as UpsertCall[]).map(([filter]) => filter.platform);
+    expect(platforms).toEqual(expect.arrayContaining(['android', 'all']));
+    expect(platforms).not.toContain('ios');
   });
 });
 
@@ -593,6 +638,28 @@ describe('computeDeviceUtilisation', () => {
     expect(d1.busyMs).toBe(30_000);
     // Sorted by utilisation descending — the busier device first.
     expect(result[0].deviceUdid).toBe('d2');
+  });
+
+  it('keeps the same serial on two hosts as two devices, each with its own busy time', async () => {
+    const now = Date.now();
+    const hour = 60 * 60 * 1000;
+    mockLeanRuns([
+      { machineId: 'host-a', deviceUdid: 'emulator-5554', startedAt: new Date(now - 2 * hour), endedAt: new Date(now - hour), snapshot: null },
+      { machineId: 'host-b', deviceUdid: 'emulator-5554', startedAt: new Date(now - hour), endedAt: new Date(now), snapshot: null },
+    ]);
+
+    // A 2h window: each host's emulator was busy for half of it. Merged on
+    // udid alone they read as one device busy 100% of the time.
+    const result = await computeDeviceUtilisation({ days: 2 / 24 });
+
+    expect(result).toHaveLength(2);
+    expect(result.map((r) => r.machineId).sort()).toEqual(['host-a', 'host-b']);
+    for (const r of result) {
+      expect(r.deviceUdid).toBe('emulator-5554');
+      expect(r.busyMs).toBe(hour);
+      expect(r.runs).toBe(1);
+      expect(r.utilisation).toBeCloseTo(0.5, 2);
+    }
   });
 
   it('excludes a run still in flight (no endedAt) rather than counting a partial window', async () => {

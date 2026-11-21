@@ -239,9 +239,12 @@ const deviceColumns = [
   deviceColumnHelper.accessor('deviceUdid', {
     header: 'Device',
     cell: (info) => (
-      <Link className={styles.rowLink} to={`/execution?deviceUdid=${encodeURIComponent(info.getValue())}`}>
-        <Mono>{info.getValue()}</Mono>
-      </Link>
+      <>
+        <Link className={styles.rowLink} to={`/execution?deviceUdid=${encodeURIComponent(info.getValue())}`}>
+          <Mono>{info.getValue()}</Mono>
+        </Link>
+        {info.row.original.machineId && <span className={styles.deviceHost}> · {info.row.original.machineId}</span>}
+      </>
     ),
   }),
   deviceColumnHelper.accessor('passRate', {
@@ -256,6 +259,8 @@ function DeviceBreakdownTable({ rows }: { rows: DeviceBreakdown[] }) {
   const table = useReactTable({
     data,
     columns: deviceColumns,
+    // Same udid on two hosts is two devices — key rows by both.
+    getRowId: (row) => `${row.machineId ?? ''}:${row.deviceUdid}`,
     state: { sorting },
     onSortingChange: setSorting,
     getCoreRowModel: getCoreRowModel(),
@@ -482,12 +487,13 @@ function DeviceUtilisation({ project, platform }: { project?: string; platform?:
         <div className={styles.breakdownTitle}>Device utilisation</div>
         <ul className={styles.recentList}>
           {rows.map((r) => (
-            <li key={r.deviceUdid} className={styles.recentRow}>
+            <li key={`${r.machineId}:${r.deviceUdid}`} className={styles.recentRow}>
               <span className={styles.rateBar}>
                 <ProgressBar value={r.utilisation * 100} />
               </span>
               <Link className={styles.recentSuite} to={`/execution?deviceUdid=${encodeURIComponent(r.deviceUdid)}`}>
                 <Mono>{r.deviceUdid}</Mono>
+                <span className={styles.deviceHost}> · {r.machineId}</span>
               </Link>
               <span className={styles.recentWhen}>
                 {formatPercent(r.utilisation)} busy · {r.runs} runs

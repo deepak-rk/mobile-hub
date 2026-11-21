@@ -13,6 +13,8 @@ type Platform = 'android' | 'ios' | 'all';
 interface RunFacts {
   project: string;
   platform: Platform; // 'all' when the device is unknown, see below
+  /** The host the run's device was on. Device identity is machineId + udid — emulator serials repeat on every host. */
+  machineId: string;
   deviceUdid: string;
   suite: string;
   /** See the note where this is populated: tag and feature are not one suite. */
@@ -37,6 +39,14 @@ interface RunFacts {
  * failures, preserving the historical numbers rather than silently restating
  * past reports.
  */
+/**
+ * A device's identity. Serials like `emulator-5554` repeat on every host, so
+ * udid alone would merge two physically different devices into one row.
+ */
+function deviceKeyOf(machineId: string | undefined, udid: string): string {
+  return JSON.stringify([machineId ?? '', udid]);
+}
+
 function isTestAttributable(r: RunFacts): boolean {
   return isAttributable(r.status, r.failureKind);
 }
@@ -130,7 +140,8 @@ function summarize(
   const byDeviceMap = new Map<string, RunFacts[]>();
   const bySuiteMap = new Map<string, RunFacts[]>();
   for (const r of runs) {
-    byDeviceMap.set(r.deviceUdid, [...(byDeviceMap.get(r.deviceUdid) ?? []), r]);
+    const deviceKey = deviceKeyOf(r.machineId, r.deviceUdid);
+    byDeviceMap.set(deviceKey, [...(byDeviceMap.get(deviceKey) ?? []), r]);
     const key = suiteKeyOf(r.suite, r.suiteKind);
     bySuiteMap.set(key, [...(bySuiteMap.get(key) ?? []), r]);
   }
@@ -150,8 +161,9 @@ function summarize(
     runsWithTestResults: withTests.length,
     avgDurationMs:
       durations.length === 0 ? 0 : Math.round(durations.reduce((a, b) => a + b, 0) / durations.length),
-    byDevice: [...byDeviceMap.entries()].map(([deviceUdid, group]) => ({
-      deviceUdid,
+    byDevice: [...byDeviceMap.values()].map((group) => ({
+      machineId: group[0].machineId,
+      deviceUdid: group[0].deviceUdid,
       runs: group.length,
       passRate: groupRate(group),
     })),
@@ -260,16 +272,17 @@ async function computeAggregates(
   // and everything since is stable.
   const udids = [...new Set(runs.filter((r) => !r.snapshot?.platform).map((r) => r.deviceUdid))];
   const devices = udids.length
-    ? await Device.find({ udid: { $in: udids } }).select('udid platform')
+    ? await Device.find({ udid: { $in: udids } }).select('machineId udid platform')
     : [];
-  const platformByUdid = new Map(devices.map((d) => [d.udid, d.platform]));
+  const platformByDevice = new Map(devices.map((d) => [deviceKeyOf(d.machineId, d.udid), d.platform]));
 
   const facts: RunFacts[] = runs.map((run) => ({
     project: run.project,
     // A device that has since been removed and left no snapshot resolves to
     // 'all': the run still counts in the per-project rollup, it just cannot be
     // attributed to a specific platform.
-    platform: run.snapshot?.platform ?? platformByUdid.get(run.deviceUdid) ?? 'all',
+    platform: run.snapshot?.platform ?? platformByDevice.get(deviceKeyOf(run.machineId, run.deviceUdid)) ?? 'all',
+    machineId: run.machineId,
     deviceUdid: run.deviceUdid,
     suite: run.suite,
     // How the suite was addressed. A Cucumber tag and a feature path select
@@ -484,6 +497,7 @@ export async function computeFailureReasons(filters: {
 export const DEVICE_UTILISATION_WINDOW_DAYS = 14;
 
 export interface DeviceUtilisation {
+  machineId: string;
   deviceUdid: string;
   busyMs: number;
   windowMs: number;
@@ -519,23 +533,25 @@ export async function computeDeviceUtilisation(filters: {
   };
   if (filters.project) query.project = filters.project;
 
-  const runs = await ExecutionRun.find(query).select('deviceUdid startedAt endedAt snapshot').lean();
+  const runs = await ExecutionRun.find(query).select('machineId deviceUdid startedAt endedAt snapshot').lean();
   const scoped =
     filters.platform && filters.platform !== 'all'
       ? runs.filter((r) => r.snapshot?.platform === filters.platform)
       : runs;
 
-  const byDevice = new Map<string, { busyMs: number; runs: number }>();
+  const byDevice = new Map<string, { machineId: string; deviceUdid: string; busyMs: number; runs: number }>();
   for (const r of scoped) {
     if (!r.startedAt || !r.endedAt) continue;
-    const entry = byDevice.get(r.deviceUdid) ?? { busyMs: 0, runs: 0 };
+    const key = deviceKeyOf(r.machineId, r.deviceUdid);
+    const entry = byDevice.get(key) ?? { machineId: r.machineId, deviceUdid: r.deviceUdid, busyMs: 0, runs: 0 };
     entry.busyMs += r.endedAt.getTime() - r.startedAt.getTime();
     entry.runs += 1;
-    byDevice.set(r.deviceUdid, entry);
+    byDevice.set(key, entry);
   }
 
-  return [...byDevice.entries()]
-    .map(([deviceUdid, { busyMs, runs }]) => ({
+  return [...byDevice.values()]
+    .map(({ machineId, deviceUdid, busyMs, runs }) => ({
+      machineId,
       deviceUdid,
       busyMs,
       windowMs,

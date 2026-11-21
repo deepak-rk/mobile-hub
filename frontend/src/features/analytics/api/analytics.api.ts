@@ -36,6 +36,8 @@ export function useFailureReasons(params?: { project?: string; platform?: 'andro
 }
 
 export interface DeviceUtilisation {
+  /** The device's host — the same udid can appear once per host. */
+  machineId: string;
   deviceUdid: string;
   busyMs: number;
   windowMs: number;
