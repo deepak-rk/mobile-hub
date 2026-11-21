@@ -33,7 +33,7 @@ input{font:inherit;padding:6px 10px;border:1px solid var(--line);border-radius:6
 <ul>
 <li><b>Read everything?</b> Yes, on the second pass: 54 native-resolution tiles, transcribed word for word, all six pages. The first pass was a skim and missed most of the detail (plan rev 2 §0).</li>
 <li><b>Acted on everything?</b> No. The tiles above give the split. <b>Fixed</b> = a bug that existed here, fixed with a regression test. <b>Planned</b> = in the reconciliation plan with a phase, not built. <b>Gap</b> = applies here, but was in neither the plan nor the code until this page; now recorded in plan §9. <b>Unverified</b> = not yet checked against the code.</li>
-<li><b>Live-verified?</b> None of the fixes. Docker/Mongo was down all session; they are unit-tested only.</li>
+<li><b>Live-verified?</b> Some, against a running hub + Mongo: production refuses the placeholder secret; malformed ids give 404; an unknown build gives 404; a udid shared by two hosts gives 409 for install and stream, and an explicit host queues on exactly that host; the live sweep failed a stranded queued install and left a healthy host and newer work alone. Everything needing a real device (claim, zero-test, cache, adb blip, Appium sessions) is unit-tested only: the emulator would not start.</li>
 <li><b>Not covered:</b> Lessons 1–27. The pages name them but do not print them.</li>
 </ul>
 
@@ -99,7 +99,7 @@ const R=[
 [1,'Path B','Hub closed streams on its own cached state; the agent is authoritative','P','Partly: device status is now debounced at the agent (e2d4507); WS still refuses on hub status=offline'],
 [1,'Path B','Concurrent stream cap via env','G','No cap; recorded in plan §9'],
 [1,'Path C','Valid install records deleted when a verify failed or came back empty','U','Verify path not traced; "unknown ≠ none" not confirmed'],
-[1,'Path C','Phantom installs merged across agents','P','Targets keyed per machineId'],
+[1,'Path C','Phantom installs merged across agents','F','45e31fd: the installed-on list keyed devices by udid alone (row was wrongly marked present); now host + udid'],
 [1,'Path C','Install queued on the wrong agent (duplicate emulator-5554)','F','3918fbb: resolveDevice → 409 instead of guessing; devices:[{udid,machineId}]'],
 [1,'Path C','Large download died on one stall → Range resume + retries','L','Phase 5'],
 [1,'Path C','Reconcile third state (record + no path + file on disk) → every install 409','N','No equivalent reconcile logic'],
@@ -115,7 +115,7 @@ const R=[
 [2,'Agent','Re-sync shared secret into agent env on start','N','Per-agent credentials instead'],
 [2,'Agent','Discovery with cached getprop','F','e2d4507: last-good record per device'],
 [2,'Agent','Auto-detect Appium port + base path','P','resolveAppiumPrefix probes "" then /wd/hub'],
-[2,'Agent','Register Appium with the agent\'s own reachable IP','G','AGENT_APPIUM_HOST defaults to 127.0.0.1 (agent/main.ts:29), unreachable from a remote hub; recorded in plan §9'],
+[2,'Agent','Register Appium with the agent own reachable IP','F','4359c4f: a loopback report from a remote request now uses the request source address'],
 [2,'Heartbeat','Payload: protocolVersion, CPU/mem/disk, sha, appiumOnline, health snapshot','P','Partly: agentVersion + disk/node diagnostics. protocolVersion, CPU/mem, health snapshot → Phase 5'],
 [2,'Heartbeat','Work handed back in the heartbeat response','P','hosts.routes.ts heartbeat returns pending work'],
 [2,'Appium','Trust the agent\'s Appium report; inbound probe firewalled','P','/hosts/appium-ready route'],
@@ -132,7 +132,7 @@ const R=[
 [2,'Logs','~98 % of the log was access logs','F','e2d4507: agent routes at warn'],
 [2,'Ops','Log who sent SIGTERM (shutdown diagnostics)','G','Not logged; recorded in plan §9'],
 [2,'Rule','Delete every bare-udid fallback (Lesson 56)','F','3918fbb for action paths; read-only getDevice keeps an optional machineId'],
-[2,'Rule','Two guards over one resource share one key (Lesson 41)','G','Installs deliberately skip the device lock, so an install can land on a device mid-run; recorded in plan §9'],
+[2,'Rule','Two guards over one resource share one key (Lesson 41)','G','Installs skip the device lock by an earlier recorded decision (install-run.model.ts:86); the farm data argues for revisiting; awaiting a decision'],
 [2,'Rule','One-instance guards key on identity','L','Phase 5'],
 [2,'Rule','Persist out-of-process work; accept late results (42, 44)','P','Install/uninstall targets live in Mongo; agent reports accepted any time'],
 [2,'Rule','Remote install/readiness state round-trips to its agent or is unknown','U','Not traced end to end'],
@@ -221,7 +221,7 @@ const R=[
 [3,'Analytics','CSV export','G','Recorded in plan §9'],
 [3,'Analytics','Field selected but dropped by response mapping (Lesson 34)','U','Not checked per endpoint'],
 [3,'Counts','Summaries include broken and total (Lesson 65)','U','summarizeAllureResults not checked for broken'],
-[3,'Switches','Feature switch must stop server timers, not just hide UI (Lesson 57)','G','Verified: server.ts starts dispatcher/sweeps regardless of feature toggles; recorded in plan §9'],
+[3,'Switches','Feature switch must stop server timers, not just hide UI (Lesson 57)','F','4359c4f: toggles were never read at all; routes now gated per request, dispatch/analytics timers skip while off'],
 [3,'Switches','Max run duration','F','e2d4507'],
 [3,'Cancel','Status writes guarded so a catch cannot turn cancel into failed','F','e2d4507'],
 [3,'Cancel','Kill process group incl. in-flight npm install; close session; release lock','P','cancelExecutionRun + finally'],
@@ -250,7 +250,7 @@ const R=[
 [4,'Cache','A flush that fails is a failure; exists ≠ correct (Lesson 45)','F','e2d4507: completion marker'],
 [4,'Device page','idle / active / in-use states','P','device status + lock'],
 [4,'Device page','Remote control ops','L','Phase 4'],
-[4,'Device page','Multi-device view','G','Recorded in plan §9'],
+[4,'Device page','Multi-device view','P','MultiViewTile exists (row was wrongly marked a gap)'],
 [4,'Quirks','pm grant exit 0 for undeclared; pm list prefix match; one screenrecord per phone','P','Read-back, exact parse, shared capture'],
 [4,'Quirks','adb blips; emulator "device" before boot_completed','F','e2d4507'],
 [4,'Quirks','simctl privacy reload; devicectl syntax','L','Phase 4'],
@@ -278,7 +278,7 @@ const R=[
 [5,'Decision','Per-run worktree + cloned node_modules','L','Phase 2'],
 [5,'Decision','Allure results are the source of truth','P','collectTestSummary'],
 [5,'Decision','Polling hooks; stop on terminal','P','React Query refetchInterval'],
-[5,'Decision','Feature switches at both layers; timers need server flags','G','Same as the Lesson 57 gap'],
+[5,'Decision','Feature switches at both layers; timers need server flags','F','4359c4f (server side). Frontend nav does not hide disabled modules yet'],
 [5,'Hygiene','Auto-commits with no message content','N','Our commits carry real messages'],
 [5,'Retired','skipInstall, symlink cache, prefer-offline, local-execution mode','N','Never adopted'],
 // page 6 — ledger
@@ -332,6 +332,9 @@ const R=[
 [6,'Rule','Never coerce unknown to 0 or "none installed"','U','See Lesson 53 + Critical 12 rows'],
 [6,'Next step','Tests for claim, late-failure guard, snapshot','F','e2d4507'],
 [6,'Next step','Sweep .tmp-* at boot','F','b11f95a'],
+// found during the live checks, not on the pages
+[0,'Live check','Malformed id in a URL returned 500 (Mongoose CastError)','F','4359c4f: 404 for a bad _id, 400 for other fields'],
+[0,'Live check','Unknown buildId on install returned 500','F','4359c4f: 404 BUILD_NOT_FOUND'],
 ];
 const counts={};R.forEach(r=>counts[r[3]]=(counts[r[3]]||0)+1);
 let active=null;const tiles=document.getElementById('tiles');

@@ -159,9 +159,9 @@ Rule: a fix is verified against the **failure it addresses, reproduced**, not ag
 Items that apply here but were in neither this plan nor the code. Ordered by risk.
 
 **Correctness / safety**
-1. Installs skip the device lock, so an install can land on a device mid-run (farm Lesson 41, "never install over a busy device").
-2. Feature switches do not stop server timers: the dispatcher and sweeps start regardless of org feature toggles (Lesson 57).
-3. `AGENT_APPIUM_HOST` defaults to `127.0.0.1`, unreachable from a remote hub. Refuse loopback for remote agents or default to the LAN address.
+1. Installs skip the device lock, so an install can land on a device mid-run (farm Lesson 41, "never install over a busy device"). **Recorded earlier as a deliberate decision** (`install-run.model.ts:86`); the farm's data argues for revisiting it. Awaiting a decision.
+2. ~~Feature switches do not stop server timers~~ **Done `4359c4f`.** The toggles were never read at all; routes and timers now honour them. Frontend nav still shows disabled modules.
+3. ~~`AGENT_APPIUM_HOST` loopback default~~ **Done `4359c4f`:** a loopback report from a remote request uses its source address.
 4. CSP is disabled (`contentSecurityPolicy: false`).
 5. No CI workflow.
 
@@ -172,7 +172,7 @@ Items that apply here but were in neither this plan nor the code. Ordered by ris
 **Devices / fleet**
 8. Stream concurrency cap and staggered capture starts.
 9. verify-requests (list installed bundles from the agent, unknown ≠ none).
-10. Agent build pre-staging; multi-device view; device-health page.
+10. Agent build pre-staging; device-health page. (A multi-device view already exists.)
 11. Agent service install, self-update/deploy with rollback, SHA256 tarball installer; physical iOS install target.
 12. Log the source of SIGTERM.
 
