@@ -10,11 +10,12 @@ Status legend: ⬜ not started · 🔨 built (compiles/typechecks) · ✅ tested
 
 `docs/reconciliation-plan-2026-11.md` supersedes parts of this checklist. Decided: **one app per deployment** (no project picker; platform/variant/suite/device/build are run inputs), **variant as an optional run dimension**, **runners stay on the hub** with a recorded path to agent execution, **model fixed before new features**. Until Phase 1 lands, rows below describing the multi-project `projects:` map, project-level `platform`, and the `/execution/projects` picker describe behaviour that is being replaced, not a target.
 
-- [ ] Phase 1 — model & config (see plan §8.1)
-- [ ] Phase 2 — execution correctness (hub claim stamp, errorClass, stages + app preflight, worktree, late-writer guard)
-- [ ] Phase 3 — execution visibility (runner status tree, rerun-failed, combined report)
-- [ ] Phase 4 — device interaction (remote control, device ops, device-state jobs)
-- [ ] Phase 5 — fleet & ops (agent tombstone, liveness fail-fast, scheduler, notifications, activity log)
+- [x] 🔨 **14 bugs found by checking the farm's failure ledger against this code — fixed `e2d4507`** (plan rev 2 §2): atomic run claim + terminal-status guard + atomic cancel; zero-test runs no longer pass; stale results in the checkout cleared before execute; raw allure-results persisted whole; npm cache snapshot atomic (temp + marker + rename); `EXECUTION_MAX_RUN_MINUTES`; offline-device and stranded-install fail-fast; orphan cancel; device eviction debounced + emulator boot gating (no more lock release under a running execution on one failed probe); Appium base path reaches the runner; per-run env beats configured env; production refuses placeholder secrets; agent routes log at warn. 428 tests (was 400). **Built + unit-tested, NOT live-verified** — Docker/Mongo down this session; plan §8 lists the live checks.
+- [ ] Phase 1 — model & config (plan §3)
+- [ ] Phase 2 — execution correctness remainder (resync/repair from saved results, errorClass, app preflight, prep semaphore, bare repo + worktree, stage model, executor field)
+- [ ] Phase 3 — execution visibility (runner status tree with the farm's writer rules, rerun-failed, combined report, failing-step evidence)
+- [ ] Phase 4 — device interaction + device-config jobs (one busy-lock key per phone; read-back after grant)
+- [ ] Phase 5 — fleet & ops (tombstone, persisted identity, identity-keyed single instance, scheduler with nextRunAt claim, notifications, resumable downloads)
 
 ---
 

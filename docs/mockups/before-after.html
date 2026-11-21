@@ -161,13 +161,62 @@ status:     queued … completed | failed | cancelled | <span class="y">partial<
   </div>
 </div>
 
+<!-- 6a -->
+<h2>6 · Keeping a result correct <span class="tag be">BE</span> <span class="tag fe">FE</span> <span class="tag">fixed e2d4507 + Phase 2</span></h2>
+<div class="pair">
+  <div class="col before"><h3>Before — four ways a pass became wrong</h3>
+    <div class="tree">
+      <div><span class="ko">✗</span> results read from the checkout, then deleted with it</div>
+      <div><span class="ko">✗</span> results already in the checkout counted as this run's</div>
+      <div><span class="ko">✗</span> exit 0 with <strong>0 tests</strong> → "Passed"</div>
+      <div><span class="ko">✗</span> cancel racing the dispatcher lost; late failure could overwrite</div>
+      <div><span class="ko">✗</span> restart → every in-flight run "failed", no repair</div>
+    </div>
+  </div>
+  <div class="col after"><h3>After</h3>
+    <div class="tree">
+      <div><span class="ok">✓</span> raw results copied whole to artifacts first</div>
+      <div><span class="ok">✓</span> stale results cleared before execute</div>
+      <div><span class="ok">✓</span> zero tests → <strong>Failed · nothing matched the filter</strong></div>
+      <div><span class="ok">✓</span> atomic claim; terminal status never overwritten</div>
+      <div><span class="run">●</span> "Repair from saved results" on run detail (Phase 2)</div>
+    </div>
+  </div>
+</div>
+
+<!-- 6b -->
+<h2>7 · App preflight <span class="tag be">BE</span> <span class="tag fe">FE</span> <span class="tag">Phase 2</span></h2>
+<div class="pair">
+  <div class="col before"><h3>Before</h3>
+    <div class="stages"><span class="stage">installing (npm)</span><span class="arrow">→</span><span class="stage vague">execute</span></div>
+    <div class="note bad">Runs against whatever app is already on the device. No build installed → every selector misses ("~Home-screen not found").</div>
+  </div>
+  <div class="col after"><h3>After</h3>
+    <div class="stages"><span class="stage new">checking</span><span class="arrow">→</span><span class="stage new">waiting for other install</span><span class="arrow">→</span><span class="stage new">installing app</span><span class="arrow">→</span><span class="stage new">re-verify</span><span class="arrow">→</span><span class="stage">execute</span></div>
+    <div class="note good">Device resolved by host + udid. Fail fast: <code>build_missing</code>, <code>install_failed</code>, agent offline &gt; 3 min. A failed or empty verify is <em>unknown</em>, never "not installed".</div>
+  </div>
+</div>
+
+<!-- 6c -->
+<h2>8 · Fleet view <span class="tag fe">FE</span><span class="tag be">BE</span> <span class="tag">Phase 5</span></h2>
+<table>
+  <tr><th>Host</th><th>Status</th><th>Agent version</th><th>Appium</th><th>RAM / CPU / Disk</th><th>Devices</th></tr>
+  <tr><td>hub</td><td class="y">online</td><td>= hub</td><td>up · /</td><td>41% · 12% · 63%</td><td>1</td></tr>
+  <tr><td>host-2</td><td class="y">online</td><td class="x">behind hub — Sync</td><td>up · /wd/hub</td><td>58% · 30% · 71%</td><td>4</td></tr>
+  <tr><td>host-3</td><td class="x">offline 6 m</td><td>—</td><td>—</td><td>—</td><td>0 · 2 runs failed fast</td></tr>
+</table>
+<div class="note good">Heartbeat carries protocol version, metrics (CPU sampled twice), Appium base path and a device-health snapshot. Deregister = tombstone, so the agent can't reappear on its next heartbeat. One agent per machine, guarded by identity, never by port.</div>
+
 <!-- 6 -->
-<h2>6 · Backend flow — who does what <span class="tag be">BE</span></h2>
+<h2>9 · Backend flow — who does what <span class="tag be">BE</span></h2>
 <table>
   <tr><th>Concern</th><th>Before</th><th>After</th></tr>
   <tr><td>App identity</td><td class="x">Free-form <code>project</code> string per run</td><td class="y">Stamped from config on every run/build</td></tr>
   <tr><td>Run claim</td><td class="x">Any hub process runs any queued run</td><td class="y">Atomic claim with hub <code>machineId</code></td></tr>
-  <tr><td>Runner env</td><td class="x">Ad-hoc</td><td class="y">Contract: PLATFORM, VARIANT, UDID, RUN_ID, RUN_SUITE, RUN_TAG, AUTOMATION_NAME, APPIUM_HOST/PORT/PATH, BUILD_PATH</td></tr>
+  <tr><td>Runner env</td><td class="x">APPIUM_HOST/PORT/BASE_URL, DEVICE_UDID, PLATFORM — but no base path, and org config could override them <em>(fixed e2d4507)</em></td><td class="y">+ APPIUM_PATH, AUTOMATION_NAME, RUN_ID (done) · VARIANT, RUN_SUITE, RUN_TAG (Phase 1); per-run values always win</td></tr>
+  <tr><td>Outcome writes</td><td class="x">read-modify-save; a cancel or a late failure could overwrite <em>(fixed e2d4507)</em></td><td class="y">atomic claim · terminal status never overwritten · repair from saved results (Phase 2)</td></tr>
+  <tr><td>npm cache</td><td class="x">direct copy, "dir exists" = hit <em>(fixed e2d4507)</em></td><td class="y">temp + completion marker + rename</td></tr>
+  <tr><td>Device report</td><td class="x">one failed probe dropped the device → lock released under a running run <em>(fixed e2d4507)</em></td><td class="y">last-good record · 2-poll grace · emulator only after boot_completed</td></tr>
   <tr><td>Checkout</td><td class="x">Full <code>git clone</code> per run</td><td class="y">Shared bare repo (fetch mutex) + worktree per run</td></tr>
   <tr><td>Device ops</td><td class="x">Lock / install / uninstall</td><td class="y">+ control, screenshot, reboot, device-state jobs (agent-pulled)</td></tr>
   <tr><td>Fleet</td><td class="x">Deleted agent reappears on next heartbeat</td><td class="y"><code>blocked</code> tombstone; offline host → runs fail fast as <code>device_offline</code></td></tr>
