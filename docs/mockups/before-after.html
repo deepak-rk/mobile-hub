@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mobile Hub — Before / After (reconciliation plan)</title>
+<style>
+  :root{--bg:#0b0c0e;--panel:#14161a;--line:#262a31;--text:#e6e8eb;--muted:#8b919a;--bad:#ef6a6a;--badbg:#2a1416;--good:#4fc58a;--goodbg:#10231a;--accent:#7c86ff;--warn:#e6b450}
+  @media (prefers-color-scheme: light){:root{--bg:#f6f7f9;--panel:#fff;--line:#e2e5ea;--text:#16181c;--muted:#5d646e;--badbg:#fdecec;--goodbg:#e8f7ef}}
+  *{box-sizing:border-box} body{margin:0;background:var(--bg);color:var(--text);font:14px/1.5 system-ui,-apple-system,Segoe UI,sans-serif;padding:24px 16px}
+  .wrap{max-width:1200px;margin:0 auto}
+  h1{font-size:22px;margin:0 0 4px} h2{font-size:17px;margin:36px 0 4px} .sub{color:var(--muted);margin:0 0 16px}
+  .tag{display:inline-block;font-size:11px;font-weight:600;padding:1px 7px;border-radius:999px;border:1px solid var(--line);color:var(--muted);margin-left:6px;vertical-align:middle}
+  .fe{color:var(--accent);border-color:var(--accent)} .be{color:var(--warn);border-color:var(--warn)}
+  .pair{display:grid;grid-template-columns:1fr 1fr;gap:16px} @media (max-width:820px){.pair{grid-template-columns:1fr}}
+  .col{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px}
+  .col h3{margin:0 0 10px;font-size:13px;text-transform:uppercase;letter-spacing:.06em}
+  .before h3{color:var(--bad)} .after h3{color:var(--good)}
+  .field{margin:8px 0} .field label{display:block;font-size:12px;color:var(--muted);margin-bottom:3px}
+  .input{border:1px solid var(--line);border-radius:6px;padding:7px 9px;background:var(--bg);display:flex;justify-content:space-between}
+  .input.bad{border-color:var(--bad);background:var(--badbg)} .input.good{border-color:var(--good);background:var(--goodbg)}
+  .menu{border:1px solid var(--bad);border-radius:6px;margin-top:3px;background:var(--badbg);font-size:13px}
+  .menu div{padding:4px 9px;border-bottom:1px dashed var(--line)} .menu div:last-child{border:0}
+  .chips{display:flex;gap:6px;flex-wrap:wrap} .chip{border:1px solid var(--line);border-radius:999px;padding:3px 10px;font-size:12px}
+  .chip.on{border-color:var(--good);background:var(--goodbg)}
+  .note{font-size:12.5px;margin-top:10px;padding:8px 10px;border-radius:6px}
+  .note.bad{background:var(--badbg);border-left:3px solid var(--bad)} .note.good{background:var(--goodbg);border-left:3px solid var(--good)}
+  pre{margin:0;background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:10px;font-size:12.5px;overflow-x:auto;line-height:1.45}
+  .x{background:var(--badbg);color:var(--bad)} .y{background:var(--goodbg);color:var(--good)}
+  .stages{display:flex;flex-wrap:wrap;gap:4px;align-items:center;font-size:12px}
+  .stage{border:1px solid var(--line);border-radius:5px;padding:3px 8px} .stage.new{border-color:var(--good);background:var(--goodbg)} .stage.vague{border-color:var(--bad);background:var(--badbg)}
+  .arrow{color:var(--muted)}
+  .tree{font:12.5px ui-monospace,monospace;line-height:1.7} .ok{color:var(--good)} .ko{color:var(--bad)} .run{color:var(--warn)}
+  table{border-collapse:collapse;width:100%;font-size:12.5px} td,th{border-bottom:1px solid var(--line);padding:5px 6px;text-align:left;vertical-align:top}
+  .phone{width:150px;height:260px;border:2px solid var(--line);border-radius:18px;margin:6px auto;display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:12px;text-align:center;padding:10px}
+  .btns{display:flex;gap:5px;flex-wrap:wrap;justify-content:center;margin-top:6px} .btn{border:1px solid var(--line);border-radius:6px;padding:3px 8px;font-size:12px}
+  .btn.new{border-color:var(--good);background:var(--goodbg)}
+  .legend{display:flex;gap:14px;flex-wrap:wrap;font-size:12px;color:var(--muted)}
+</style>
+</head>
+<body><div class="wrap">
+
+<h1>Mobile Hub — Before / After</h1>
+<p class="sub">Mockups for <code>docs/reconciliation-plan-2026-11.md</code>. Decisions: one app per deployment · variant as optional run dimension · runners on the hub (scalable to agents) · fix the model first.</p>
+<div class="legend"><span><span class="tag fe">FE</span> frontend</span><span><span class="tag be">BE</span> backend</span><span style="color:var(--bad)">■ wrong today</span><span style="color:var(--good)">■ after</span></div>
+
+<!-- 1 -->
+<h2>1 · Trigger a run <span class="tag fe">FE</span><span class="tag be">BE</span> <span class="tag">Phase 1</span></h2>
+<div class="pair">
+  <div class="col before"><h3>Before</h3>
+    <div class="field"><label>Project</label><div class="input bad"><span>wdio-demo-app</span><span>▾</span></div>
+      <div class="menu"><div>wdio-demo-app</div><div>checkout <em>(from run history)</em></div><div>e2e-fixture-project <em>(from run history)</em></div><div>test <em>(typo, from history)</em></div></div></div>
+    <div class="field"><label>Branch</label><div class="input"><span>main</span><span>▾</span></div></div>
+    <div class="field"><label>Suite</label><div class="input"><span>app-launch.feature</span><span>▾</span></div></div>
+    <div class="field"><label>Device</label><div class="input"><span>emulator-5554</span><span>▾</span></div></div>
+    <div class="field"><label>Setup / Run command (override)</label><div class="input"><span>npm ci · npx wdio …</span></div></div>
+    <div class="note bad">Picker = declared projects ∪ every <code>project</code> string ever written to a run. Platform is fixed per project, so one app becomes two. No variant, no tag, no build.</div>
+  </div>
+  <div class="col after"><h3>After</h3>
+    <div class="field"><label>App</label><div class="input"><span><strong>Demo App</strong> — from config, not a choice</span></div></div>
+    <div class="field"><label>Platform</label><div class="chips"><span class="chip on">Android</span><span class="chip">iOS</span></div></div>
+    <div class="field"><label>Variant <em>(only when <code>variants:</code> declared)</em></label><div class="chips"><span class="chip on">Region A</span><span class="chip">Region B</span><span class="chip">Lite</span></div></div>
+    <div class="field"><label>Suite / Tag</label><div class="input good"><span>app-launch.feature · @smoke</span><span>▾</span></div></div>
+    <div class="field"><label>Build <em>(filtered to Android)</em></label><div class="input good"><span>v2.2.0 · ready</span><span>▾</span></div></div>
+    <div class="field"><label>Device <em>(filtered to Android, online)</em></label><div class="input good"><span>Pixel 3a · host-1</span><span>▾</span></div></div>
+    <div class="note good">No project picker. Platform, variant, suite/tag, build and device are run inputs; build and device lists follow the chosen platform. Commands derived from config (override stays under "Advanced").</div>
+  </div>
+</div>
+
+<!-- 2 -->
+<h2>2 · Configuration <span class="tag be">BE</span> <span class="tag">Phase 1</span></h2>
+<div class="pair">
+  <div class="col before"><h3>Before — <code>mobilehub.project.yaml</code></h3>
+<pre><span class="x">appium:                 # per-host concern in app config</span>
+<span class="x">  host: 127.0.0.1</span>
+<span class="x">  basePort: 4723</span>
+<span class="x">projects:               # "project" file declares many</span>
+  demo-app:
+    displayName: Demo App
+<span class="x">    platform: android   # app pinned to one platform</span>
+    automation:
+      repoUrl: https://…/automation.git
+<span class="x">      framework: appium # runner vs driver conflated</span>
+      configPath: wdio.conf.ts
+      testDir: test
+<span class="x">      envFile: .env     # read by nothing</span></pre>
+    <div class="note bad">Org + project files merge document-wide, so the "project" file is just a second global layer.</div>
+  </div>
+  <div class="col after"><h3>After — org file + app file</h3>
+<pre><span class="y"># mobilehub.app.yaml — the one app under test</span>
+<span class="y">app:</span>
+  id: demo-app
+  displayName: Demo App
+<span class="y">  platforms: [android, ios]</span>
+<span class="y">  variants: [region-a, region-b, lite]   # optional</span>
+  automation:
+    repoUrl: https://…/automation.git
+<span class="y">    runner: wdio</span>
+<span class="y">    framework: cucumber</span>
+    configPath: wdio.conf.ts
+    testDir: test
+    env: { APP_ENV: staging }   # allow-listed, redacted
+
+<span class="y"># Appium host/port: agent env, reported per device</span></pre>
+    <div class="note good">Org file keeps platform concerns (features, build provider, retention, devices, streaming). Host wiring leaves YAML. Driver derived from platform (UiAutomator2 / XCUITest).</div>
+  </div>
+</div>
+
+<!-- 3 -->
+<h2>3 · Run pipeline &amp; run model <span class="tag be">BE</span><span class="tag fe">FE</span> <span class="tag">Phase 2</span></h2>
+<div class="pair">
+  <div class="col before"><h3>Before</h3>
+    <div class="stages"><span class="stage">queued</span><span class="arrow">→</span><span class="stage">pulling <small>(full clone)</small></span><span class="arrow">→</span><span class="stage">restoring_cache</span><span class="arrow">→</span><span class="stage">installing</span><span class="arrow">→</span><span class="stage vague">execute <small>(+ results, cleanup, release — invisible)</small></span></div>
+<pre style="margin-top:10px">failureKind: <span class="x">test | infra | precondition</span>
+<span class="x">no hub claim stamp</span>   # two hubs on one DB can both run it
+<span class="x">no app preflight</span>    # runs against whatever is installed
+<span class="x">late writer can overwrite a pass</span></pre>
+  </div>
+  <div class="col after"><h3>After</h3>
+    <div class="stages"><span class="stage">queued</span><span class="arrow">→</span><span class="stage new">claimed <small>(hub id, atomic)</small></span><span class="arrow">→</span><span class="stage new">pulling <small>(bare repo + worktree)</small></span><span class="arrow">→</span><span class="stage">restoring_cache</span><span class="arrow">→</span><span class="stage">installing</span><span class="arrow">→</span><span class="stage new">app preflight</span><span class="arrow">→</span><span class="stage">executing</span><span class="arrow">→</span><span class="stage new">collecting</span><span class="arrow">→</span><span class="stage new">releasing</span></div>
+<pre style="margin-top:10px">errorClass: <span class="y">device_offline | install_failed | test_assertion |
+            network_timeout | appium_session | build_missing |
+            cancelled | unknown</span>
+status:     queued … completed | failed | cancelled | <span class="y">partial</span>
+<span class="y">executor:   { kind: 'hub', machineId }   # → 'agent' later</span>
+<span class="y">claimedBy:  hub machineId; terminal writes guarded</span></pre>
+  </div>
+</div>
+
+<!-- 4 -->
+<h2>4 · Run detail — live progress <span class="tag fe">FE</span><span class="tag be">BE</span> <span class="tag">Phase 3</span></h2>
+<div class="pair">
+  <div class="col before"><h3>Before</h3>
+    <div class="stages"><span class="stage">✓ Pull 1.4s</span><span class="stage">✓ Cache 1m14s</span><span class="stage">✓ Install 36s</span><span class="stage vague">● Execute suite — running…</span></div>
+    <div class="note bad">Nothing between "running" and the final summary. Failures only visible after the run, from Allure.</div>
+  </div>
+  <div class="col after"><h3>After — runner status tree</h3>
+    <div class="tree">
+      <div class="run">● app-launch.feature <small>2/3</small></div>
+      <div>&nbsp;&nbsp;<span class="ok">✓</span> App opens on the home screen</div>
+      <div>&nbsp;&nbsp;<span class="ko">✗</span> Tab bar navigates between screens <small>— element ~Home not found</small></div>
+      <div>&nbsp;&nbsp;<span class="run">●</span> Login with valid user <small>(outline row 2/4)</small></div>
+    </div>
+    <div class="btns" style="justify-content:flex-start"><span class="btn new">Rerun failed only</span><span class="btn new">Combined report</span><span class="btn">Cancel</span></div>
+  </div>
+</div>
+
+<!-- 5 -->
+<h2>5 · Device page — interaction <span class="tag fe">FE</span><span class="tag be">BE</span> <span class="tag">Phase 4</span></h2>
+<div class="pair">
+  <div class="col before"><h3>Before</h3>
+    <div class="phone">Live view<br>(view-only)</div>
+    <div class="btns"><span class="btn">Lock</span><span class="btn">Install</span><span class="btn">Uninstall</span></div>
+    <div class="note bad">Watch only. No tap, input, screenshot, reboot or device state.</div>
+  </div>
+  <div class="col after"><h3>After</h3>
+    <div class="phone">Live view<br>tap · swipe · type</div>
+    <div class="btns"><span class="btn new">Home</span><span class="btn new">Back</span><span class="btn new">Rotate</span><span class="btn new">Screenshot</span><span class="btn new">Reboot</span><span class="btn new">Reconnect</span></div>
+    <div class="btns"><span class="btn new">Dark / light</span><span class="btn new">Text size</span><span class="btn new">Location</span><span class="btn new">Biometrics (sim)</span><span class="btn new">Wipe app data</span></div>
+    <div class="note good">Each action is a durable job the device's agent pulls on heartbeat; late results accepted; "unknown" when the agent can't confirm.</div>
+  </div>
+</div>
+
+<!-- 6 -->
+<h2>6 · Backend flow — who does what <span class="tag be">BE</span></h2>
+<table>
+  <tr><th>Concern</th><th>Before</th><th>After</th></tr>
+  <tr><td>App identity</td><td class="x">Free-form <code>project</code> string per run</td><td class="y">Stamped from config on every run/build</td></tr>
+  <tr><td>Run claim</td><td class="x">Any hub process runs any queued run</td><td class="y">Atomic claim with hub <code>machineId</code></td></tr>
+  <tr><td>Runner env</td><td class="x">Ad-hoc</td><td class="y">Contract: PLATFORM, VARIANT, UDID, RUN_ID, RUN_SUITE, RUN_TAG, AUTOMATION_NAME, APPIUM_HOST/PORT/PATH, BUILD_PATH</td></tr>
+  <tr><td>Checkout</td><td class="x">Full <code>git clone</code> per run</td><td class="y">Shared bare repo (fetch mutex) + worktree per run</td></tr>
+  <tr><td>Device ops</td><td class="x">Lock / install / uninstall</td><td class="y">+ control, screenshot, reboot, device-state jobs (agent-pulled)</td></tr>
+  <tr><td>Fleet</td><td class="x">Deleted agent reappears on next heartbeat</td><td class="y"><code>blocked</code> tombstone; offline host → runs fail fast as <code>device_offline</code></td></tr>
+  <tr><td>Scale path</td><td class="x">Hub-only, implicit</td><td class="y"><code>executor</code> recorded per run; agent execution is a dispatch change later</td></tr>
+</table>
+
+</div></body>
+</html>

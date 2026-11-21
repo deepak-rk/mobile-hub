@@ -6,6 +6,16 @@ Status legend: ⬜ not started · 🔨 built (compiles/typechecks) · ✅ tested
 
 `docs/reference-review-2026-09-14/` is a staged findings folder from comparing mobile-hub against a mature implementation of the same problem domain (architecture only — no org-specific detail carried over). Items from it merged into this file or `docs/SOURCE_FEATURE_TRACEABILITY.md` are cited inline; the folder holds the fuller writeup for anything not yet merged.
 
+## ⚠ Active plan — model reconciliation (2026-11-21)
+
+`docs/reconciliation-plan-2026-11.md` supersedes parts of this checklist. Decided: **one app per deployment** (no project picker; platform/variant/suite/device/build are run inputs), **variant as an optional run dimension**, **runners stay on the hub** with a recorded path to agent execution, **model fixed before new features**. Until Phase 1 lands, rows below describing the multi-project `projects:` map, project-level `platform`, and the `/execution/projects` picker describe behaviour that is being replaced, not a target.
+
+- [ ] Phase 1 — model & config (see plan §8.1)
+- [ ] Phase 2 — execution correctness (hub claim stamp, errorClass, stages + app preflight, worktree, late-writer guard)
+- [ ] Phase 3 — execution visibility (runner status tree, rerun-failed, combined report)
+- [ ] Phase 4 — device interaction (remote control, device ops, device-state jobs)
+- [ ] Phase 5 — fleet & ops (agent tombstone, liveness fail-fast, scheduler, notifications, activity log)
+
 ---
 
 ## Backend (`backend/src/modules/`)
