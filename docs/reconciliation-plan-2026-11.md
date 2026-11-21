@@ -151,3 +151,35 @@ Rule: a fix is verified against the **failure it addresses, reproduced**, not ag
 1. **Live-verify §2** once Docker is back: a real run (claim, results persisted, zero-test path with a non-matching tag), a cache snapshot interrupted mid-copy, an `adb` blip during a run (lock must survive), a placeholder-secret production boot (must refuse).
 2. Phase 1 (§3), ending with a real Android run from the new trigger form.
 3. Rules from the farm already enforced by this pass go into `backend/CLAUDE.md` once Phase 1 lands (atomic transitions; never overwrite a terminal outcome; unknown ≠ none; temp + rename for shared caches; per-run env always wins).
+
+---
+
+## 9. Gaps found by the accountability pass (`docs/accountability-2026-11.html`)
+
+Items that apply here but were in neither this plan nor the code. Ordered by risk.
+
+**Correctness / safety**
+1. Installs skip the device lock, so an install can land on a device mid-run (farm Lesson 41, "never install over a busy device").
+2. Feature switches do not stop server timers: the dispatcher and sweeps start regardless of org feature toggles (Lesson 57).
+3. `AGENT_APPIUM_HOST` defaults to `127.0.0.1`, unreachable from a remote hub. Refuse loopback for remote agents or default to the LAN address.
+4. CSP is disabled (`contentSecurityPolicy: false`).
+5. No CI workflow.
+
+**Execution**
+6. npm install: one ETARGET retry, fetch timeouts; load check that invalidates a bad cache entry; seed from the nearest complete entry on a miss.
+7. Execution presets; test impact from git diff; CSV export; artifacts zip; KPI gauges.
+
+**Devices / fleet**
+8. Stream concurrency cap and staggered capture starts.
+9. verify-requests (list installed bundles from the agent, unknown ≠ none).
+10. Agent build pre-staging; multi-device view; device-health page.
+11. Agent service install, self-update/deploy with rollback, SHA256 tarball installer; physical iOS install target.
+12. Log the source of SIGTERM.
+
+**Docs / process**
+13. Reverse-proxy note: SSE must not be buffered (`X-Accel-Buffering: no`).
+14. Symptom → check → fix and log-line → cause runbooks.
+15. Add "review by feature, by artefact, by user journey" to `docs/SELF_REVIEW.md` (Lesson 73).
+16. Frontend: lazy routes; runtime override for client feature flags (Lesson 59).
+
+The page also lists every item still marked **Unverified**. Each needs a code check before it can be called present or a bug.
