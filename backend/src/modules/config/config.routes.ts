@@ -8,6 +8,19 @@ export const configRoutes: FastifyPluginAsync = async (app) => {
   });
 
   /**
+   * The module toggles alone, for the frontend to hide what is switched off.
+   *
+   * Public on purpose (project decision: reads are public, only actions are
+   * gated) and not itself wrapped in gated() — it is how a client learns what
+   * is gated. Only the four booleans are returned: the full config above stays
+   * admin-only because it carries repo URLs and provider endpoints.
+   */
+  app.get('/features', () => {
+    const { builds, execution, analytics, streaming } = app.config.features;
+    return { builds, execution, analytics, streaming };
+  });
+
+  /**
    * Re-reads `mobilehub.org.yaml` + `mobilehub.project.yaml` from disk.
    *
    * Config was boot-only, so declaring a project or pointing one at a

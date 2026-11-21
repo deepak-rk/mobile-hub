@@ -77,6 +77,58 @@ afterEach(async () => {
   fs.rmSync(tmpDir, { recursive: true, force: true });
 });
 
+describe('GET /features', () => {
+  it('returns the four module toggles from the live config', async () => {
+    const res = await app.inject({ method: 'GET', url: '/features' });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ builds: true, execution: true, analytics: true, streaming: true });
+  });
+
+  it('reflects a toggle switched off by a reload, with no restart', async () => {
+    writeOrgConfig('features:\n  analytics: false\n  streaming: false\n');
+    await app.inject({ method: 'POST', url: '/reload' });
+
+    const res = await app.inject({ method: 'GET', url: '/features' });
+
+    expect(res.json()).toEqual({
+      builds: true,
+      execution: true,
+      analytics: false,
+      streaming: false,
+    });
+  });
+
+  it('needs no role — reads are public, unlike GET / which is admin-only', async () => {
+    // Swap the pass-through for a guard that always refuses: /features must
+    // still answer, while the full config behind requireRole must not.
+    const guarded = Fastify();
+    guarded.decorate('config', { ...PLATFORM_DEFAULTS, projects: {} });
+    guarded.decorate('requireRole', () => async () => {
+      throw Object.assign(new Error('forbidden'), { statusCode: 403 });
+    });
+    await guarded.register(configRoutes);
+
+    expect((await guarded.inject({ method: 'GET', url: '/features' })).statusCode).toBe(200);
+    expect((await guarded.inject({ method: 'GET', url: '/' })).statusCode).toBe(403);
+    await guarded.close();
+  });
+
+  it('returns only the toggles, never the rest of the config', async () => {
+    writeOrgConfig('automation:\n  repoUrl: https://example.com/secret.git\n  framework: appium\n');
+    await app.inject({ method: 'POST', url: '/reload' });
+
+    const res = await app.inject({ method: 'GET', url: '/features' });
+
+    expect(Object.keys(res.json<Record<string, unknown>>()).sort()).toEqual([
+      'analytics',
+      'builds',
+      'execution',
+      'streaming',
+    ]);
+  });
+});
+
 describe('POST /reload', () => {
   it('picks up a project declared after the process started', async () => {
     expect(app.config.projects).toEqual({});

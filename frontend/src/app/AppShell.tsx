@@ -3,13 +3,16 @@ import { BrandLogo } from '@/components/ui/BrandLogo';
 import { Button, useTheme } from 'react-design-kit';
 import { icons, iconSize } from '@/lib/icons';
 import { useAuth } from '@/features/auth/useAuth';
+import { useFeatures, type Feature } from '@/features/config/api/features.api';
 import styles from './AppShell.module.css';
 
-const navItems = [
+// `feature` names the org toggle (features.* in org config) a module sits
+// behind; items without one are core and always shown.
+const navItems: { to: string; label: string; icon: (typeof icons)[keyof typeof icons]; feature?: Feature }[] = [
   { to: '/devices', label: 'Devices', icon: icons.device },
-  { to: '/builds', label: 'Builds', icon: icons.build },
-  { to: '/execution', label: 'Execution', icon: icons.execution },
-  { to: '/analytics', label: 'Analytics', icon: icons.analytics },
+  { to: '/builds', label: 'Builds', icon: icons.build, feature: 'builds' },
+  { to: '/execution', label: 'Execution', icon: icons.execution, feature: 'execution' },
+  { to: '/analytics', label: 'Analytics', icon: icons.analytics, feature: 'analytics' },
   { to: '/hosts', label: 'Hosts', icon: icons.host },
 ];
 
@@ -56,7 +59,12 @@ export function AppShell() {
   const { theme, toggle } = useTheme({ storageKey: 'mh_theme', defaultTheme: 'dark' });
   const ThemeIcon = theme === 'dark' ? icons.themeLight : icons.themeDark;
   const { can } = useAuth();
-  const visibleNavItems = can('admin') ? [...navItems, ...adminNavItems] : navItems;
+  const { data: features } = useFeatures();
+  // Hidden only once the server has said a module is off: while the toggles
+  // are loading or the request failed every item stays, because unknown is
+  // not disabled (see useFeatureDisabled).
+  const enabledNavItems = navItems.filter(({ feature }) => !feature || features?.[feature] !== false);
+  const visibleNavItems = can('admin') ? [...enabledNavItems, ...adminNavItems] : enabledNavItems;
 
   return (
     <div className={styles.shell}>

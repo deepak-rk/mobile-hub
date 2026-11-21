@@ -5,6 +5,7 @@ import { icons, iconSize } from '@/lib/icons';
 import { useAuth } from '@/features/auth/useAuth';
 import { useDeviceStream, type StreamProtocol, type StreamState } from '../api/useDeviceStream';
 import { useStopDeviceStream } from '../api/devices.api';
+import { useFeatureDisabled } from '@/features/config/api/features.api';
 import type { Device } from '../types';
 import styles from './DeviceStream.module.css';
 
@@ -96,12 +97,39 @@ export function DeviceStream({ device }: { device: Device }) {
   // token, which the banner shows as "Sign in to view". Gating here instead
   // would leave it reading "Not streaming", which wrongly implies the device
   // simply isn't being watched (the same flaw fixed in the run log viewer).
+  // Streaming switched off for the org: never dial (the backend would refuse
+  // with FEATURE_DISABLED anyway). Only a confirmed `false` counts; while the
+  // toggles are unknown the panel behaves as before.
+  const streamingOff = useFeatureDisabled('streaming');
   const { state, frameUrl, restarted, dismissRestarted, lastError, closeReason } = useDeviceStream(
     device.udid,
-    !isOffline && started,
+    !streamingOff && !isOffline && started,
     protocol,
     device.machineId,
   );
+
+  if (streamingOff) {
+    return (
+      <div className={styles.wrap}>
+        <div className={styles.head}>
+          <span className={styles.title}>Live view</span>
+          <span className={styles.banner} style={{ color: 'var(--text-tertiary)' }}>
+            <span className={styles.dot} style={{ background: 'var(--text-tertiary)' }} aria-hidden="true" />
+            Disabled
+          </span>
+        </div>
+        <div className={styles.stage}>
+          <div className={styles.placeholder}>
+            <icons.stream size={32} aria-hidden="true" />
+            <div className={styles.placeholderTitle}>Live view is disabled for your organisation</div>
+            <p className={styles.placeholderBody}>
+              Device streaming is switched off in the organisation config (features.streaming).
+            </p>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   // An offline device is never dialled at all, so say so directly. `!user`
   // must be checked before `!started` — the hook itself never reaches its
@@ -241,7 +269,9 @@ export function DeviceStream({ device }: { device: Device }) {
 export function StreamStopButton({ device }: { device: Device }) {
   const { can } = useAuth();
   const stop = useStopDeviceStream(device.udid, device.machineId);
-  if (!can('operator', 'admin')) return null;
+  // Its endpoint is a streaming route, so with streaming off it could only 404.
+  const streamingOff = useFeatureDisabled('streaming');
+  if (streamingOff || !can('operator', 'admin')) return null;
   return (
     <Button size="sm" variant="destructive" onClick={() => stop.mutate()} disabled={stop.isPending}>
       <icons.cancelled size={iconSize.control} aria-hidden="true" />
