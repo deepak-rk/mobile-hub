@@ -3,6 +3,8 @@ import { Device } from './device.model';
 import {
   syncDevices,
   getDevice,
+  resolveDevice,
+  AmbiguousDeviceError,
   acquireLock,
   releaseLock,
   renewLock,
@@ -271,5 +273,23 @@ describe('getDevicesByUdids', () => {
 
     expect(await getDevicesByUdids([])).toEqual([]);
     expect(find).not.toHaveBeenCalled();
+  });
+});
+
+describe('resolveDevice', () => {
+  it('refuses to guess when a udid is on more than one host', async () => {
+    vi.spyOn(Device, 'find').mockResolvedValue([{ machineId: 'host-a' }, { machineId: 'host-b' }] as never);
+    await expect(resolveDevice('emulator-5554')).rejects.toBeInstanceOf(AmbiguousDeviceError);
+  });
+
+  it('returns the single match when the udid is unique', async () => {
+    vi.spyOn(Device, 'find').mockResolvedValue([{ machineId: 'host-a', udid: 'R58' }] as never);
+    expect((await resolveDevice('R58'))?.machineId).toBe('host-a');
+  });
+
+  it('uses the host when given', async () => {
+    const findOne = vi.spyOn(Device, 'findOne').mockResolvedValue({ machineId: 'host-b' } as never);
+    await resolveDevice('emulator-5554', 'host-b');
+    expect(findOne).toHaveBeenCalledWith({ udid: 'emulator-5554', machineId: 'host-b' });
   });
 });

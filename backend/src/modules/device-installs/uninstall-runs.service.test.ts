@@ -16,15 +16,15 @@ afterEach(() => {
 
 describe('triggerUninstallRun', () => {
   it('rejects a target device that does not exist', async () => {
-    vi.spyOn(devicesService, 'getDevice').mockResolvedValue(null);
+    vi.spyOn(devicesService, 'resolveDevice').mockResolvedValue(null);
 
     await expect(
-      triggerUninstallRun({ packageName: 'com.example.app', project: 'demo-app', deviceUdids: ['ghost'], triggeredBy: 'user-1' }),
+      triggerUninstallRun({ packageName: 'com.example.app', project: 'demo-app', devices: [{ udid: 'ghost' }], triggeredBy: 'user-1' }),
     ).rejects.toThrow(UnknownDeviceError);
   });
 
   it('creates one queued target per device, carrying the package name on the run itself', async () => {
-    vi.spyOn(devicesService, 'getDevice').mockImplementation(
+    vi.spyOn(devicesService, 'resolveDevice').mockImplementation(
       async (udid) => ({ udid, machineId: 'host-1' }) as never,
     );
     const create = vi.spyOn(UninstallRun, 'create').mockResolvedValue({ targets: [] } as never);
@@ -32,7 +32,7 @@ describe('triggerUninstallRun', () => {
     await triggerUninstallRun({
       packageName: 'com.example.app',
       project: 'demo-app',
-      deviceUdids: ['d1', 'd2'],
+      devices: [{ udid: 'd1' }, { udid: 'd2' }],
       triggeredBy: 'user-1',
     });
 
@@ -48,7 +48,7 @@ describe('triggerUninstallRun', () => {
   });
 
   it('rejects the whole run if any one target device is unknown, without creating anything', async () => {
-    vi.spyOn(devicesService, 'getDevice').mockImplementation(
+    vi.spyOn(devicesService, 'resolveDevice').mockImplementation(
       async (udid) => (udid === 'ghost' ? null : ({ udid, machineId: 'host-1' } as never)),
     );
     const create = vi.spyOn(UninstallRun, 'create');
@@ -57,7 +57,7 @@ describe('triggerUninstallRun', () => {
       triggerUninstallRun({
         packageName: 'com.example.app',
         project: 'demo-app',
-        deviceUdids: ['ok', 'ghost'],
+        devices: [{ udid: 'ok' }, { udid: 'ghost' }],
         triggeredBy: 'user-1',
       }),
     ).rejects.toThrow(UnknownDeviceError);

@@ -15,7 +15,10 @@ import { NotFoundError, ValidationError } from '../../common/errors/app-error';
 
 const triggerBody = z.object({
   buildId: z.string().min(1),
-  deviceUdids: z.array(z.string().min(1)).min(1),
+  // `devices` names the host for each target; bare `deviceUdids` is kept for
+  // existing clients and is refused (409) when a udid exists on several hosts.
+  deviceUdids: z.array(z.string().min(1)).min(1).optional(),
+  devices: z.array(z.object({ udid: z.string().min(1), machineId: z.string().min(1) })).min(1).optional(),
 });
 
 const reportBody = z.object({
@@ -62,10 +65,17 @@ export const installRunsRoutes: FastifyPluginAsync = async (app) => {
       if (!body.success) {
         throw new ValidationError(body.error.message);
       }
+      if (!body.data.devices && !body.data.deviceUdids) {
+        throw new ValidationError('devices (or deviceUdids) is required');
+      }
       // BuildNotReadyError / UnknownDeviceError / IncompatibleDeviceError are
       // typed AppErrors now — the global error handler maps them, so no local
       // catch is needed.
-      const run = await triggerInstallRun({ ...body.data, triggeredBy: req.user.sub });
+      const run = await triggerInstallRun({
+        ...body.data,
+        devices: [...(body.data.devices ?? []), ...(body.data.deviceUdids ?? []).map((udid) => ({ udid }))],
+        triggeredBy: req.user.sub,
+      });
       return reply.status(201).send(run);
     },
   );

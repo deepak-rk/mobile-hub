@@ -1,4 +1,4 @@
-import { getDevice } from '../devices/devices.service';
+import { resolveDevice, type DeviceRef } from '../devices/devices.service';
 import { UninstallRun, IUninstallRun, UninstallTargetStatus } from './uninstall-run.model';
 import { ValidationError } from '../../common/errors/app-error';
 
@@ -16,7 +16,7 @@ export class UnknownDeviceError extends ValidationError {
 export interface TriggerUninstallRunInput {
   packageName: string;
   project: string;
-  deviceUdids: string[];
+  devices: DeviceRef[];
   triggeredBy: string;
 }
 
@@ -37,8 +37,8 @@ export interface TriggerUninstallRunInput {
  */
 export async function triggerUninstallRun(input: TriggerUninstallRunInput): Promise<IUninstallRun> {
   const targets = await Promise.all(
-    input.deviceUdids.map(async (udid) => {
-      const device = await getDevice(udid);
+    input.devices.map(async ({ udid, machineId }) => {
+      const device = await resolveDevice(udid, machineId);
       if (!device) throw new UnknownDeviceError(udid);
       return {
         deviceUdid: udid,

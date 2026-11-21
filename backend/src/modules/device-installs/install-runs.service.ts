@@ -1,6 +1,6 @@
 import { getBuild } from '../builds/builds.service';
 import { Build } from '../builds/build.model';
-import { getDevice, getDevicesByUdids } from '../devices/devices.service';
+import { getDevicesByUdids, resolveDevice, type DeviceRef } from '../devices/devices.service';
 import { InstallRun, IInstallRun, InstallTargetStatus } from './install-run.model';
 import { UninstallRun } from './uninstall-run.model';
 import { publishInstallEvent } from './install-runs.events';
@@ -56,7 +56,7 @@ export class IncompatibleDeviceError extends ValidationError {
 
 export interface TriggerInstallRunInput {
   buildId: string;
-  deviceUdids: string[];
+  devices: DeviceRef[];
   triggeredBy: string;
 }
 
@@ -75,8 +75,8 @@ export async function triggerInstallRun(input: TriggerInstallRunInput): Promise<
   if (build.status !== 'ready') throw new BuildNotReadyError(build.status);
 
   const targets = await Promise.all(
-    input.deviceUdids.map(async (udid) => {
-      const device = await getDevice(udid);
+    input.devices.map(async ({ udid, machineId }) => {
+      const device = await resolveDevice(udid, machineId);
       if (!device) throw new UnknownDeviceError(udid);
       if (device.platform !== build.platform) {
         throw new IncompatibleDeviceError(udid, device.platform, build.platform);

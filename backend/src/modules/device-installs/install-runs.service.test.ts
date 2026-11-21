@@ -31,17 +31,17 @@ describe('triggerInstallRun', () => {
   it('rejects a build that is not ready', async () => {
     vi.spyOn(buildsService, 'getBuild').mockResolvedValue({ ...readyBuild, status: 'downloading' } as never);
 
-    await expect(triggerInstallRun({ buildId: 'build-1', deviceUdids: ['d1'], triggeredBy: 'user-1' })).rejects.toThrow(
+    await expect(triggerInstallRun({ buildId: 'build-1', devices: [{ udid: 'd1' }], triggeredBy: 'user-1' })).rejects.toThrow(
       BuildNotReadyError,
     );
   });
 
   it('rejects a target device that does not exist', async () => {
     vi.spyOn(buildsService, 'getBuild').mockResolvedValue(readyBuild as never);
-    vi.spyOn(devicesService, 'getDevice').mockResolvedValue(null);
+    vi.spyOn(devicesService, 'resolveDevice').mockResolvedValue(null);
 
     await expect(
-      triggerInstallRun({ buildId: 'build-1', deviceUdids: ['ghost'], triggeredBy: 'user-1' }),
+      triggerInstallRun({ buildId: 'build-1', devices: [{ udid: 'ghost' }], triggeredBy: 'user-1' }),
     ).rejects.toThrow(UnknownDeviceError);
   });
 
@@ -51,26 +51,26 @@ describe('triggerInstallRun', () => {
     // Android APK aimed at an iOS device failed late and confusingly at the
     // agent instead of being refused up front.
     vi.spyOn(buildsService, 'getBuild').mockResolvedValue(readyBuild as never); // android
-    vi.spyOn(devicesService, 'getDevice').mockResolvedValue({
+    vi.spyOn(devicesService, 'resolveDevice').mockResolvedValue({
       udid: 'iphone-1',
       machineId: 'host-1',
       platform: 'ios',
     } as never);
 
     await expect(
-      triggerInstallRun({ buildId: 'build-1', deviceUdids: ['iphone-1'], triggeredBy: 'user-1' }),
+      triggerInstallRun({ buildId: 'build-1', devices: [{ udid: 'iphone-1' }], triggeredBy: 'user-1' }),
     ).rejects.toThrow(IncompatibleDeviceError);
   });
 
   it('rejects the whole run if any one target is incompatible', async () => {
     vi.spyOn(buildsService, 'getBuild').mockResolvedValue(readyBuild as never);
-    vi.spyOn(devicesService, 'getDevice').mockImplementation(
+    vi.spyOn(devicesService, 'resolveDevice').mockImplementation(
       async (udid) => ({ udid, machineId: 'host-1', platform: udid === 'bad' ? 'ios' : 'android' }) as never,
     );
     const create = vi.spyOn(InstallRun, 'create');
 
     await expect(
-      triggerInstallRun({ buildId: 'build-1', deviceUdids: ['ok', 'bad'], triggeredBy: 'user-1' }),
+      triggerInstallRun({ buildId: 'build-1', devices: [{ udid: 'ok' }, { udid: 'bad' }], triggeredBy: 'user-1' }),
     ).rejects.toThrow(IncompatibleDeviceError);
     // Nothing partially created — the caller fixes the selection and retries.
     expect(create).not.toHaveBeenCalled();
@@ -78,13 +78,13 @@ describe('triggerInstallRun', () => {
 
   it('creates one queued target per device, with no lock acquired', async () => {
     vi.spyOn(buildsService, 'getBuild').mockResolvedValue(readyBuild as never);
-    vi.spyOn(devicesService, 'getDevice').mockImplementation(
+    vi.spyOn(devicesService, 'resolveDevice').mockImplementation(
       async (udid) => ({ udid, machineId: 'host-1', platform: 'android' }) as never,
     );
     const acquireLock = vi.spyOn(devicesService, 'acquireLock');
     const create = vi.spyOn(InstallRun, 'create').mockResolvedValue({ targets: [] } as never);
 
-    await triggerInstallRun({ buildId: 'build-1', deviceUdids: ['d1', 'd2'], triggeredBy: 'user-1' });
+    await triggerInstallRun({ buildId: 'build-1', devices: [{ udid: 'd1' }, { udid: 'd2' }], triggeredBy: 'user-1' });
 
     const passedTargets = (create.mock.calls[0][0] as { targets: { deviceUdid: string; status: string }[] }).targets;
     expect(passedTargets).toHaveLength(2);

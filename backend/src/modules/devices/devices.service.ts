@@ -1,4 +1,21 @@
 import { Device, IDevice } from './device.model';
+import { ConflictError } from '../../common/errors/app-error';
+
+/** A target device; `machineId` is required to pick between hosts that share a udid. */
+export interface DeviceRef {
+  udid: string;
+  machineId?: string;
+}
+
+/** The same udid is attached to more than one host and the caller did not say which. */
+export class AmbiguousDeviceError extends ConflictError {
+  constructor(udid: string, machineIds: string[]) {
+    super(
+      `Device ${udid} is attached to more than one host (${machineIds.join(', ')}) — specify machineId`,
+      'AMBIGUOUS_DEVICE',
+    );
+  }
+}
 
 /** How often releaseExpiredLocks should be polled. */
 export const DEVICE_LOCK_SWEEP_INTERVAL_MS = 60_000; // once a minute — a lock TTL is measured in minutes, not seconds
@@ -27,6 +44,25 @@ export async function listDevices(filters: {
  */
 export async function getDevice(udid: string, machineId?: string): Promise<IDevice | null> {
   return Device.findOne(machineId ? { udid, machineId } : { udid });
+}
+
+/**
+ * Like `getDevice`, but never guesses: with no `machineId`, a udid present on
+ * more than one host is an `AmbiguousDeviceError` instead of whichever
+ * document Mongo returns first.
+ *
+ * Use this anywhere a request *acts* on a device (install, uninstall, stream).
+ * Emulator serials (`emulator-5554`) are reused on every host, so a bare-udid
+ * `findOne` sent installs and streams to the wrong machine as soon as a
+ * second host joined. A production farm in this domain hit exactly this
+ * (preflight queued the install on the wrong agent; the run timed out) and
+ * settled on "resolve by host + udid, never udid alone".
+ */
+export async function resolveDevice(udid: string, machineId?: string): Promise<IDevice | null> {
+  if (machineId) return Device.findOne({ udid, machineId });
+  const matches = await Device.find({ udid });
+  if (matches.length > 1) throw new AmbiguousDeviceError(udid, matches.map((d) => d.machineId));
+  return matches[0] ?? null;
 }
 
 /**

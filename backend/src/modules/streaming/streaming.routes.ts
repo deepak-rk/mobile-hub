@@ -2,7 +2,7 @@ import { FastifyPluginAsync, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import type { WebSocket } from 'ws';
 import type { JwtPayload } from 'fastify-auth-kit';
-import { getDevice } from '../devices/devices.service';
+import { resolveDevice } from '../devices/devices.service';
 import { StreamSession } from './stream-session.model';
 import { streamingService, StreamingError, shouldDropFrameForBackpressure } from './streaming.service';
 import type { StreamProtocol } from './capture-source';
@@ -49,7 +49,8 @@ export const streamingRoutes: FastifyPluginAsync = async (app) => {
 
   app.post('/:udid/stream/stop', { preHandler: app.requireRole('operator', 'admin') }, async (req) => {
     const { udid } = req.params as { udid: string };
-    const device = await getDevice(udid);
+    const { machineId } = req.query as { machineId?: string };
+    const device = await resolveDevice(udid, machineId || undefined);
     if (!device) throw new NotFoundError('Device not found');
 
     const stopped = await streamingService.stopForDevice(device.machineId, udid);
@@ -86,7 +87,16 @@ export const streamingRoutes: FastifyPluginAsync = async (app) => {
         return;
       }
 
-      const device = await getDevice(udid);
+      // `machineId` picks the host when the udid is on more than one; without
+      // it an ambiguous udid is refused rather than streamed from a guess.
+      const { machineId } = req.query as { machineId?: string };
+      let device;
+      try {
+        device = await resolveDevice(udid, machineId || undefined);
+      } catch {
+        socket.close(4009, 'Device is on more than one host — specify machineId');
+        return;
+      }
       if (!device) {
         socket.close(4004, 'Device not found');
         return;
