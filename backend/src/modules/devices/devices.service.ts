@@ -7,6 +7,26 @@ export interface DeviceRef {
   machineId?: string;
 }
 
+/**
+ * Picks the one target a host's agent is reporting about.
+ *
+ * Progress reports used to match by udid alone, so when one run targeted
+ * emulator-5554 on two hosts, host B's reports landed on host A's target (A
+ * shown done without its agent ever answering) while B's stayed queued and
+ * was reinstalled on every poll. With a host, match exactly; without one (an
+ * agent older than this fix), accept only an unambiguous udid.
+ */
+export function findReportedTarget<T extends { deviceUdid: string; machineId: string }>(
+  targets: T[],
+  deviceUdid: string,
+  machineId?: string,
+): T | undefined {
+  if (machineId) return targets.find((t) => t.deviceUdid === deviceUdid && t.machineId === machineId);
+  const matches = targets.filter((t) => t.deviceUdid === deviceUdid);
+  if (matches.length > 1) throw new AmbiguousDeviceError(deviceUdid, matches.map((t) => t.machineId));
+  return matches[0];
+}
+
 /** The same udid is attached to more than one host and the caller did not say which. */
 export class AmbiguousDeviceError extends ConflictError {
   constructor(udid: string, machineIds: string[]) {

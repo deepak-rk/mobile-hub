@@ -4,6 +4,7 @@ import {
   syncDevices,
   getDevice,
   resolveDevice,
+  findReportedTarget,
   AmbiguousDeviceError,
   acquireLock,
   releaseLock,
@@ -291,5 +292,34 @@ describe('resolveDevice', () => {
     const findOne = vi.spyOn(Device, 'findOne').mockResolvedValue({ machineId: 'host-b' } as never);
     await resolveDevice('emulator-5554', 'host-b');
     expect(findOne).toHaveBeenCalledWith({ udid: 'emulator-5554', machineId: 'host-b' });
+  });
+});
+
+/**
+ * Regression (2026-11-22): install/uninstall progress reports matched their
+ * target by udid alone, so host B's reports for emulator-5554 landed on host
+ * A's target in the same run.
+ */
+describe('findReportedTarget', () => {
+  const targets = [
+    { deviceUdid: 'emulator-5554', machineId: 'host-a', status: 'queued' },
+    { deviceUdid: 'emulator-5554', machineId: 'host-b', status: 'queued' },
+    { deviceUdid: 'R58', machineId: 'host-a', status: 'queued' },
+  ];
+
+  it("picks the reporting host's own target", () => {
+    expect(findReportedTarget(targets, 'emulator-5554', 'host-b')?.machineId).toBe('host-b');
+  });
+
+  it('refuses to guess when an older agent sends no host and the udid is ambiguous', () => {
+    expect(() => findReportedTarget(targets, 'emulator-5554')).toThrow(AmbiguousDeviceError);
+  });
+
+  it('still accepts an older agent when the udid is unique in the run', () => {
+    expect(findReportedTarget(targets, 'R58')?.machineId).toBe('host-a');
+  });
+
+  it("does not match another host's target", () => {
+    expect(findReportedTarget(targets, 'R58', 'host-b')).toBeUndefined();
   });
 });

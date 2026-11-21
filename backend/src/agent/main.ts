@@ -72,7 +72,7 @@ async function main(): Promise<void> {
     },
     pollIntervalMs: env.AGENT_POLL_INTERVAL_MS,
     discovery,
-    hub: new HubClient(env.HUB_URL, env.AGENT_CREDENTIAL_TOKEN ?? env.AGENT_TOKEN),
+    hub: new HubClient(env.HUB_URL, env.AGENT_CREDENTIAL_TOKEN ?? env.AGENT_TOKEN, env.MACHINE_ID),
     appiumHost: env.AGENT_APPIUM_HOST,
     appiumBasePort: env.AGENT_APPIUM_BASE_PORT,
   });

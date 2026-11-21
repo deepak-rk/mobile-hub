@@ -7,7 +7,7 @@ import {
   triggerUninstallRun,
 } from './uninstall-runs.service';
 import { requireAgentToken, AGENT_TRAFFIC_LOG_LEVEL } from '../agent-auth/agent-auth';
-import { NotFoundError, ValidationError } from '../../common/errors/app-error';
+import { ForbiddenError, NotFoundError, ValidationError } from '../../common/errors/app-error';
 
 const triggerBody = z.object({
   packageName: z.string().min(1),
@@ -77,7 +77,13 @@ export const uninstallRunsRoutes: FastifyPluginAsync = async (app) => {
     if (!body.success) {
       throw new ValidationError(body.error.message);
     }
-    const run = await reportUninstallTargetProgress(id, deviceUdid, body.data);
+    // The reporting host: from its own credential when it has one, else the
+    // query param. A credential scoped to another host may not report here.
+    const { machineId: queryMachineId } = req.query as { machineId?: string };
+    if (req.agentMachineId && queryMachineId && req.agentMachineId !== queryMachineId) {
+      throw new ForbiddenError('This credential is scoped to a different machineId.', 'AGENT_MACHINE_MISMATCH');
+    }
+    const run = await reportUninstallTargetProgress(id, deviceUdid, body.data, req.agentMachineId ?? queryMachineId);
     if (!run) throw new NotFoundError('Uninstall run or target not found');
     return run;
   });

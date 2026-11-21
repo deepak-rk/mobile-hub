@@ -177,3 +177,15 @@ describe('HubClient.postStreamError', () => {
     });
   });
 });
+
+describe('HubClient target reports carry the host', () => {
+  it('appends machineId so the hub can tell same-udid targets apart', async () => {
+    const fetchSpy = vi.fn().mockResolvedValue({ ok: true, status: 200, json: () => Promise.resolve({}), text: () => Promise.resolve('') });
+    vi.stubGlobal('fetch', fetchSpy);
+    await new HubClient('http://hub', 'tok', 'host b').reportInstallProgress('run1', 'emulator-5554', { status: 'done' });
+    await new HubClient('http://hub', 'tok', 'host b').reportUninstallProgress('run2', 'emulator-5554', { status: 'done' });
+    expect(fetchSpy.mock.calls[0][0]).toBe('http://hub/api/device-installs/run1/targets/emulator-5554/report?machineId=host%20b');
+    expect(fetchSpy.mock.calls[1][0]).toBe('http://hub/api/device-installs/uninstalls/run2/targets/emulator-5554/report?machineId=host%20b');
+    vi.unstubAllGlobals();
+  });
+});

@@ -1,4 +1,4 @@
-import { resolveDevice, type DeviceRef } from '../devices/devices.service';
+import { resolveDevice, findReportedTarget, type DeviceRef } from '../devices/devices.service';
 import { UninstallRun, IUninstallRun, UninstallTargetStatus } from './uninstall-run.model';
 import { ValidationError } from '../../common/errors/app-error';
 
@@ -149,11 +149,12 @@ export async function reportUninstallTargetProgress(
   uninstallRunId: string,
   deviceUdid: string,
   update: ReportUninstallTargetProgressInput,
+  machineId?: string,
 ): Promise<IUninstallRun | null> {
   const run = await UninstallRun.findById(uninstallRunId);
   if (!run) return null;
 
-  const target = run.targets.find((t) => t.deviceUdid === deviceUdid);
+  const target = findReportedTarget(run.targets, deviceUdid, machineId);
   if (!target) return null;
 
   if (target.status === 'queued' && update.status !== 'queued') target.startedAt = new Date();

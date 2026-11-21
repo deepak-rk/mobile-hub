@@ -144,7 +144,13 @@ export class HubClient {
   constructor(
     private readonly baseUrl: string,
     private readonly agentToken?: string,
+    /** Sent with target reports so the hub can tell this host's target from another host's same-udid one. */
+    private readonly machineId?: string,
   ) {}
+
+  private hostQuery(): string {
+    return this.machineId ? `?machineId=${encodeURIComponent(this.machineId)}` : '';
+  }
 
   async heartbeat(params: {
     machineId: string;
@@ -288,7 +294,7 @@ export class HubClient {
     deviceUdid: string,
     update: { status: InstallTargetStatus; progress?: number; error?: string; packageName?: string },
   ): Promise<void> {
-    await this.post(`/api/device-installs/${installRunId}/targets/${deviceUdid}/report`, update);
+    await this.post(`/api/device-installs/${installRunId}/targets/${deviceUdid}/report${this.hostQuery()}`, update);
   }
 
   async reportUninstallProgress(
@@ -296,7 +302,7 @@ export class HubClient {
     deviceUdid: string,
     update: { status: UninstallTargetStatus; error?: string },
   ): Promise<void> {
-    await this.post(`/api/device-installs/uninstalls/${uninstallRunId}/targets/${deviceUdid}/report`, update);
+    await this.post(`/api/device-installs/uninstalls/${uninstallRunId}/targets/${deviceUdid}/report${this.hostQuery()}`, update);
   }
 
   private async post<T>(path: string, body: unknown): Promise<T> {

@@ -11,7 +11,7 @@ import {
 } from './install-runs.service';
 import { subscribeToInstallEvents } from './install-runs.events';
 import { requireAgentToken, AGENT_TRAFFIC_LOG_LEVEL } from '../agent-auth/agent-auth';
-import { NotFoundError, ValidationError } from '../../common/errors/app-error';
+import { ForbiddenError, NotFoundError, ValidationError } from '../../common/errors/app-error';
 
 const triggerBody = z.object({
   buildId: z.string().min(1),
@@ -88,7 +88,13 @@ export const installRunsRoutes: FastifyPluginAsync = async (app) => {
     if (!body.success) {
       throw new ValidationError(body.error.message);
     }
-    const run = await reportTargetProgress(id, deviceUdid, body.data);
+    // The reporting host: from its own credential when it has one, else the
+    // query param. A credential scoped to another host may not report here.
+    const { machineId: queryMachineId } = req.query as { machineId?: string };
+    if (req.agentMachineId && queryMachineId && req.agentMachineId !== queryMachineId) {
+      throw new ForbiddenError('This credential is scoped to a different machineId.', 'AGENT_MACHINE_MISMATCH');
+    }
+    const run = await reportTargetProgress(id, deviceUdid, body.data, req.agentMachineId ?? queryMachineId);
     if (!run) throw new NotFoundError('Install run or target not found');
     return run;
   });

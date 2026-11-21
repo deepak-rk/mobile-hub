@@ -1,6 +1,6 @@
 import { getBuild } from '../builds/builds.service';
 import { Build } from '../builds/build.model';
-import { getDevicesByUdids, resolveDevice, type DeviceRef } from '../devices/devices.service';
+import { getDevicesByUdids, resolveDevice, findReportedTarget, type DeviceRef } from '../devices/devices.service';
 import { InstallRun, IInstallRun, InstallTargetStatus } from './install-run.model';
 import { UninstallRun } from './uninstall-run.model';
 import { publishInstallEvent } from './install-runs.events';
@@ -404,11 +404,12 @@ export async function reportTargetProgress(
   installRunId: string,
   deviceUdid: string,
   update: ReportTargetProgressInput,
+  machineId?: string,
 ): Promise<IInstallRun | null> {
   const run = await InstallRun.findById(installRunId);
   if (!run) return null;
 
-  const target = run.targets.find((t) => t.deviceUdid === deviceUdid);
+  const target = findReportedTarget(run.targets, deviceUdid, machineId);
   if (!target) return null;
 
   if (target.status === 'queued' && update.status !== 'queued') target.startedAt = new Date();
