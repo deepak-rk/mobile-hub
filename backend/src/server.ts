@@ -10,6 +10,7 @@ import {
 } from './modules/hosts/hosts.service';
 import {
   recoverOrphanedRuns,
+  sweepStaleCacheSnapshots,
   sweepFinishedWorkspaces,
   dispatchQueuedRuns,
   QUEUE_DISPATCH_INTERVAL_MS,
@@ -91,6 +92,10 @@ async function start(): Promise<void> {
   const recovered = await recoverOrphanedRuns(app.config.appium);
   if (recovered > 0) {
     app.log.warn(`Recovered ${recovered} execution run(s) left mid-flight by a previous restart`);
+  }
+  const sweptSnapshots = await sweepStaleCacheSnapshots();
+  if (sweptSnapshots > 0) {
+    app.log.warn(`Removed ${sweptSnapshots} half-written npm cache snapshot(s) left by a previous crash`);
   }
 
   // Same reasoning as the runs above, for captures: a capture's liveness is

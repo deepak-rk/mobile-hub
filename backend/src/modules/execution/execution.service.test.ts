@@ -22,6 +22,7 @@ import {
   saveCacheIfMissing,
   isCompleteCache,
   CACHE_COMPLETE_MARKER,
+  sweepStaleCacheSnapshots,
   OFFLINE_FAIL_FAST_MS,
 } from './execution.service';
 
@@ -845,5 +846,21 @@ describe('offline device fail-fast', () => {
 
     expect(doc.status).toBe('failed');
     expect(acquire).not.toHaveBeenCalled();
+  });
+});
+
+describe('sweepStaleCacheSnapshots', () => {
+  it('removes snapshot temp dirs a crash left behind, and nothing else', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mh-cache-'));
+    fs.mkdirSync(path.join(root, 'abc123.tmp-4242-deadbeef'));
+    fs.mkdirSync(path.join(root, 'abc123'));
+    fs.writeFileSync(path.join(root, 'abc123', CACHE_COMPLETE_MARKER), 'x');
+
+    expect(await sweepStaleCacheSnapshots(root)).toBe(1);
+    expect(fs.readdirSync(root)).toEqual(['abc123']);
+  });
+
+  it('is a no-op when there is no cache directory yet', async () => {
+    expect(await sweepStaleCacheSnapshots(path.join(os.tmpdir(), 'mh-does-not-exist-xyz'))).toBe(0);
   });
 });

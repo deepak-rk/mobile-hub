@@ -445,6 +445,25 @@ export async function reportRemoteAppiumReady(deviceUdid: string, machineId: str
  * nothing to clean up, and a run that never got as far as starting Appium is
  * the common case for an early cancel.
  */
+type ListedSession = { id?: string; sessionId?: string; capabilities?: Record<string, string | undefined> };
+
+/**
+ * Appium 2 removed `GET /sessions` (it 404s) and lists sessions at
+ * `GET /appium/sessions` instead; Appium 1 and some older servers only have
+ * the former. Asking only the old route made session cleanup a silent no-op
+ * on every Appium 2 server, so the next run on that device failed to create
+ * a session. Tries the current route first.
+ */
+async function listSessions(baseUrl: string, prefix: string): Promise<ListedSession[]> {
+  for (const route of ['/appium/sessions', '/sessions']) {
+    const res = await fetch(`${baseUrl}${prefix}${route}`, { signal: AbortSignal.timeout(STATUS_TIMEOUT_MS) });
+    if (!res.ok) continue;
+    const body = (await res.json()) as { value?: ListedSession[] } | ListedSession[];
+    return Array.isArray(body) ? body : (body.value ?? []);
+  }
+  return [];
+}
+
 export async function closeActiveSessions(device: IDevice, config: EffectiveConfig): Promise<void> {
   // Mirrors ensureAppiumServer's own branch: a remote-managed device's real
   // server lives at device.remoteAppium, never at config.appium.host +
@@ -476,13 +495,17 @@ export async function closeActiveSessions(device: IDevice, config: EffectiveConf
   if (prefix === null) return;
 
   try {
-    const res = await fetch(`${endpoint.baseUrl}${prefix}/sessions`, { signal: AbortSignal.timeout(STATUS_TIMEOUT_MS) });
-    if (!res.ok) return;
-    const body = (await res.json()) as { value?: Array<{ id?: string; sessionId?: string }> } | Array<{ id?: string }>;
-    const sessions = Array.isArray(body) ? body : (body.value ?? []);
+    const sessions = await listSessions(endpoint.baseUrl, prefix);
     for (const session of sessions) {
-      const id = session.id ?? (session as { sessionId?: string }).sessionId;
+      const id = session.id ?? session.sessionId;
       if (!id) continue;
+      // A server shared by several devices (an org's own Appium, or one per
+      // host) holds other runs' sessions too — deleting those would kill runs
+      // on other phones. Only a session that names no device at all is
+      // assumed to be this device's (the one-server-per-device case).
+      const caps = session.capabilities ?? {};
+      const sessionUdid = caps.udid ?? caps['appium:udid'];
+      if (sessionUdid && sessionUdid !== device.udid) continue;
       // Same prefix as the GET above — a session opened under /wd/hub only
       // closes at /wd/hub/session/:id, not the bare path.
       await fetch(`${endpoint.baseUrl}${prefix}/session/${id}`, {

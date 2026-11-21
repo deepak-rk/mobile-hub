@@ -1131,3 +1131,26 @@ export async function recoverOrphanedRuns(appiumConfig?: EffectiveConfig['appium
   }
   return orphaned.length;
 }
+
+/**
+ * Removes `<key>.tmp-*` snapshot directories left in the npm cache by a
+ * process that died mid-copy (`saveCacheIfMissing` cleans up its own temp dir
+ * in `finally`, which a crash or kill never reaches). They are never read —
+ * restore only trusts the completion marker — but each one is a full
+ * `node_modules` copy, so left alone they fill the disk. The production farm
+ * this design came from listed exactly this as an open item.
+ *
+ * Boot-only: at that point no run in this process can be writing a snapshot.
+ * Returns how many were removed.
+ */
+export async function sweepStaleCacheSnapshots(cacheRoot = path.join(env.EXECUTIONS_DIR, '.cache')): Promise<number> {
+  let entries: string[];
+  try {
+    entries = await fs.promises.readdir(cacheRoot);
+  } catch {
+    return 0; // no cache yet
+  }
+  const stale = entries.filter((name) => /\.tmp-\d+-[0-9a-f]+$/.test(name));
+  await Promise.all(stale.map((name) => fs.promises.rm(path.join(cacheRoot, name), { recursive: true, force: true })));
+  return stale.length;
+}

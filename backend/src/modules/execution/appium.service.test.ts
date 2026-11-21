@@ -127,6 +127,7 @@ describe('closeActiveSessions', () => {
       // '/wd/hub/status' — the more specific legacy path must be tested first.
       if (url.endsWith('/wd/hub/status')) return Promise.resolve({ ok: true });
       if (url.endsWith('/status')) return Promise.resolve({ ok: false }); // bare path: not this server
+      if (url.endsWith('/appium/sessions')) return Promise.resolve({ ok: false, status: 404 }); // pre-Appium-2 server
       if (url.endsWith('/wd/hub/sessions')) {
         return Promise.resolve({ ok: true, json: () => Promise.resolve({ value: [{ id: 'legacy-sess' }] }) });
       }
@@ -269,5 +270,43 @@ describe('reportRemoteAppiumReady', () => {
       { udid: 'd1', machineId: 'host-2' },
       { remoteAppium: { host: '10.0.0.5', port: 4823, readyAt: expect.any(Date) as Date }, remoteAppiumRequestedAt: null },
     );
+  });
+});
+
+/**
+ * Regressions (2026-11-21): cleanup asked only `GET /sessions`, which Appium 2
+ * removed — so on Appium 2 it silently closed nothing — and it deleted every
+ * session on the server, which on a shared server kills other phones' runs.
+ */
+describe('closeActiveSessions — Appium 2 and shared servers', () => {
+  const config = { appium: { enabled: true, host: '127.0.0.1', basePort: 4723 } } as EffectiveConfig;
+
+  function appium2(sessions: unknown[]) {
+    const fetchSpy = vi.fn().mockImplementation((url: string, opts?: RequestInit) => {
+      if (url.endsWith('/status')) return Promise.resolve({ ok: true });
+      if (url.endsWith('/appium/sessions')) return Promise.resolve({ ok: true, json: () => Promise.resolve({ value: sessions }) });
+      if (url.endsWith('/sessions')) return Promise.resolve({ ok: false, status: 404 }); // removed in Appium 2
+      if (opts?.method === 'DELETE') return Promise.resolve({ ok: true });
+      throw new Error(`unexpected request: ${url}`);
+    });
+    vi.stubGlobal('fetch', fetchSpy);
+    return fetchSpy;
+  }
+
+  it('finds sessions on an Appium 2 server via /appium/sessions', async () => {
+    const fetchSpy = appium2([{ id: 's1', capabilities: { 'appium:udid': 'd1' } }]);
+    await closeActiveSessions(fakeDevice(4723), config);
+    expect(fetchSpy).toHaveBeenCalledWith(expect.stringContaining('/session/s1'), expect.objectContaining({ method: 'DELETE' }));
+  });
+
+  it("leaves another device's session alone on a shared server", async () => {
+    const fetchSpy = appium2([
+      { id: 'mine', capabilities: { udid: 'd1' } },
+      { id: 'theirs', capabilities: { 'appium:udid': 'other-phone' } },
+    ]);
+    await closeActiveSessions(fakeDevice(4723), config);
+    const deleted = fetchSpy.mock.calls.filter(([, o]) => (o as RequestInit | undefined)?.method === 'DELETE').map(([u]) => u as string);
+    expect(deleted.some((u) => u.endsWith('/session/mine'))).toBe(true);
+    expect(deleted.some((u) => u.endsWith('/session/theirs'))).toBe(false);
   });
 });
