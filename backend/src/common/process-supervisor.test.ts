@@ -166,3 +166,36 @@ describe('run', () => {
     expect(await managed.result).toEqual(outcome);
   });
 });
+
+/**
+ * Regression (2026-11-21): on Windows a `.cmd` runs through cmd.exe, and Node
+ * joined its args with bare spaces — a tag expression split into words and a
+ * `&` in a suite name ran a second command. Run for real on Windows, through
+ * a real `.cmd`, since the bug only exists in cmd.exe's parsing.
+ */
+describe.runIf(process.platform === 'win32')('run() through cmd.exe', () => {
+  function echoArgsCmd(): string {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mh-cmd-'));
+    const file = path.join(dir, 'echo-args.cmd');
+    fs.writeFileSync(file, '@node -e "console.log(JSON.stringify(process.argv.slice(1)))" -- %*\r\n');
+    return file;
+  }
+
+  it('passes an argument with spaces and & as one literal argument', async () => {
+    let out = '';
+    const proc = run({
+      command: echoArgsCmd(),
+      args: ['--tags', '@smoke and not @wip', 'a&echo INJECTED'],
+      cwd: os.tmpdir(),
+      env: process.env,
+      onStdout: (c) => (out += c.toString()),
+    });
+    expect(isSuccess(await proc.result)).toBe(true);
+    expect(JSON.parse(out.trim())).toEqual(['--tags', '@smoke and not @wip', 'a&echo INJECTED']);
+  });
+
+  it('refuses an argument cmd.exe would still interpret inside quotes', async () => {
+    const outcome = await run({ command: echoArgsCmd(), args: ['%PATH%'], cwd: os.tmpdir() }).result;
+    expect(outcome.kind).toBe('spawn-failed');
+  });
+});

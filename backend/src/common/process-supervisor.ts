@@ -151,6 +151,25 @@ export interface ManagedProcess {
 }
 
 /**
+ * Builds the command line for a `.cmd`/`.bat` run through `cmd.exe` (see the
+ * `shell` comment in `run`). With `shell: true` Node joins the command and its
+ * args with plain spaces, so an argument stops being one argument: a tag
+ * expression like `@smoke and not @wip` became four words, and a value
+ * containing `&` ran a second command. Each part is wrapped in double quotes,
+ * inside which cmd treats `& | < > ^` literally. What cmd still interprets
+ * inside quotes (`"`, `%`) and line breaks cannot be passed safely, so those
+ * are refused rather than escaped by a scheme that might be subtly wrong.
+ */
+export function cmdLineFor(command: string, args: string[]): { line: string } | { error: string } {
+  for (const part of [command, ...args]) {
+    if (/["%\r\n]/.test(part)) {
+      return { error: `refusing to pass ${JSON.stringify(part)} through cmd.exe: it contains ", % or a line break` };
+    }
+  }
+  return { line: [command, ...args].map((part) => `"${part}"`).join(' ') };
+}
+
+/**
  * Spawns a supervised child. See `RunOutcome` — this never rejects for a
  * process-level failure, so a caller can always update its own state.
  */
@@ -169,7 +188,22 @@ export function run(opts: RunOptions): ManagedProcess {
   };
 
   const resolved = resolveExecutable(opts.command);
-  const child = spawn(resolved, opts.args, {
+  const viaCmd = process.platform === 'win32' && /\.(cmd|bat)$/i.test(resolved);
+  let file = resolved;
+  let args = opts.args;
+  if (viaCmd) {
+    const built = cmdLineFor(resolved, opts.args);
+    if ('error' in built) {
+      // Not `finish` — it reads `timer`, which is not declared yet here.
+      settled = true;
+      settle({ kind: 'spawn-failed', message: built.error });
+      return { result, pid: undefined, cancel: () => undefined };
+    }
+    // One pre-quoted line; Node hands it to `cmd.exe /d /s /c "<line>"`.
+    file = built.line;
+    args = [];
+  }
+  const child = spawn(file, args, {
     cwd: opts.cwd,
     env: opts.env,
     // Explicit stdio: an inherited/open stdin has left `adb` children hanging
@@ -192,7 +226,7 @@ export function run(opts: RunOptions): ManagedProcess {
     // this shell hop the same as without it; the "shell breaks cancellation"
     // constraint this file used to carry was a POSIX-signal concern that
     // doesn't apply to Windows's tree-kill mechanism.
-    shell: process.platform === 'win32' && /\.(cmd|bat)$/i.test(resolved),
+    shell: viaCmd,
   });
 
   let cancelled = false;
