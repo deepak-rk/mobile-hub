@@ -1,6 +1,6 @@
 import { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
-import { listHosts, getHost, upsertHeartbeat } from './hosts.service';
+import { listHosts, getHost, upsertHeartbeat, reachableAgentHost } from './hosts.service';
 import { requireAgentToken, AGENT_TRAFFIC_LOG_LEVEL } from '../agent-auth/agent-auth';
 import { getPendingInstallsForMachine, getActiveInstallCountForMachine } from '../device-installs/install-runs.service';
 import { getPendingUninstallsForMachine, getActiveUninstallCountForMachine } from '../device-installs/uninstall-runs.service';
@@ -114,7 +114,11 @@ export const hostsRoutes: FastifyPluginAsync = async (app) => {
     if (req.agentMachineId && req.agentMachineId !== machineId) {
       throw new ForbiddenError('This credential is scoped to a different machineId.', 'AGENT_MACHINE_MISMATCH');
     }
-    await reportRemoteAppiumReady(body.data.deviceUdid, machineId, body.data.host, body.data.port);
+    const host = reachableAgentHost(body.data.host, req.ip);
+    if (host !== body.data.host) {
+      req.log.warn(`Agent ${machineId} reported Appium at ${body.data.host}; using its request address ${host} instead`);
+    }
+    await reportRemoteAppiumReady(body.data.deviceUdid, machineId, host, body.data.port);
     return { ok: true };
   });
 

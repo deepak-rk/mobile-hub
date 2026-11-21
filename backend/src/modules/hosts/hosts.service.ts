@@ -110,3 +110,25 @@ export async function failWorkStrandedOnOfflineHosts(): Promise<number> {
   ]);
   return installs + uninstalls;
 }
+
+const LOOPBACK = /^(127\.|::1$|::ffff:127\.|localhost$|0\.0\.0\.0$|::$)/i;
+
+/**
+ * The host the hub should dial for an agent's Appium.
+ *
+ * An agent reports the host it believes it is reachable on, and the default
+ * (`AGENT_APPIUM_HOST=127.0.0.1`) is only right when hub and agent share a
+ * machine. Taken at its word from a remote agent, the hub then dialled its
+ * *own* loopback and every remote run failed to create a session. When the
+ * report is a loopback/unspecified address but the request itself came from
+ * elsewhere, the request's source address is the one that demonstrably
+ * reaches the hub from that agent, so it is used instead — the same lesson a
+ * production farm in this domain learned ("register with the agent's own
+ * reachable IP"). A non-loopback report is always kept: an operator who set
+ * it knows their network (NAT, a dedicated interface) better than we do.
+ */
+export function reachableAgentHost(reportedHost: string, requestIp: string): string {
+  if (!LOOPBACK.test(reportedHost)) return reportedHost;
+  if (LOOPBACK.test(requestIp)) return reportedHost; // same machine: loopback is correct
+  return requestIp.replace(/^::ffff:/, '');
+}

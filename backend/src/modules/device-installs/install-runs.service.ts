@@ -4,7 +4,7 @@ import { getDevicesByUdids, resolveDevice, type DeviceRef } from '../devices/dev
 import { InstallRun, IInstallRun, InstallTargetStatus } from './install-run.model';
 import { UninstallRun } from './uninstall-run.model';
 import { publishInstallEvent } from './install-runs.events';
-import { ConflictError, ValidationError } from '../../common/errors/app-error';
+import { ConflictError, NotFoundError, ValidationError } from '../../common/errors/app-error';
 
 /**
  * Statuses meaning "this device is busy with an install right now".
@@ -71,7 +71,7 @@ export interface TriggerInstallRunInput {
  */
 export async function triggerInstallRun(input: TriggerInstallRunInput): Promise<IInstallRun> {
   const build = await getBuild(input.buildId);
-  if (!build) throw new Error(`Build not found: ${input.buildId}`);
+  if (!build) throw new NotFoundError(`Build not found: ${input.buildId}`, 'BUILD_NOT_FOUND');
   if (build.status !== 'ready') throw new BuildNotReadyError(build.status);
 
   const targets = await Promise.all(

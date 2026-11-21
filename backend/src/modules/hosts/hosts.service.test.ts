@@ -3,7 +3,13 @@ import { Host } from './host.model';
 import { Device } from '../devices/device.model';
 import { InstallRun } from '../device-installs/install-run.model';
 import { UninstallRun } from '../device-installs/uninstall-run.model';
-import { markStaleHostsOffline, upsertHeartbeat, failWorkStrandedOnOfflineHosts, STRANDED_WORK_AFTER_MS } from './hosts.service';
+import {
+  markStaleHostsOffline,
+  upsertHeartbeat,
+  failWorkStrandedOnOfflineHosts,
+  STRANDED_WORK_AFTER_MS,
+  reachableAgentHost,
+} from './hosts.service';
 
 /**
  * A device is only reachable through its host's agent. When that agent dies
@@ -202,5 +208,23 @@ describe('failWorkStrandedOnOfflineHosts', () => {
 
     expect(await failWorkStrandedOnOfflineHosts()).toBe(0);
     expect(installUpdate).not.toHaveBeenCalled();
+  });
+});
+
+/** Regression (2026-11-21): a remote agent's default 127.0.0.1 made the hub dial its own loopback. */
+describe('reachableAgentHost', () => {
+  it('replaces a loopback report from a remote agent with its request address', () => {
+    expect(reachableAgentHost('127.0.0.1', '192.168.1.40')).toBe('192.168.1.40');
+    expect(reachableAgentHost('localhost', '::ffff:10.0.0.7')).toBe('10.0.0.7');
+    expect(reachableAgentHost('0.0.0.0', '10.0.0.7')).toBe('10.0.0.7');
+  });
+
+  it('keeps loopback when the agent is on the hub machine', () => {
+    expect(reachableAgentHost('127.0.0.1', '127.0.0.1')).toBe('127.0.0.1');
+    expect(reachableAgentHost('127.0.0.1', '::1')).toBe('127.0.0.1');
+  });
+
+  it('never overrides an address the operator configured', () => {
+    expect(reachableAgentHost('10.20.0.5', '192.168.1.40')).toBe('10.20.0.5');
   });
 });

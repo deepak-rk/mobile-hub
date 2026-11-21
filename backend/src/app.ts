@@ -30,6 +30,7 @@ import { executionRoutes } from './modules/execution/execution.routes';
 import { streamingRoutes } from './modules/streaming/streaming.routes';
 import { analyticsRoutes } from './modules/analytics/analytics.routes';
 import { AppError } from './common/errors/app-error';
+import { gated } from './common/feature-gate';
 
 export async function buildApp(config: EffectiveConfig): Promise<FastifyInstance> {
   const app = Fastify({
@@ -63,6 +64,17 @@ export async function buildApp(config: EffectiveConfig): Promise<FastifyInstance
     // message. Respect those instead of collapsing every 4xx a plugin raises
     // into a 500; only a genuinely unexpected error (no statusCode, or a 5xx)
     // falls through to the generic response below.
+    // Mongoose throws CastError when a value cannot be cast to the field's
+    // type — routinely a malformed id in a URL (`GET /api/execution/runs`
+    // matched `/:id` with id "runs"). That is the caller's mistake, not a
+    // server fault: a bad _id names nothing (404), any other field is a bad
+    // request (400). It used to surface as a 500 and an error-level log line.
+    const castError = err as { name?: string; path?: string };
+    if (castError.name === 'CastError') {
+      return castError.path === '_id'
+        ? reply.status(404).send({ code: 'NOT_FOUND', message: 'Not found' })
+        : reply.status(400).send({ code: 'VALIDATION_ERROR', message: `Invalid value for ${castError.path ?? 'field'}` });
+    }
     const pluginError = err as { statusCode?: number; code?: string; message?: string };
     if (typeof pluginError.statusCode === 'number' && pluginError.statusCode >= 400 && pluginError.statusCode < 500) {
       return reply
@@ -174,18 +186,19 @@ export async function buildApp(config: EffectiveConfig): Promise<FastifyInstance
     instance.get('/health', async () => ({ status: 'ok', ts: new Date().toISOString() }));
   });
 
-  // API routes
+  // API routes. Optional modules are wrapped in gated() so the org's
+  // features.* toggles really switch them off (installs belong to builds).
   void app.register(hostsRoutes, { prefix: '/api/hosts' });
   void app.register(devicesRoutes, { prefix: '/api/devices' });
   void app.register(configRoutes, { prefix: '/api/config' });
   void app.register(agentCredentialsRoutes, { prefix: '/api/agent-credentials' });
-  void app.register(buildsRoutes, { prefix: '/api/builds' });
-  void app.register(installRunsRoutes, { prefix: '/api/device-installs' });
-  void app.register(uninstallRunsRoutes, { prefix: '/api/device-installs/uninstalls' });
-  void app.register(executionRoutes, { prefix: '/api/execution' });
+  void app.register(gated(app, 'builds', buildsRoutes), { prefix: '/api/builds' });
+  void app.register(gated(app, 'builds', installRunsRoutes), { prefix: '/api/device-installs' });
+  void app.register(gated(app, 'builds', uninstallRunsRoutes), { prefix: '/api/device-installs/uninstalls' });
+  void app.register(gated(app, 'execution', executionRoutes), { prefix: '/api/execution' });
   // Streaming hangs off the device resource it belongs to.
-  void app.register(streamingRoutes, { prefix: '/api/devices' });
-  void app.register(analyticsRoutes, { prefix: '/api/analytics' });
+  void app.register(gated(app, 'streaming', streamingRoutes), { prefix: '/api/devices' });
+  void app.register(gated(app, 'analytics', analyticsRoutes), { prefix: '/api/analytics' });
 
   return app;
 }

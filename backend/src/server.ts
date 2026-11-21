@@ -179,7 +179,10 @@ async function start(): Promise<void> {
   // Reaps captures whose last viewer left more than the grace period ago.
   streamingService.startIdleSweeper((err) => app.log.error(err, 'Stream idle sweep failed'));
 
+  // Each optional module's timer checks its feature toggle per tick (config
+  // is reloadable), so switching a module off stops its work, not just its routes.
   const analyticsInterval = runNowAndEvery(() => {
+    if (!app.config.features.analytics) return;
     computeDailyAggregates().catch((err: unknown) => {
       app.log.error(err, 'Failed to recompute daily analytics aggregates');
     });
@@ -188,6 +191,7 @@ async function start(): Promise<void> {
   // The current ISO week only changes as today's runs land in it, so a daily
   // cadence keeps it current without the hourly churn daily aggregates need.
   const weeklyAnalyticsInterval = runNowAndEvery(() => {
+    if (!app.config.features.analytics) return;
     computeWeeklyAggregates().catch((err: unknown) => {
       app.log.error(err, 'Failed to recompute weekly analytics aggregates');
     });
@@ -228,6 +232,7 @@ async function start(): Promise<void> {
   // device is busy. `app.config` is read fresh each tick (the getter/setter
   // decorator), so a config reload is honoured without restarting the sweep.
   const queueDispatchInterval = runNowAndEvery(() => {
+    if (!app.config.features.execution) return;
     dispatchQueuedRuns(app.config).catch((err: unknown) => {
       app.log.error(err, 'Queued-run dispatch failed');
     });
