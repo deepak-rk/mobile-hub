@@ -70,7 +70,13 @@ function usePageVisible(): boolean {
  * (the join ack is the real confirmation), so "live" waits for that first
  * message rather than the socket handshake alone.
  */
-export function useDeviceStream(udid: string | undefined, enabled: boolean, protocol: StreamProtocol = 'mjpeg') {
+export function useDeviceStream(
+  udid: string | undefined,
+  enabled: boolean,
+  protocol: StreamProtocol = 'mjpeg',
+  /** The device's host — required by the hub when the udid exists on more than one. */
+  machineId?: string,
+) {
   const [restarted, setRestarted] = useState(false);
   const [lastError, setLastError] = useState<string | null>(null);
   const retryKeyRef = useRef<string | null>(null);
@@ -92,7 +98,7 @@ export function useDeviceStream(udid: string | undefined, enabled: boolean, prot
     token && udid && isPageVisible
       ? buildSocketUrl(`/api/devices/${udid}/stream`, {
           origin: import.meta.env.VITE_API_URL || undefined,
-          query: { protocol, token },
+          query: { protocol, token, ...(machineId ? { machineId } : {}) },
         })
       : null;
 

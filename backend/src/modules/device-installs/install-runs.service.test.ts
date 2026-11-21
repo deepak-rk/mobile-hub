@@ -366,3 +366,40 @@ describe('getInstalledDevicesForBuild', () => {
     expect(result.map((d) => d.deviceUdid)).toEqual(['d1']);
   });
 });
+
+/**
+ * Regression (2026-11-21): keyed by udid alone, two hosts' emulator-5554
+ * merged into one entry — a later install of another build on host B hid
+ * host A's install, and an uninstall on one host hid the other.
+ */
+describe('getInstalledDevicesForBuild — same udid on two hosts', () => {
+  it('reports each host separately, and an uninstall on one host does not hide the other', async () => {
+    vi.spyOn(buildsService, 'getBuild').mockResolvedValue(readyBuild as never);
+    vi.spyOn(InstallRun, 'find').mockReturnValue({
+      sort: vi.fn().mockResolvedValue([
+        {
+          id: 'run-1',
+          buildId: { toString: () => 'build-1' },
+          targets: [
+            { deviceUdid: 'emulator-5554', machineId: 'host-a', status: 'done', endedAt: new Date('2026-01-01'), packageName: 'com.x' },
+            { deviceUdid: 'emulator-5554', machineId: 'host-b', status: 'done', endedAt: new Date('2026-01-01'), packageName: 'com.x' },
+          ],
+        },
+      ]),
+    } as never);
+    vi.spyOn(UninstallRun, 'find').mockResolvedValue([
+      {
+        packageName: 'com.x',
+        targets: [{ deviceUdid: 'emulator-5554', machineId: 'host-b', status: 'done', endedAt: new Date('2026-01-02') }],
+      },
+    ] as never);
+    vi.spyOn(devicesService, 'getDevicesByUdids').mockResolvedValue([
+      { udid: 'emulator-5554', machineId: 'host-a', name: 'Emu A' },
+      { udid: 'emulator-5554', machineId: 'host-b', name: 'Emu B' },
+    ] as never);
+
+    const result = await getInstalledDevicesForBuild('build-1');
+
+    expect(result.map((d) => `${d.machineId}:${d.deviceName}`)).toEqual(['host-a:Emu A']);
+  });
+});

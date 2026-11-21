@@ -78,10 +78,10 @@ export function useRenewLock(udid: string, machineId?: string) {
 }
 
 /** Force-stops any live capture for this device (operator/admin only). */
-export function useStopDeviceStream(udid: string) {
+export function useStopDeviceStream(udid: string, machineId?: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async () => (await api.post<{ stopped: number }>(`/devices/${udid}/stream/stop`)).data,
+    mutationFn: async () => (await api.post<{ stopped: number }>(`/devices/${udid}/stream/stop`, undefined, { params: machineId ? { machineId } : undefined })).data,
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ['devices'] });
     },

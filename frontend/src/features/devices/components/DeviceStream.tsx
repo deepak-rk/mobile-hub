@@ -100,6 +100,7 @@ export function DeviceStream({ device }: { device: Device }) {
     device.udid,
     !isOffline && started,
     protocol,
+    device.machineId,
   );
 
   // An offline device is never dialled at all, so say so directly. `!user`
@@ -239,7 +240,7 @@ export function DeviceStream({ device }: { device: Device }) {
 
 export function StreamStopButton({ device }: { device: Device }) {
   const { can } = useAuth();
-  const stop = useStopDeviceStream(device.udid);
+  const stop = useStopDeviceStream(device.udid, device.machineId);
   if (!can('operator', 'admin')) return null;
   return (
     <Button size="sm" variant="destructive" onClick={() => stop.mutate()} disabled={stop.isPending}>

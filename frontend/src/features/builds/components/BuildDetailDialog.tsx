@@ -246,7 +246,7 @@ export function BuildDetailDialog({ build, onClose }: { build: Build | null; onC
                   {
                     packageName: confirmUninstall.packageName as string,
                     project: build.project,
-                    deviceUdids: [confirmUninstall.deviceUdid],
+                    devices: [{ udid: confirmUninstall.deviceUdid, machineId: confirmUninstall.machineId }],
                   },
                   { onSuccess: () => setConfirmUninstall(null) },
                 )

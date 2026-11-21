@@ -29,6 +29,8 @@ export function useInstallRun(installRunId: string | undefined, livePush = false
 
 export interface InstalledDevice {
   deviceUdid: string;
+  /** The host the device is attached to; send it back when acting on the device. */
+  machineId: string;
   /** Null when the device has since been deregistered or never synced. */
   deviceName: string | null;
   installRunId: string;
@@ -51,9 +53,15 @@ export function useInstalledDevices(buildId: string | undefined) {
   });
 }
 
+/** A device on a specific host — emulator serials repeat across hosts. */
+export interface DeviceRef {
+  udid: string;
+  machineId: string;
+}
+
 export interface TriggerInstallRunInput {
   buildId: string;
-  deviceUdids: string[];
+  devices: DeviceRef[];
 }
 
 export function useTriggerInstallRun() {
@@ -69,7 +77,7 @@ export function useTriggerInstallRun() {
 export interface TriggerUninstallRunInput {
   packageName: string;
   project: string;
-  deviceUdids: string[];
+  devices: DeviceRef[];
 }
 
 /**

@@ -275,6 +275,8 @@ export async function getActiveInstallCountForMachine(machineId: string): Promis
 
 export interface InstalledDevice {
   deviceUdid: string;
+  /** The host the device is attached to; pass it back when acting on the device. */
+  machineId: string;
   /** Null when the device has since been deregistered/never synced — the
    * install history is still real even if the device it named isn't around
    * to look up any more. */
@@ -316,14 +318,27 @@ export async function getInstalledDevicesForBuild(buildId: string): Promise<Inst
     'targets.status': 'done',
   }).sort({ createdAt: 1 });
 
+  // Keyed by host + udid: emulator serials repeat on every host, and keying by
+  // udid alone merged two hosts' emulator-5554 into one "installed" entry (and
+  // let an uninstall on one host hide the install on the other).
+  const keyOf = (machineId: string, udid: string) => `${machineId}\u0000${udid}`;
   const latestByDevice = new Map<
     string,
-    { buildId: string; installRunId: string; installedAt: Date | null; packageName: string | null }
+    {
+      deviceUdid: string;
+      machineId: string;
+      buildId: string;
+      installRunId: string;
+      installedAt: Date | null;
+      packageName: string | null;
+    }
   >();
   for (const run of runs) {
     for (const target of run.targets) {
       if (target.status !== 'done') continue;
-      latestByDevice.set(target.deviceUdid, {
+      latestByDevice.set(keyOf(target.machineId, target.deviceUdid), {
+        deviceUdid: target.deviceUdid,
+        machineId: target.machineId,
         buildId: run.buildId.toString(),
         installRunId: run.id as string,
         installedAt: target.endedAt,
@@ -332,45 +347,45 @@ export async function getInstalledDevicesForBuild(buildId: string): Promise<Inst
     }
   }
 
-  const current = [...latestByDevice.entries()].filter(([, latest]) => latest.buildId === buildId);
+  const current = [...latestByDevice.values()].filter((latest) => latest.buildId === buildId);
 
   // A device whose package was successfully uninstalled *after* this install
-  // completed no longer has it — checked per (device, package), not just
-  // per device, so an uninstall of an unrelated package on the same device
-  // can't hide this one. A device with a null packageName has nothing to
-  // check against and is left as-is, same as before this existed.
-  const packageNames = [...new Set(current.map(([, latest]) => latest.packageName).filter((p): p is string => Boolean(p)))];
+  // completed no longer has it — checked per (host, device, package), so an
+  // uninstall of an unrelated package, or on another host's same-udid device,
+  // can't hide this one. A null packageName has nothing to check against.
+  const packageNames = [...new Set(current.map((latest) => latest.packageName).filter((p): p is string => Boolean(p)))];
   const uninstallRuns =
     packageNames.length > 0
       ? await UninstallRun.find({
           packageName: { $in: packageNames },
-          'targets.deviceUdid': { $in: current.map(([udid]) => udid) },
+          'targets.deviceUdid': { $in: current.map((latest) => latest.deviceUdid) },
           'targets.status': 'done',
         })
       : [];
-  const uninstalledAt = new Map<string, Date>(); // `${udid}:${packageName}` -> latest completed uninstall time
+  const uninstalledAt = new Map<string, Date>(); // host + udid + package -> latest completed uninstall
   for (const run of uninstallRuns) {
     for (const target of run.targets) {
       if (target.status !== 'done' || !target.endedAt) continue;
-      const key = `${target.deviceUdid}:${run.packageName}`;
+      const key = `${keyOf(target.machineId, target.deviceUdid)}\u0000${run.packageName}`;
       const existing = uninstalledAt.get(key);
       if (!existing || target.endedAt > existing) uninstalledAt.set(key, target.endedAt);
     }
   }
-  const stillInstalled = current.filter(([udid, latest]) => {
+  const stillInstalled = current.filter((latest) => {
     if (!latest.packageName) return true;
-    const removedAt = uninstalledAt.get(`${udid}:${latest.packageName}`);
+    const removedAt = uninstalledAt.get(`${keyOf(latest.machineId, latest.deviceUdid)}\u0000${latest.packageName}`);
     if (!removedAt) return true;
     return latest.installedAt !== null && removedAt <= latest.installedAt;
   });
 
   // One batch lookup for names rather than N+1 single-device queries.
-  const devices = await getDevicesByUdids(stillInstalled.map(([udid]) => udid));
-  const nameByUdid = new Map(devices.map((d) => [d.udid, d.name]));
+  const devices = await getDevicesByUdids([...new Set(stillInstalled.map((latest) => latest.deviceUdid))]);
+  const nameByKey = new Map(devices.map((d) => [keyOf(d.machineId, d.udid), d.name]));
 
-  return stillInstalled.map(([deviceUdid, latest]) => ({
-    deviceUdid,
-    deviceName: nameByUdid.get(deviceUdid) ?? null,
+  return stillInstalled.map((latest) => ({
+    deviceUdid: latest.deviceUdid,
+    machineId: latest.machineId,
+    deviceName: nameByKey.get(keyOf(latest.machineId, latest.deviceUdid)) ?? null,
     installRunId: latest.installRunId,
     installedAt: latest.installedAt,
     packageName: latest.packageName,

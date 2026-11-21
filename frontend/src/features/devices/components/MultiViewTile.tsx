@@ -24,7 +24,7 @@ const TONE: Record<StreamState, string> = {
  */
 export function MultiViewTile({ device, onRemove }: { device: Device; onRemove: () => void }) {
   const isOffline = device.status === 'offline' || device.status === 'unreachable';
-  const { state, frameUrl, lastError, closeReason } = useDeviceStream(device.udid, !isOffline, 'mjpeg');
+  const { state, frameUrl, lastError, closeReason } = useDeviceStream(device.udid, !isOffline, 'mjpeg', device.machineId);
   const displayState: StreamState = isOffline ? 'offline' : state;
   // A tile is too small for the full-page banner's prose — the real message
   // rides as a title/tooltip instead of being cut, matching the design
