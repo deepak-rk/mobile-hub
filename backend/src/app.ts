@@ -31,6 +31,7 @@ import { streamingRoutes } from './modules/streaming/streaming.routes';
 import { analyticsRoutes } from './modules/analytics/analytics.routes';
 import { AppError } from './common/errors/app-error';
 import { gated } from './common/feature-gate';
+import { API_CSP_DIRECTIVES, DOCS_CSP_DIRECTIVES, serializeCsp } from './common/content-security-policy';
 
 export async function buildApp(config: EffectiveConfig): Promise<FastifyInstance> {
   const app = Fastify({
@@ -86,7 +87,11 @@ export async function buildApp(config: EffectiveConfig): Promise<FastifyInstance
   });
 
   // Security plugins
-  void app.register(helmet, { contentSecurityPolicy: false });
+  // Strict CSP by default; /docs and the Allure report route override it
+  // with their own policies (see common/content-security-policy.ts).
+  void app.register(helmet, {
+    contentSecurityPolicy: { useDefaults: false, directives: API_CSP_DIRECTIVES },
+  });
   void app.register(cors, { origin: env.NODE_ENV === 'development' ? true : false });
   void app.register(rateLimit, { max: env.RATE_LIMIT_MAX, timeWindow: env.RATE_LIMIT_WINDOW });
 
@@ -118,7 +123,10 @@ export async function buildApp(config: EffectiveConfig): Promise<FastifyInstance
       servers: [{ url: `http://localhost:${env.API_PORT}` }],
     },
   });
-  void app.register(swaggerUi, { routePrefix: '/docs' });
+  // staticCSP replaces helmet's API policy on every /docs response (an
+  // onSend hook scoped to the UI's own routes), which would otherwise block
+  // the UI's scripts and styles.
+  void app.register(swaggerUi, { routePrefix: '/docs', staticCSP: serializeCsp(DOCS_CSP_DIRECTIVES) });
 
   // A getter/setter pair, not a plain value, so POST /api/config/reload can
   // actually swap it. Fastify gives each registered plugin an encapsulated

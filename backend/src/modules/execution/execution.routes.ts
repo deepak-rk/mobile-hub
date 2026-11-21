@@ -20,6 +20,7 @@ import { discoverBranches, BranchDiscoveryError } from './branches.service';
 import { ExecutionRun } from './execution-run.model';
 import type { JwtPayload } from 'fastify-auth-kit';
 import { ForbiddenError, NotFoundError, ValidationError } from '../../common/errors/app-error';
+import { REPORT_CSP_DIRECTIVES } from '../../common/content-security-policy';
 
 const commandSchema = z.object({ command: z.string().min(1), args: z.array(z.string()).default([]) });
 
@@ -285,7 +286,19 @@ export const executionRoutes: FastifyPluginAsync = async (app) => {
     return reply.redirect(`${base}/index.html`);
   });
 
-  app.get('/:id/report/*', async (req, reply) => {
+  // Report HTML is untrusted runner output, so it gets the sandboxed policy
+  // instead of the API one (see common/content-security-policy.ts). The
+  // sandbox gives the page an opaque origin, which makes every load of the
+  // report's own files (a multi-file report's app.js, screenshots) a
+  // cross-origin request — helmet's default `Cross-Origin-Resource-Policy:
+  // same-origin` would block them, so this route relaxes it. The route is
+  // already unauthenticated, so that exposes nothing new.
+  const reportHelmet = {
+    contentSecurityPolicy: { useDefaults: false, directives: REPORT_CSP_DIRECTIVES },
+    crossOriginResourcePolicy: { policy: 'cross-origin' as const },
+  };
+
+  app.get('/:id/report/*', { helmet: reportHelmet }, async (req, reply) => {
     const { id } = req.params as { id: string };
     const run = await getExecutionRun(id);
     if (!run?.reportPath) {
