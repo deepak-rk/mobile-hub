@@ -78,8 +78,7 @@ services:
     build:
       context: ./frontend
       args:
-        VITE_API_URL: ${VITE_API_URL:-http://localhost:3000}
-        VITE_STREAM_WS_URL: ${VITE_STREAM_WS_URL:-ws://localhost:3001}
+        VITE_API_URL: ${VITE_API_URL:-}   # empty = same-origin (see below)
     restart: unless-stopped
     ports:
       - "80:80"
@@ -105,8 +104,7 @@ All configuration is via environment variables. For local development, copy `.en
 | `STREAM_WS_PORT` | No | `3001` | Stream-only WebSocket port |
 | `MACHINE_ID` | No | auto-generated | Stable identifier for this host; persisted to a local file on first boot |
 | `EXECUTIONS_DIR` | No | `~/mobile-hub-executions` | Root dir for workspace and cache |
-| `VITE_API_URL` | No | `http://localhost:3000` | Frontend → backend URL (build-time) |
-| `VITE_STREAM_WS_URL` | No | `ws://localhost:3001` | Frontend → stream WS URL (build-time) |
+| `VITE_API_URL` | No | empty (same-origin) | Frontend → backend origin, build-time. Leave empty for the bundled nginx deploy — see "Same-origin vs split-origin" below |
 
 ---
 
@@ -152,6 +150,12 @@ cd frontend && npm run dev
 ```
 
 Both services are independently runnable. The backend starts without the frontend. The frontend can point to any backend URL via `VITE_API_URL`.
+
+### Same-origin vs split-origin
+
+By default the frontend is built with an empty `VITE_API_URL`: the browser calls relative `/api/...` and opens WebSockets (device streams, execution and install logs) as `ws(s)://<page host>/api/...`. The frontend container's nginx proxies `/api/` — WebSocket upgrades included — to the backend, so a remote browser never has to reach the backend port and no CORS is involved.
+
+Set `VITE_API_URL` (e.g. `https://api.example.org`, without a trailing `/api`) only when the UI and API are served from different origins. It is baked into the bundle at build time, so rebuild the frontend image after changing it. The backend enables CORS only when `NODE_ENV=development`, so a split-origin production deploy also needs a CORS change in `backend/src/app.ts`, or a reverse proxy that puts both behind one origin.
 
 ---
 

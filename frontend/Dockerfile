@@ -1,6 +1,9 @@
 FROM node:20-alpine AS builder
 WORKDIR /app
-ARG VITE_API_URL=http://localhost:3000
+# Empty = same-origin: the bundle calls relative /api and opens ws(s):// on
+# the page's own host, which nginx.conf proxies to the backend. Set it only
+# for a split-origin deployment (and allow that origin in backend CORS).
+ARG VITE_API_URL=
 ENV VITE_API_URL=$VITE_API_URL
 # Build context is the repo root (see docker-compose.yml) so the npm
 # workspaces lockfile at the root is available — `npm ci` needs it and fails

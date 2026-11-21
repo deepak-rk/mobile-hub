@@ -32,15 +32,18 @@
   --accent-muted: rgba(94, 106, 210, 0.15);
   --accent-contrast: #ffffff;
 
-  /* Semantic status */
+  /* Semantic status. Each is both badge text and (at 12%) its own badge tint,
+     so it must hold 4.5:1 against that tint over every surface — enforced by
+     styles/status-contrast.test.ts. Grey states use the 400/300 steps: the
+     500 step fell to ~3.1:1. */
   --status-idle: #22c55e;
   --status-smoke: #eab308;
   --status-in-use: #f97316;
-  --status-offline: #71717a;
-  --status-running: #3b82f6;
+  --status-offline: #a1a1aa;
+  --status-running: #60a5fa;
   --status-passed: #22c55e;
-  --status-failed: #ef4444;
-  --status-cancelled: #a1a1aa;
+  --status-failed: #f87171;
+  --status-cancelled: #d4d4d8;
 
   /* Elevation — dark leans on luminance + borders, not heavy shadow */
   --shadow-panel: none;
@@ -106,12 +109,17 @@
   /* Light needs a whisper of shadow where dark uses luminance steps */
   --shadow-panel: 0 1px 2px rgba(0, 0, 0, 0.04);
 
-  /* Green/amber need to darken slightly to hold 4.5:1 on white */
-  --status-idle: #16a34a;
-  --status-passed: #16a34a;
-  --status-smoke: #ca8a04;
-  --status-offline: #71717a;
-  --status-cancelled: #71717a;
+  /* Same hues, 700/800-step shades: the dark-theme 500s are ~2.3–3:1 on a light
+     surface. Keep this list identical to the prefers-color-scheme block
+     below (status-contrast.test.ts checks both). */
+  --status-idle: #166534;
+  --status-smoke: #854d0e;
+  --status-in-use: #9a3412;
+  --status-offline: #52525b;
+  --status-running: #1d4ed8;
+  --status-passed: #166534;
+  --status-failed: #b91c1c;
+  --status-cancelled: #52525b;
 }
 
 /* Respect the OS preference when the user hasn't chosen explicitly.
@@ -134,8 +142,13 @@
     --accent-hover: #4338ca;
     --accent-muted: rgba(79, 70, 229, 0.1);
     --shadow-panel: 0 1px 2px rgba(0, 0, 0, 0.04);
-    --status-idle: #16a34a;
-    --status-passed: #16a34a;
-    --status-smoke: #ca8a04;
+    --status-idle: #166534;
+    --status-smoke: #854d0e;
+    --status-in-use: #9a3412;
+    --status-offline: #52525b;
+    --status-running: #1d4ed8;
+    --status-passed: #166534;
+    --status-failed: #b91c1c;
+    --status-cancelled: #52525b;
   }
 }

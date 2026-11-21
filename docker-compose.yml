@@ -43,8 +43,10 @@ services:
       args:
         # WebSocket traffic (device streams, live execution logs) rides the
         # same origin/port as HTTP — nginx.conf proxies /api/ with upgrade
-        # headers, so the frontend needs no separate WS URL.
-        VITE_API_URL: ${VITE_API_URL:-http://localhost:3000}
+        # headers, so the frontend needs no separate WS URL. Empty (the
+        # default) keeps every call same-origin through that proxy; set it
+        # only when the API lives on a different origin.
+        VITE_API_URL: ${VITE_API_URL:-}
     restart: unless-stopped
     ports:
       - "80:80"
