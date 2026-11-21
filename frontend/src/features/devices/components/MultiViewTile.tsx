@@ -1,6 +1,7 @@
 import { Link } from 'react-router-dom';
 import { icons, iconSize } from '@/lib/icons';
 import { useDeviceStream, type StreamState } from '../api/useDeviceStream';
+import { deviceHref } from '../lib/deviceKey';
 import type { Device } from '../types';
 import styles from './MultiViewTile.module.css';
 
@@ -34,7 +35,7 @@ export function MultiViewTile({ device, onRemove }: { device: Device; onRemove: 
   return (
     <div className={styles.tile}>
       <div className={styles.head}>
-        <Link to={`/devices/${device.udid}`} className={styles.name}>
+        <Link to={deviceHref(device.udid, device.machineId)} className={styles.name}>
           {device.name}
         </Link>
         <span className={styles.dot} style={{ background: TONE[displayState] }} aria-hidden="true" />

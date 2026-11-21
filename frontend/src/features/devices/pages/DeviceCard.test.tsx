@@ -74,7 +74,17 @@ describe('DeviceCard', () => {
 
     await user.click(screen.getByRole('checkbox'));
 
-    expect(onToggle).toHaveBeenCalledWith('emulator-5554');
+    // Host + udid, not the bare udid: every host has an emulator-5554, and
+    // keying selection by udid alone ticked all of them at once.
+    expect(onToggle).toHaveBeenCalledWith('host-1/emulator-5554');
+  });
+
+  it('links to the device on its own host, not just by udid', () => {
+    renderCard({ device: device({ machineId: 'host-b' }) });
+    expect(screen.getByRole('link', { name: /view live/i })).toHaveAttribute(
+      'href',
+      '/devices/emulator-5554?machineId=host-b',
+    );
   });
 
   it('hides "View live" for an offline device, picking or not', () => {

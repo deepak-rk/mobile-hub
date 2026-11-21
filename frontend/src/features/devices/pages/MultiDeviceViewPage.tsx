@@ -4,6 +4,7 @@ import { icons } from '@/lib/icons';
 import { useDevices } from '../api/devices.api';
 import { useMultiViewSelection, MULTI_VIEW_MAX } from '../hooks/useMultiViewSelection';
 import { MultiViewTile } from '../components/MultiViewTile';
+import { deviceKey } from '../lib/deviceKey';
 import styles from './MultiDeviceViewPage.module.css';
 
 /**
@@ -20,8 +21,9 @@ function isOnline(device: { status: string }): boolean {
 export function MultiDeviceViewPage() {
   const { data: devices, isPending, error, refetch } = useDevices();
   const { selected, toggle, remove, clear, selectMany, atMax } = useMultiViewSelection();
-  const selectedDevices = devices?.filter((d) => selected.includes(d.udid)) ?? [];
-  const onlineUdids = devices?.filter(isOnline).map((d) => d.udid) ?? [];
+  const selectedDevices = devices?.filter((d) => selected.includes(deviceKey(d))) ?? [];
+  // Selection entries are deviceKey()s (host + udid), not bare udids — see lib/deviceKey.ts.
+  const onlineUdids = devices?.filter(isOnline).map(deviceKey) ?? [];
 
   return (
     <Page>
@@ -66,14 +68,14 @@ export function MultiDeviceViewPage() {
         </div>
         <div className={styles.picker}>
           {devices?.map((device) => {
-            const isSelected = selected.includes(device.udid);
+            const isSelected = selected.includes(deviceKey(device));
             const disabled = !isSelected && atMax;
             return (
               <button
-                key={device.udid}
+                key={deviceKey(device)}
                 type="button"
                 className={`${styles.chip} ${isSelected ? styles.chipActive : ''}`}
-                onClick={() => toggle(device.udid)}
+                onClick={() => toggle(deviceKey(device))}
                 disabled={disabled}
                 aria-pressed={isSelected}
                 title={disabled ? `Watching ${MULTI_VIEW_MAX} already — remove one first` : undefined}
@@ -93,7 +95,7 @@ export function MultiDeviceViewPage() {
         ) : (
           <div className={styles.grid}>
             {selectedDevices.map((device) => (
-              <MultiViewTile key={device.udid} device={device} onRemove={() => remove(device.udid)} />
+              <MultiViewTile key={deviceKey(device)} device={device} onRemove={() => remove(deviceKey(device))} />
             ))}
           </div>
         )}

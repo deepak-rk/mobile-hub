@@ -1,6 +1,8 @@
 import { describe, it, expect, vi } from 'vitest';
 import Fastify from 'fastify';
 import { devicesRoutes } from './devices.routes';
+import { Device } from './device.model';
+import { InstallRun } from '../device-installs/install-run.model';
 
 /**
  * Regression for an authorization gap found 2026-09-23: the three device-lock
@@ -73,5 +75,62 @@ describe('devices routes — authorization', () => {
       .filter(([route, roles]) => route.startsWith('POST') && roles.includes('AUTH_ONLY'))
       .map(([route]) => route);
     expect(authOnly).toEqual([]);
+  });
+});
+
+/**
+ * Regression: `activeInstall` was keyed by UDID alone, so an install on host
+ * A's `emulator-5554` showed "Installing" on every host's `emulator-5554`.
+ * And `GET /:udid` omitted the field entirely while the list included it.
+ */
+interface DeviceView {
+  machineId: string;
+  activeInstall: boolean;
+}
+
+describe('devices routes — activeInstall is host-scoped', () => {
+  const device = (machineId: string) => ({
+    udid: 'emulator-5554',
+    machineId,
+    toObject() {
+      return { udid: 'emulator-5554', machineId };
+    },
+  });
+
+  async function appWithInstallOnHostA() {
+    vi.spyOn(InstallRun, 'find').mockResolvedValue([
+      { targets: [{ deviceUdid: 'emulator-5554', machineId: 'host-a', status: 'installing' }] },
+    ] as never);
+    vi.spyOn(Device, 'find').mockReturnValue({
+      sort: () => Promise.resolve([device('host-a'), device('host-b')]),
+    } as never);
+    vi.spyOn(Device, 'findOne').mockImplementation(
+      ((filter: { machineId?: string }) => Promise.resolve(device(filter.machineId ?? 'host-a'))) as never,
+    );
+    const app = Fastify();
+    app.decorate('requireRole', () => vi.fn());
+    app.decorate('authenticate', vi.fn());
+    await app.register(devicesRoutes);
+    return app;
+  }
+
+  it('marks only the host that is actually installing, in the list', async () => {
+    const app = await appWithInstallOnHostA();
+    const res = await app.inject({ method: 'GET', url: '/' });
+    const flags = res.json<DeviceView[]>().map((d) => [d.machineId, d.activeInstall]);
+    expect(flags).toEqual([
+      ['host-a', true],
+      ['host-b', false],
+    ]);
+    await app.close();
+  });
+
+  it('includes the same host-scoped activeInstall on the single-device route', async () => {
+    const app = await appWithInstallOnHostA();
+    const a = await app.inject({ method: 'GET', url: '/emulator-5554?machineId=host-a' });
+    const b = await app.inject({ method: 'GET', url: '/emulator-5554?machineId=host-b' });
+    expect(a.json<DeviceView>().activeInstall).toBe(true);
+    expect(b.json<DeviceView>().activeInstall).toBe(false);
+    await app.close();
   });
 });

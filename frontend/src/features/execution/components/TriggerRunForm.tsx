@@ -338,7 +338,8 @@ export function TriggerRunForm() {
                   <option value="">Select a suite…</option>
                   {suites.map((s) => (
                     <option key={s.id} value={s.id}>
-                      {s.kind === 'tag' ? `${s.name} · ${s.fileCount ?? 0} features` : s.name}
+                      {/* An unknown count is left off rather than shown as "0 features". */}
+                      {s.kind === 'tag' && s.fileCount !== undefined ? `${s.name} · ${s.fileCount} features` : s.name}
                     </option>
                   ))}
                 </select>
@@ -356,7 +357,8 @@ export function TriggerRunForm() {
             </div>
             <div className={styles.field}>
               <label className={styles.label} htmlFor="device">
-                Device ({availableDevices?.length ?? 0})
+                {/* No count until the list has loaded — "(0)" mid-fetch reads as a fact. */}
+                Device{availableDevices ? ` (${availableDevices.length})` : ''}
               </label>
               <select
                 id="device"

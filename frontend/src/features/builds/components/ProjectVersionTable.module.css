@@ -12,6 +12,12 @@
   color: var(--status-failed);
 }
 
+.phase {
+  margin: 0;
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+}
+
 .dash {
   color: var(--text-disabled);
 }

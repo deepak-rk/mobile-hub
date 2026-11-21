@@ -2,7 +2,7 @@ import { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 import { acquireLock, getDevice, listDevices, releaseLock, renewLock, syncDevices } from './devices.service';
 import { requireAgentToken, AGENT_TRAFFIC_LOG_LEVEL } from '../agent-auth/agent-auth';
-import { getActiveInstallUdids } from '../device-installs/install-runs.service';
+import { deviceKey, getActiveInstallDeviceKeys } from '../device-installs/install-runs.service';
 import { ConflictError, ForbiddenError, NotFoundError, ValidationError } from '../../common/errors/app-error';
 
 const syncBody = z.object({
@@ -30,15 +30,15 @@ export const devicesRoutes: FastifyPluginAsync = async (app) => {
     const { platform, status, machineId } = req.query as Record<string, string>;
     const [devices, installing] = await Promise.all([
       listDevices({ platform, status, machineId }),
-      getActiveInstallUdids(),
+      getActiveInstallDeviceKeys(),
     ]);
     // `activeInstall` is derived per request rather than stored on the device:
     // installs take no lock, so a device's own record legitimately says
     // nothing about them, and duplicating that state onto the device would
-    // just create a second thing to keep in sync. See getActiveInstallUdids.
+    // just create a second thing to keep in sync. See getActiveInstallDeviceKeys.
     return devices.map((d) => ({
       ...(d.toObject() as Record<string, unknown>),
-      activeInstall: installing.has(d.udid),
+      activeInstall: installing.has(deviceKey(d.machineId, d.udid)),
     }));
   });
 
@@ -57,9 +57,13 @@ export const devicesRoutes: FastifyPluginAsync = async (app) => {
   app.get('/:udid', async (req) => {
     const { udid } = req.params as { udid: string };
     const { machineId } = req.query as { machineId?: string };
-    const device = await getDevice(udid, machineId || undefined);
+    const [device, installing] = await Promise.all([getDevice(udid, machineId || undefined), getActiveInstallDeviceKeys()]);
     if (!device) throw new NotFoundError('Device not found');
-    return device;
+    // Same derived field as the list, so the two never disagree about a device.
+    return {
+      ...(device.toObject() as Record<string, unknown>),
+      activeInstall: installing.has(deviceKey(device.machineId, device.udid)),
+    };
   });
 
   // operator/admin, not merely authenticated: holding a device lock takes it

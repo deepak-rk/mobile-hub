@@ -9,8 +9,10 @@ import { InstallDialog } from '@/features/device-installs/components/InstallDial
 import {
   useInstalledDevices,
   useTriggerUninstallRun,
+  useUninstallRuns,
   type InstalledDevice,
 } from '@/features/device-installs/api/device-installs.api';
+import { deviceHref, deviceKey } from '@/features/devices/lib/deviceKey';
 import type { ApiError } from '@/services/api';
 import { usePurgeBuild, useRefetchBuild } from '../api/builds.api';
 import type { Build } from '../types';
@@ -31,6 +33,10 @@ export function BuildDetailDialog({ build, onClose }: { build: Build | null; onC
   const purge = usePurgeBuild();
   const refetch = useRefetchBuild();
   const uninstall = useTriggerUninstallRun();
+  // Uninstalls this dialog started, watched until they finish so the
+  // "Installed on" list refreshes when the agent is done, not on acceptance.
+  const [uninstallRunIds, setUninstallRunIds] = useState<string[]>([]);
+  useUninstallRuns(uninstallRunIds);
   const { can } = useAuth();
   const { data: installedDevices } = useInstalledDevices(build?._id);
 
@@ -164,8 +170,8 @@ export function BuildDetailDialog({ build, onClose }: { build: Build | null; onC
               {installedDevices.length > 0 ? (
                 <ul className={styles.installedList}>
                   {installedDevices.map((d) => (
-                    <li key={d.deviceUdid}>
-                      <Link to={`/devices/${d.deviceUdid}`}>{d.deviceName ?? d.deviceUdid}</Link>
+                    <li key={deviceKey({ machineId: d.machineId, udid: d.deviceUdid })}>
+                      <Link to={deviceHref(d.deviceUdid, d.machineId)}>{d.deviceName ?? d.deviceUdid}</Link>
                       <span className={styles.installedMeta}>
                         <span className={styles.installedWhen}>installed {formatRelative(d.installedAt)}</span>
                         {/* Only offered when the agent positively identified
@@ -248,7 +254,12 @@ export function BuildDetailDialog({ build, onClose }: { build: Build | null; onC
                     project: build.project,
                     devices: [{ udid: confirmUninstall.deviceUdid, machineId: confirmUninstall.machineId }],
                   },
-                  { onSuccess: () => setConfirmUninstall(null) },
+                  {
+                    onSuccess: (run) => {
+                      setUninstallRunIds((ids) => [...ids, run._id]);
+                      setConfirmUninstall(null);
+                    },
+                  },
                 )
               }
             >

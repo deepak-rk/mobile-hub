@@ -11,19 +11,8 @@ import { Button, Mono, ProgressBar, Table, Tbody, Td, Th, Thead, Tr } from 'reac
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { formatBytes, formatRelative, shortId } from 'ts-format-utils';
 import type { Build } from '../types';
+import { buildProgress } from '../lib/buildProgress';
 import styles from './ProjectVersionTable.module.css';
-
-/**
- * Builds move downloading → validating → ready|corrupt|purged. The backend
- * fetches synchronously today (no per-byte progress events yet), so the bar
- * shows indeterminate-ish stage progress rather than inventing a byte count.
- * Mirrors the stage logic the flat table used before this restructure.
- */
-function buildProgress(status: Build['status']): { value: number; complete: boolean } | null {
-  if (status === 'downloading') return { value: 45, complete: false };
-  if (status === 'validating') return { value: 100, complete: false };
-  return null;
-}
 
 const columnHelper = createColumnHelper<Build>();
 
@@ -41,17 +30,14 @@ function makeColumns(onView: (build: Build) => void) {
       header: 'Status',
       cell: (info) => {
         const build = info.row.original;
-        const progress = buildProgress(build.status);
+        const progress = buildProgress(build);
         return (
           <div className={styles.statusCell}>
             <StatusBadge status={build.status} />
-            {progress ? (
-              <ProgressBar
-                value={progress.value}
-                complete={progress.complete}
-                label={build.status === 'validating' ? 'Verifying checksum…' : 'Downloading…'}
-              />
+            {progress && progress.value !== null ? (
+              <ProgressBar value={progress.value} complete={progress.complete} label={progress.label} />
             ) : null}
+            {progress && progress.value === null ? <p className={styles.phase}>{progress.label}</p> : null}
             {build.status === 'corrupt' ? (
               <p className={styles.error}>Integrity check failed — re-trigger the fetch to try again.</p>
             ) : null}

@@ -6,9 +6,9 @@ import styles from './FilterChips.module.css';
 /**
  * Quick-filter chips bound to the same URL-synced state `DeviceFilterBar`
  * uses — not a second filter mechanism, just a faster, count-bearing way to
- * hit the same status/platform values the dropdowns already expose. Counts
- * come from the already-fetched (possibly already-filtered) `devices` list,
- * so a chip's number reflects the current view, not a separate global fetch.
+ * hit the same status/platform values the dropdowns already expose. Pass
+ * the *unfiltered* inventory as `devices`: a chip's count must not depend on
+ * which chip is active, or every inactive one reads a false 0.
  */
 export function FilterChips({
   devices,

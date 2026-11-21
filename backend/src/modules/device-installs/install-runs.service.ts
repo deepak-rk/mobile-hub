@@ -196,7 +196,7 @@ export async function getPendingInstallsForMachine(
 }
 
 /**
- * UDIDs with an install currently in flight.
+ * Devices (machineId + udid, see `deviceKey`) with an install currently in flight.
  *
  * Exists because installs deliberately do not take the device lock (see
  * install-run.model.ts). That decision is fine, but it left the device list
@@ -206,15 +206,24 @@ export async function getPendingInstallsForMachine(
  * into `status`, would mean an enum entry per combination of concurrent
  * activities.
  */
-export async function getActiveInstallUdids(): Promise<Set<string>> {
+export async function getActiveInstallDeviceKeys(): Promise<Set<string>> {
   const runs = await InstallRun.find({ 'targets.status': { $in: IN_FLIGHT_TARGET_STATUSES } });
-  const udids = new Set<string>();
+  const keys = new Set<string>();
   for (const run of runs) {
     for (const target of run.targets) {
-      if (IN_FLIGHT_TARGET_STATUSES.includes(target.status)) udids.add(target.deviceUdid);
+      if (IN_FLIGHT_TARGET_STATUSES.includes(target.status)) keys.add(deviceKey(target.machineId, target.deviceUdid));
     }
   }
-  return udids;
+  return keys;
+}
+
+/**
+ * The identity key for `getActiveInstallDeviceKeys`. A UDID alone is not a
+ * device — `emulator-5554` exists on every host — so keying by it made an
+ * install on one host show "Installing" on every host's device of that UDID.
+ */
+export function deviceKey(machineId: string, udid: string): string {
+  return `${machineId}\u0000${udid}`;
 }
 
 /**
@@ -240,7 +249,7 @@ const ABANDONED_ON_HOST_LOSS: InstallTargetStatus[] = IN_FLIGHT_TARGET_STATUSES.
  * Without this they were stuck forever (found 2026-09-22): the agent only
  * ever picks up `queued` targets, so one it abandoned at `transferring` was
  * never retried and never failed — the install silently never finished, with
- * no error anywhere, and `getActiveInstallUdids` kept reporting the device as
+ * no error anywhere, and `getActiveInstallDeviceKeys` kept reporting the device as
  * installing, so it showed an "Installing" badge indefinitely while also
  * being marked offline.
  */
@@ -321,7 +330,7 @@ export async function getInstalledDevicesForBuild(buildId: string): Promise<Inst
   // Keyed by host + udid: emulator serials repeat on every host, and keying by
   // udid alone merged two hosts' emulator-5554 into one "installed" entry (and
   // let an uninstall on one host hide the install on the other).
-  const keyOf = (machineId: string, udid: string) => `${machineId}\u0000${udid}`;
+  const keyOf = deviceKey;
   const latestByDevice = new Map<
     string,
     {

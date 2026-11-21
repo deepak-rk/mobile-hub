@@ -10,6 +10,7 @@ import { LogViewer } from '../components/LogViewer';
 import { useAuth } from '@/features/auth/useAuth';
 import { useDevice } from '@/features/devices/api/devices.api';
 import { DeviceStream } from '@/features/devices/components/DeviceStream';
+import { deviceHref } from '@/features/devices/lib/deviceKey';
 import { STAGE_LABELS, stageColor, stageIcon } from '../lib/stageMeta';
 import styles from './RunDetailPage.module.css';
 
@@ -297,7 +298,7 @@ export function RunDetailPage() {
                     {
                       term: 'Device',
                       value: (
-                        <Link className={styles.deviceLink} to={`/devices/${run.deviceUdid}`}>
+                        <Link className={styles.deviceLink} to={deviceHref(run.deviceUdid, run.machineId)}>
                           <Mono>{run.deviceUdid}</Mono>
                         </Link>
                       ),

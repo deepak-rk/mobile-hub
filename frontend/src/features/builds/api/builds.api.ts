@@ -6,6 +6,11 @@ export function useBuilds() {
   return useQuery({
     queryKey: ['builds'],
     queryFn: async () => (await api.get<Build[]>('/builds')).data,
+    // Polls only while a fetch is in progress, so the download bar moves
+    // (the backend samples `downloadedBytes` ~1s) and the row reaches
+    // ready/corrupt without a manual reload. Idle otherwise.
+    refetchInterval: (query) =>
+      query.state.data?.some((b) => b.status === 'downloading' || b.status === 'validating') ? 2000 : false,
   });
 }
 

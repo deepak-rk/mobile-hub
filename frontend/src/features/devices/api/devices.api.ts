@@ -27,7 +27,8 @@ export function useDevices(filters: DeviceFilters = {}, options: { refetchInterv
 
 export function useDevice(udid: string | undefined, machineId?: string) {
   return useQuery({
-    queryKey: ['devices', udid],
+    // machineId is part of the key: the same udid on two hosts is two devices.
+    queryKey: ['devices', udid, machineId ?? null],
     queryFn: async () => (await api.get<Device>(`/devices/${udid}`, { params: machineId ? { machineId } : undefined })).data,
     enabled: Boolean(udid),
   });

@@ -23,6 +23,7 @@ import { useDeviceFilters } from '../hooks/useDeviceFilters';
 import { MULTI_VIEW_MAX } from '../hooks/useMultiViewSelection';
 import { isOfflineStatus } from '../lib/deviceCounts';
 import { displayModel } from '../lib/deviceLabels';
+import { deviceHref, deviceKey } from '../lib/deviceKey';
 import type { Device } from '../types';
 import styles from './DevicesPage.module.css';
 
@@ -75,7 +76,8 @@ export function DeviceCard({
   selectable: boolean;
   selected: boolean;
   selectionFull: boolean;
-  onToggle: (udid: string) => void;
+  /** Called with `deviceKey(device)` (host + udid), not the bare udid. */
+  onToggle: (key: string) => void;
 }) {
   const offline = isOfflineStatus(device.status);
   const model = displayModel(device);
@@ -92,7 +94,7 @@ export function DeviceCard({
             className={styles.selectBox}
             checked={selected}
             disabled={disabled || (!selected && selectionFull)}
-            onChange={() => onToggle(device.udid)}
+            onChange={() => onToggle(deviceKey(device))}
             aria-label={`Select ${device.name} for multi-view`}
           />
         ) : (
@@ -103,7 +105,7 @@ export function DeviceCard({
         {selectable ? (
           <span className={styles.name}>{device.name}</span>
         ) : (
-          <Link to={`/devices/${device.udid}`} className={styles.name}>
+          <Link to={deviceHref(device.udid, device.machineId)} className={styles.name}>
             {device.name}
           </Link>
         )}
@@ -156,7 +158,7 @@ export function DeviceCard({
             forwarding; stopPropagation keeps this link's click just a link. */}
         {!offline ? (
           <Link
-            to={`/devices/${device.udid}`}
+            to={deviceHref(device.udid, device.machineId)}
             className={styles.liveAction}
             onClick={(e) => selectable && e.stopPropagation()}
           >
@@ -184,6 +186,11 @@ export function DevicesPage() {
   const { status, setStatus, platform, setPlatform } = useDeviceFilters();
   const { data: devices, isPending, error, refetch } = useDevices({ status, platform });
   const filtered = status !== 'all' || platform !== 'all';
+  // Chip counts come from the *unfiltered* inventory: counting the
+  // server-filtered list made every other chip read 0 (status=idle showed
+  // "Offline 0" whatever the real number). Same query as the unfiltered
+  // list, so with no filter active this is one request, not two.
+  const { data: allDevices } = useDevices();
 
   // Selection lives here rather than in the URL: the multi-view *page* owns
   // the `udids` param, and mirroring it while still picking would leave two
@@ -191,12 +198,13 @@ export function DevicesPage() {
   const [picking, setPicking] = useState(false);
   const [selected, setSelected] = useState<string[]>([]);
 
-  function toggle(udid: string) {
+  // Holds deviceKey()s (host + udid): emulator serials repeat across hosts.
+  function toggle(key: string) {
     setSelected((prev) =>
-      prev.includes(udid)
-        ? prev.filter((u) => u !== udid)
+      prev.includes(key)
+        ? prev.filter((k) => k !== key)
         : prev.length < MULTI_VIEW_MAX
-          ? [...prev, udid]
+          ? [...prev, key]
           : prev,
     );
   }
@@ -231,9 +239,9 @@ export function DevicesPage() {
           numbers twice and pushed the grid below the fold. Multi-view sits
           here rather than in the page header because it acts on this list. */}
       <div className={styles.toolbar}>
-        {devices && devices.length > 0 ? (
+        {allDevices && allDevices.length > 0 ? (
           <FilterChips
-            devices={devices}
+            devices={allDevices}
             status={status}
             setStatus={setStatus}
             platform={platform}
@@ -270,7 +278,7 @@ export function DevicesPage() {
           <Button
             size="sm"
             disabled={selected.length < MULTI_VIEW_MIN}
-            onClick={() => navigate(`/devices/multi-view?udids=${selected.join(',')}`)}
+            onClick={() => navigate(`/devices/multi-view?${new URLSearchParams({ udids: selected.join(',') }).toString()}`)}
             title={
               selected.length < MULTI_VIEW_MIN ? `Pick at least ${MULTI_VIEW_MIN} devices to compare` : undefined
             }
@@ -314,7 +322,7 @@ export function DevicesPage() {
               <DeviceCard
                 key={device._id}
                 device={device}
-                selected={selected.includes(device.udid)}
+                selected={selected.includes(deviceKey(device))}
                 {...cardProps}
               />
             ))}
@@ -334,7 +342,7 @@ export function DevicesPage() {
                 <DeviceCard
                   key={device._id}
                   device={device}
-                  selected={selected.includes(device.udid)}
+                  selected={selected.includes(deviceKey(device))}
                   {...cardProps}
                 />
               ))}

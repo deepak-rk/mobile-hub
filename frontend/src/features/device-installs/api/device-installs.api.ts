@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQueries, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
 import { api } from '@/services/api';
 import type { InstallRun } from '../types';
 
@@ -14,11 +14,34 @@ export function isTargetInFlight(status: InstallRun['targets'][number]['status']
   return IN_FLIGHT.includes(status);
 }
 
+/** The query-key prefix every useInstalledDevices list sits under. */
+const INSTALLED_DEVICES_KEY = ['device-installs', 'builds'];
+
+/**
+ * Called whenever a fresh install/uninstall run record arrives. The
+ * "Installed on" list is derived from *finished* runs, so it can only change
+ * once a run is terminal — invalidating when the trigger is merely accepted
+ * (what the mutations do) refetches before the agent has done anything, and
+ * nothing refetched it afterwards. This is the "afterwards".
+ */
+function refreshInstalledIfSettled(qc: QueryClient, statuses: string[]) {
+  if (statuses.every((s) => s === 'done' || s === 'error')) {
+    void qc.invalidateQueries({ queryKey: INSTALLED_DEVICES_KEY });
+  }
+}
+
 /** Polls only while at least one target hasn't reached a terminal state — same shape as useExecutionRun. */
 export function useInstallRun(installRunId: string | undefined, livePush = false) {
+  const qc = useQueryClient();
   return useQuery({
     queryKey: ['device-installs', installRunId],
-    queryFn: async () => (await api.get<InstallRun>(`/device-installs/${installRunId}`)).data,
+    queryFn: async () => {
+      const run = (await api.get<InstallRun>(`/device-installs/${installRunId}`)).data;
+      // Covers the live-push path too: each WS event invalidates this query,
+      // so the terminal event's refetch lands here.
+      refreshInstalledIfSettled(qc, run.targets.map((t) => t.status));
+      return run;
+    },
     enabled: Boolean(installRunId),
     refetchInterval: (query) => {
       if (livePush) return false;
@@ -47,7 +70,7 @@ export interface InstalledDevice {
  */
 export function useInstalledDevices(buildId: string | undefined) {
   return useQuery({
-    queryKey: ['device-installs', 'builds', buildId, 'devices'],
+    queryKey: [...INSTALLED_DEVICES_KEY, buildId, 'devices'],
     queryFn: async () => (await api.get<InstalledDevice[]>(`/device-installs/builds/${buildId}/devices`)).data,
     enabled: Boolean(buildId),
   });
@@ -90,12 +113,38 @@ export function useTriggerUninstallRun() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (input: TriggerUninstallRunInput) =>
-      (await api.post('/device-installs/uninstalls', input)).data,
+      (await api.post<UninstallRun>('/device-installs/uninstalls', input)).data,
     onSuccess: () => {
-      // Invalidates useInstalledDevices too — same 'device-installs' query
-      // key prefix — so the list this action is triggered from drops the
-      // device once the uninstall actually completes and a refetch lands.
+      // Only "accepted" — the agent hasn't uninstalled anything yet, so this
+      // alone does not drop the device from the "Installed on" list. Watch
+      // the returned run with useUninstallRuns for that.
       void qc.invalidateQueries({ queryKey: ['device-installs'] });
     },
+  });
+}
+
+export interface UninstallRun {
+  _id: string;
+  targets: { deviceUdid: string; machineId: string; status: 'queued' | 'uninstalling' | 'done' | 'error' }[];
+}
+
+/**
+ * Polls each uninstall run until every target is terminal, then refreshes
+ * the "Installed on" list (see refreshInstalledIfSettled). Several at once
+ * because a user can uninstall from a second device before the first ends.
+ */
+export function useUninstallRuns(uninstallRunIds: string[]) {
+  const qc = useQueryClient();
+  return useQueries({
+    queries: uninstallRunIds.map((id) => ({
+      queryKey: ['device-installs', 'uninstalls', id],
+      queryFn: async () => {
+        const run = (await api.get<UninstallRun>(`/device-installs/uninstalls/${id}`)).data;
+        refreshInstalledIfSettled(qc, run.targets.map((t) => t.status));
+        return run;
+      },
+      refetchInterval: (query: { state: { data?: UninstallRun } }) =>
+        query.state.data?.targets.every((t) => t.status === 'done' || t.status === 'error') ? false : 1000,
+    })),
   });
 }

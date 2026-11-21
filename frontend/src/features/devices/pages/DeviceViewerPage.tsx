@@ -1,4 +1,4 @@
-import { Link, useParams } from 'react-router-dom';
+import { Link, useParams, useSearchParams } from 'react-router-dom';
 import {
   Button,
   Card,
@@ -22,7 +22,10 @@ import styles from './DeviceViewerPage.module.css';
 
 export function DeviceViewerPage() {
   const { udid } = useParams<{ udid: string }>();
-  const { data: device, isPending, error, refetch } = useDevice(udid);
+  // `?machineId=` picks which host's device this is — the same udid (every
+  // host's emulator-5554) can exist on several. Optional so old links still work.
+  const [searchParams] = useSearchParams();
+  const { data: device, isPending, error, refetch } = useDevice(udid, searchParams.get('machineId') || undefined);
   const { user } = useAuth();
   const model = device ? modelDetail(device) : null;
 
