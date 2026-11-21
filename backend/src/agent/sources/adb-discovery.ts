@@ -82,30 +82,77 @@ export function connectionTypeFor(serial: string): DiscoveredDevice['connectionT
   return 'usb';
 }
 
+/** Runs one adb invocation and returns its stdout. Injectable so discovery can be tested without a device. */
+export type AdbExec = (args: string[]) => Promise<string>;
+
+/**
+ * How many consecutive polls a device may be absent from `adb devices` before
+ * it stops being reported. One transient blip is common (USB re-enumeration,
+ * adb server restart); dropping a device on the first miss made the hub mark
+ * it offline *and release its lock* — out from under a run executing on it.
+ */
+export const MISSING_GRACE_POLLS = 2;
+
 export class AdbDeviceDiscovery implements DeviceDiscovery {
   readonly name = 'adb';
 
-  constructor(private readonly adbPath = process.env.ADB_PATH ?? 'adb') {}
+  // State carried between polls — the whole point of the fix below.
+  private readonly lastGood = new Map<string, DiscoveredDevice>();
+  private readonly booted = new Set<string>();
+  private readonly missedPolls = new Map<string, number>();
+  private readonly exec: AdbExec;
+
+  constructor(
+    private readonly adbPath = process.env.ADB_PATH ?? 'adb',
+    exec?: AdbExec,
+  ) {
+    this.exec = exec ?? (async (args) => (await run(this.adbPath, args, { timeout: PROP_TIMEOUT_MS })).stdout);
+  }
 
   async isAvailable(): Promise<boolean> {
     try {
-      await run(this.adbPath, ['version'], { timeout: PROP_TIMEOUT_MS });
+      await this.exec(['version']);
       return true;
     } catch {
       return false;
     }
   }
 
+  /**
+   * One poll's view of the lab — deliberately *not* just "what answered this
+   * instant".
+   *
+   * The previous version dropped a device whenever its property probe failed,
+   * and reported only what `adb devices` listed right now. The hub reads an
+   * absent device as gone: it marks it offline and **releases its lock**. So a
+   * single transient blip (a 5 s getprop timeout, a USB re-enumeration) freed
+   * the lock of a run executing on that device and let another run take it.
+   * A production device farm in this domain hit the same thing ("partial
+   * device list from one failed probe → devices vanished") and settled on the
+   * same three rules applied here:
+   *  - a device whose probe fails but is still listed keeps its last good record;
+   *  - a device missing from the list is kept for `MISSING_GRACE_POLLS` polls
+   *    before it is dropped;
+   *  - an emulator is reported only once `sys.boot_completed=1` — adb lists it
+   *    as `device` well before Android has finished booting, and a run handed a
+   *    half-booted emulator fails for reasons nothing on screen explains — and
+   *    once booted it stays booted across blips.
+   */
   async discover(): Promise<DiscoveredDevice[]> {
-    const { stdout } = await run(this.adbPath, ['devices', '-l'], { timeout: PROP_TIMEOUT_MS });
+    const stdout = await this.exec(['devices', '-l']);
     const usable = parseAdbDevices(stdout).filter((d) => isUsableState(d.state));
+    const listed = new Set(usable.map((d) => d.serial));
 
     // Properties need a round trip each; do them concurrently but tolerate
     // individual failures — one wedged device must not hide the whole lab.
-    const devices = await Promise.all(
+    const probed = await Promise.all(
       usable.map(async (d): Promise<DiscoveredDevice | null> => {
         try {
           const connectionType = connectionTypeFor(d.serial);
+          if (connectionType === 'emulator' && !this.booted.has(d.serial)) {
+            if ((await this.getProp(d.serial, 'sys.boot_completed')) !== '1') return null; // still booting
+            this.booted.add(d.serial);
+          }
           const [osVersion, model, avdName] = await Promise.all([
             this.getProp(d.serial, 'ro.build.version.release'),
             this.getProp(d.serial, 'ro.product.model'),
@@ -116,7 +163,7 @@ export class AdbDeviceDiscovery implements DeviceDiscovery {
             // sets. Emulator-only, so only worth asking on that transport.
             connectionType === 'emulator' ? this.getProp(d.serial, 'ro.boot.qemu.avd_name') : Promise.resolve(''),
           ]);
-          return {
+          const device: DiscoveredDevice = {
             udid: d.serial,
             platform: 'android',
             name: resolveDeviceName({ avdName, model, propsModel: d.props.model, serial: d.serial }),
@@ -124,19 +171,38 @@ export class AdbDeviceDiscovery implements DeviceDiscovery {
             model: model || d.props.model || 'unknown',
             connectionType,
           };
+          this.lastGood.set(d.serial, device);
+          return device;
         } catch {
-          return null;
+          // Still listed by adb, only the probe failed: keep reporting what we
+          // last knew rather than making the device vanish.
+          return this.lastGood.get(d.serial) ?? null;
         }
       }),
     );
 
-    return devices.filter((d): d is DiscoveredDevice => d !== null);
+    const devices = probed.filter((d): d is DiscoveredDevice => d !== null);
+    for (const d of devices) this.missedPolls.delete(d.udid);
+
+    // Known devices adb did not list this time: keep them through a short
+    // grace period, then let them go.
+    for (const [serial, device] of this.lastGood) {
+      if (listed.has(serial)) continue;
+      const missed = (this.missedPolls.get(serial) ?? 0) + 1;
+      if (missed > MISSING_GRACE_POLLS) {
+        this.lastGood.delete(serial);
+        this.booted.delete(serial);
+        this.missedPolls.delete(serial);
+        continue;
+      }
+      this.missedPolls.set(serial, missed);
+      devices.push(device);
+    }
+
+    return devices;
   }
 
   private async getProp(serial: string, prop: string): Promise<string> {
-    const { stdout } = await run(this.adbPath, ['-s', serial, 'shell', 'getprop', prop], {
-      timeout: PROP_TIMEOUT_MS,
-    });
-    return stdout.trim();
+    return (await this.exec(['-s', serial, 'shell', 'getprop', prop])).trim();
   }
 }

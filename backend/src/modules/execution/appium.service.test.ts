@@ -203,7 +203,7 @@ describe('ensureRemoteAppiumServer', () => {
     const device = fakeRemoteDevice({ remoteAppium: { host: '10.0.0.5', port: 4823, readyAt: new Date() } });
     const endpoint = await ensureRemoteAppiumServer(device, {} as EffectiveConfig);
 
-    expect(endpoint).toEqual({ host: '10.0.0.5', port: 4823, baseUrl: 'http://10.0.0.5:4823' });
+    expect(endpoint).toEqual({ host: '10.0.0.5', port: 4823, baseUrl: 'http://10.0.0.5:4823', path: '' });
     expect(updateSpy).not.toHaveBeenCalled();
     expect(findByIdSpy).not.toHaveBeenCalled();
   });
@@ -222,7 +222,7 @@ describe('ensureRemoteAppiumServer', () => {
     const device = fakeRemoteDevice({ remoteAppium: { host: '10.0.0.5', port: 4823, readyAt: new Date() } });
     const endpoint = await ensureRemoteAppiumServer(device, {} as EffectiveConfig);
 
-    expect(endpoint).toEqual({ host: '10.0.0.9', port: 4900, baseUrl: 'http://10.0.0.9:4900' });
+    expect(endpoint).toEqual({ host: '10.0.0.9', port: 4900, baseUrl: 'http://10.0.0.9:4900', path: '' });
     expect(clearSpy).toHaveBeenCalledWith('device-1', { remoteAppium: null });
     expect(clearSpy).toHaveBeenCalledWith('device-1', { remoteAppiumRequestedAt: expect.any(Date) as Date });
   });
@@ -237,7 +237,7 @@ describe('ensureRemoteAppiumServer', () => {
     const device = fakeRemoteDevice();
     const endpoint = await ensureRemoteAppiumServer(device, {} as EffectiveConfig);
 
-    expect(endpoint).toEqual({ host: '10.0.0.5', port: 4823, baseUrl: 'http://10.0.0.5:4823' });
+    expect(endpoint).toEqual({ host: '10.0.0.5', port: 4823, baseUrl: 'http://10.0.0.5:4823', path: '' });
   });
 });
 

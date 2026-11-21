@@ -413,3 +413,33 @@ export async function reportTargetProgress(
   });
   return run;
 }
+
+/**
+ * Fails `queued` install targets stranded on hosts that have stayed offline.
+ *
+ * `failAbandonedInstallTargets` deliberately leaves `queued` alone when a host
+ * first goes stale, because the returning agent resumes those. But a host
+ * that stays down turns that into a silent dead end: the install sits
+ * "queued" indefinitely and whoever is waiting on it never learns why. A
+ * production farm in this domain fails these after 3 minutes ("agent with no
+ * heartbeat in 3 min, or job still queued after 3 min → fail now"); the
+ * caller applies the same rule by passing hosts offline that long and a
+ * matching `createdBefore`, so a target queued *just* before a blip is not
+ * failed by it.
+ */
+export async function failStrandedQueuedInstallTargets(machineIds: string[], createdBefore: Date): Promise<number> {
+  if (machineIds.length === 0) return 0;
+  const match = { machineId: { $in: machineIds }, status: 'queued' };
+  const result = await InstallRun.updateMany(
+    { createdAt: { $lt: createdBefore }, targets: { $elemMatch: match } },
+    {
+      $set: {
+        'targets.$[t].status': 'error',
+        'targets.$[t].error': 'Host agent offline — the install was never picked up',
+        'targets.$[t].endedAt': new Date(),
+      },
+    },
+    { arrayFilters: [{ 't.machineId': match.machineId, 't.status': 'queued' }] },
+  );
+  return result.modifiedCount;
+}

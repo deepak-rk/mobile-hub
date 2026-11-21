@@ -3,7 +3,11 @@ import { connectDB } from './db/connection';
 import mongoose from 'mongoose';
 import { env } from './config/env';
 import { loadEffectiveConfig } from './config/config.service';
-import { markStaleHostsOffline, HOST_STALE_CHECK_INTERVAL_MS } from './modules/hosts/hosts.service';
+import {
+  markStaleHostsOffline,
+  failWorkStrandedOnOfflineHosts,
+  HOST_STALE_CHECK_INTERVAL_MS,
+} from './modules/hosts/hosts.service';
 import {
   recoverOrphanedRuns,
   sweepFinishedWorkspaces,
@@ -157,6 +161,13 @@ async function start(): Promise<void> {
       })
       .catch((err: unknown) => {
         app.log.error(err, 'Failed to mark stale hosts offline');
+      });
+    failWorkStrandedOnOfflineHosts()
+      .then((failed) => {
+        if (failed > 0) app.log.warn(`Failed ${failed} queued install/uninstall target(s) stranded on hosts offline > 3 min`);
+      })
+      .catch((err: unknown) => {
+        app.log.error(err, 'Failed to fail stranded install work');
       });
   }, HOST_STALE_CHECK_INTERVAL_MS);
 

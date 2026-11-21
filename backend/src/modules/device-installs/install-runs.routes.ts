@@ -10,7 +10,7 @@ import {
   triggerInstallRun,
 } from './install-runs.service';
 import { subscribeToInstallEvents } from './install-runs.events';
-import { requireAgentToken } from '../agent-auth/agent-auth';
+import { requireAgentToken, AGENT_TRAFFIC_LOG_LEVEL } from '../agent-auth/agent-auth';
 import { NotFoundError, ValidationError } from '../../common/errors/app-error';
 
 const triggerBody = z.object({
@@ -72,7 +72,7 @@ export const installRunsRoutes: FastifyPluginAsync = async (app) => {
 
   // Agent-authenticated: the agent driving one target's download/install
   // reports its own progress here as it goes.
-  app.post('/:id/targets/:deviceUdid/report', { preHandler: requireAgentToken }, async (req) => {
+  app.post('/:id/targets/:deviceUdid/report', { preHandler: requireAgentToken, logLevel: AGENT_TRAFFIC_LOG_LEVEL }, async (req) => {
     const { id, deviceUdid } = req.params as { id: string; deviceUdid: string };
     const body = reportBody.safeParse(req.body);
     if (!body.success) {

@@ -95,3 +95,17 @@ export async function requireAgentToken(req: FastifyRequest, reply: FastifyReply
     message: 'A valid agent token is required. Set AGENT_TOKEN on the agent to match the hub.',
   });
 }
+
+/**
+ * Request-log level for the high-frequency agent routes (heartbeat, device
+ * sync, stream frames, progress reports).
+ *
+ * Every agent heartbeats and syncs every 10 s and a remote stream posts up to
+ * several frames a second, each logged as an incoming + completed pair at
+ * `info`. Measured on a dev hub: the log reached ~800k lines with the tail
+ * made of nothing else, burying the requests a person actually needs to find.
+ * A production farm in this domain measured ~98 % of its log as this traffic
+ * and moved it out of the default level. `warn` keeps errors and slow-request
+ * warnings visible while dropping the routine pairs.
+ */
+export const AGENT_TRAFFIC_LOG_LEVEL = 'warn';

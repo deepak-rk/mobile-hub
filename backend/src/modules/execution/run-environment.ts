@@ -77,12 +77,17 @@ export interface RunEnvironmentInput {
   /** Declared per project/org. Treated as secret. */
   configured: Record<string, string>;
   /** Coordinates of the Appium server this run should talk to, when there is one. */
-  appium?: { host: string; port: number; baseUrl: string };
+  appium?: { host: string; port: number; baseUrl: string; path?: string };
   /** Identifies the device under test to the runner. */
   device?: { udid: string; platform: string; osVersion: string; name: string };
   /** The build to install/target, when the run has one. */
   appPath?: string;
+  /** This run's id, so a suite can tag its own artifacts with it. */
+  runId?: string;
 }
+
+/** The Appium driver each platform needs — what WDIO sends as `appium:automationName`. */
+const AUTOMATION_NAME: Record<string, string> = { android: 'UiAutomator2', ios: 'XCUITest' };
 
 export function buildRunEnvironment(input: RunEnvironmentInput): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {};
@@ -90,6 +95,18 @@ export function buildRunEnvironment(input: RunEnvironmentInput): NodeJS.ProcessE
     const value = process.env[key];
     if (value !== undefined) env[key] = value;
   }
+
+  // Declared values FIRST, so the per-run values below always win. This was
+  // the other way round ("an org that sets APPIUM_HOST for a remote grid
+  // should win"), but configured env is org- or project-wide while these are
+  // per-run facts: a configured APPIUM_HOST, DEVICE_UDID or PLATFORM pins
+  // every run to one host or device, which is wrong for all the others. A
+  // production farm in this domain hit exactly this — the test repo's own
+  // hardcoded remote Appium host survived because the hub only wrote its
+  // value when one was missing — and its rule is: always write the per-run
+  // values. A remote grid is configured through `appium.host`, which feeds
+  // the derived value, not by overriding it here.
+  Object.assign(env, input.configured);
 
   // Derived rather than required: the hub already knows where adb is, and a
   // session cannot start without the SDK root being exported.
@@ -105,19 +122,21 @@ export function buildRunEnvironment(input: RunEnvironmentInput): NodeJS.ProcessE
   if (input.appium) {
     env.APPIUM_HOST = input.appium.host;
     env.APPIUM_PORT = String(input.appium.port);
-    env.APPIUM_BASE_URL = input.appium.baseUrl;
+    // The base path is part of where the server lives: a server on the legacy
+    // `/wd/hub` path 404s every session created against the bare origin.
+    env.APPIUM_PATH = input.appium.path || '/';
+    env.APPIUM_BASE_URL = `${input.appium.baseUrl}${input.appium.path ?? ''}`;
   }
   if (input.device) {
     env.DEVICE_UDID = input.device.udid;
     env.DEVICE_NAME = input.device.name;
     env.PLATFORM = input.device.platform;
     env.PLATFORM_VERSION = input.device.osVersion;
+    const automationName = AUTOMATION_NAME[input.device.platform];
+    if (automationName) env.AUTOMATION_NAME = automationName;
   }
   if (input.appPath) env.APP_PATH = input.appPath;
-
-  // Declared values last: an org that deliberately sets APPIUM_HOST for a
-  // remote grid should win over what the hub inferred.
-  Object.assign(env, input.configured);
+  if (input.runId) env.RUN_ID = input.runId;
   return env;
 }
 

@@ -17,6 +17,12 @@ import {
   getActiveRunCountForMachine,
   getQueuePosition,
   dispatchQueuedRuns,
+  setStatus,
+  ranZeroTests,
+  saveCacheIfMissing,
+  isCompleteCache,
+  CACHE_COMPLETE_MARKER,
+  OFFLINE_FAIL_FAST_MS,
 } from './execution.service';
 
 /**
@@ -60,8 +66,35 @@ function fakeRunDoc(overrides: Partial<Record<string, unknown>> = {}) {
     triggeredBy: 'user-1',
     ...overrides,
   };
+  doc._id = doc.id;
   (doc as { save: () => Promise<void> }).save = vi.fn().mockResolvedValue(undefined);
+  (doc as { unmarkModified: () => void }).unmarkModified = vi.fn();
+  fakeDocs.set(doc.id as string, doc);
   return doc;
+}
+
+/**
+ * Status transitions are conditional `updateOne`s (`{_id, status: ...}`), so
+ * the stub *evaluates the filter* against the fake doc rather than always
+ * reporting success — otherwise a test could never observe a write being
+ * refused, which is the behaviour those writes exist for.
+ */
+const fakeDocs = new Map<string, Record<string, unknown>>();
+function matchesStatus(actual: unknown, cond: unknown): boolean {
+  if (cond === undefined) return true;
+  if (typeof cond === 'string') return actual === cond;
+  const { $nin, $ne } = cond as { $nin?: unknown[]; $ne?: unknown };
+  if ($nin) return !$nin.includes(actual);
+  if ($ne !== undefined) return actual !== $ne;
+  return true;
+}
+function stubConditionalUpdates() {
+  return vi.spyOn(ExecutionRun, 'updateOne').mockImplementation(((filter: { _id: string; status?: unknown }, update: { $set: Record<string, unknown> }) => {
+    const doc = fakeDocs.get(filter._id);
+    if (!doc || !matchesStatus(doc.status, filter.status)) return Promise.resolve({ matchedCount: 0, modifiedCount: 0 });
+    Object.assign(doc, update.$set);
+    return Promise.resolve({ matchedCount: 1, modifiedCount: 1 });
+  }) as never);
 }
 
 function waitForReleaseLock() {
@@ -97,6 +130,8 @@ beforeEach(() => {
     model: 'Pixel 7',
     name: 'Lab phone',
   } as never);
+  fakeDocs.clear();
+  stubConditionalUpdates();
 });
 
 /**
@@ -466,13 +501,77 @@ describe('cancelExecutionRun', () => {
 
   it('cancels a queued run directly — no process to kill, no lock ever held', async () => {
     const doc = fakeRunDoc({ status: 'queued' });
+    const updateOne = stubConditionalUpdates();
     vi.spyOn(ExecutionRun, 'findById').mockResolvedValue(doc as never);
 
     const run = await cancelExecutionRun('run-1');
 
     expect(run?.status).toBe('cancelled');
     expect(doc.endedAt).toBeInstanceOf(Date);
-    expect(doc.save).toHaveBeenCalled();
+    // Written atomically, conditional on the run still being queued.
+    expect(updateOne).toHaveBeenCalledWith(
+      { _id: 'run-1', status: 'queued' },
+      expect.objectContaining({ $set: expect.objectContaining({ status: 'cancelled' }) as object }),
+    );
+  });
+
+  /**
+   * The race the atomic writes close. The cancel request read the run while
+   * it was queued, but the dispatcher claimed it (queued → preparing) before
+   * the cancel's write landed. A read-then-save cancel used to write
+   * `cancelled` anyway while the run went on executing; now the conditional
+   * write matches nothing and the cancel takes the in-flight path instead.
+   */
+  it('cancels a run that was claimed between the read and the write by killing it, not by overwriting its status', async () => {
+    const doc = fakeRunDoc();
+    vi.spyOn(ExecutionRun, 'create').mockResolvedValue(doc as never);
+    vi.spyOn(devicesService, 'acquireLock').mockResolvedValue({} as never);
+    const released = waitForReleaseLock();
+    // A real, long-running command, so the run is genuinely executing here.
+    await triggerExecutionRun({ ...baseInput, run: { command: 'node', args: ['-e', 'setTimeout(()=>{},30000)'] } });
+    await new Promise((r) => setTimeout(r, 300));
+    // The cancel request read the run back when it was still queued.
+    vi.spyOn(ExecutionRun, 'findById').mockResolvedValue({ ...doc, status: 'queued' } as never);
+
+    await cancelExecutionRun('run-1');
+    await released;
+
+    expect(doc.status).toBe('cancelled'); // reached through the kill + orchestration, not a blind write
+  });
+
+  it('cancels an orphan no process here is executing — previously this silently did nothing', async () => {
+    const orphan = fakeRunDoc({ status: 'running' });
+    vi.spyOn(ExecutionRun, 'findById').mockResolvedValue(orphan as never);
+
+    await cancelExecutionRun('run-1');
+
+    expect(orphan.status).toBe('cancelled');
+  });
+});
+
+describe('status writes', () => {
+  /**
+   * A late or duplicate failure must never overwrite a recorded outcome — the
+   * exact bug a production farm in this domain shipped (a duplicate worker's
+   * failure turned a real pass into a fail).
+   */
+  it('refuses to move a run out of a terminal status', async () => {
+    const doc = fakeRunDoc({ status: 'passed' });
+
+    const written = await setStatus(doc as never, 'failed', { failureKind: 'infra' });
+
+    expect(written).toBe(false);
+    expect(doc.status).toBe('passed');
+    expect(doc.failureKind).toBeUndefined();
+  });
+
+  it('writes a normal forward transition, and unmarks it so a later save() cannot replay a stale copy', async () => {
+    const doc = fakeRunDoc({ status: 'running' });
+
+    expect(await setStatus(doc as never, 'failed', { failureKind: 'test' })).toBe(true);
+    expect(doc.status).toBe('failed');
+    expect(doc.failureKind).toBe('test');
+    expect(doc.unmarkModified).toHaveBeenCalledWith('status');
   });
 });
 
@@ -603,5 +702,148 @@ describe('sweepFinishedWorkspaces', () => {
     // A run creates its directory around the same moment as its record, so a
     // recent recordless workspace may be one starting right now.
     expect(fs.existsSync(path.join(tmpDir, freshOrphan))).toBe(true);
+  });
+});
+
+/**
+ * Regressions for findings from a production device farm's failure ledger
+ * (2026-11-21) — each of these was a real "wrong result" or "stuck forever"
+ * incident there, and present here too.
+ */
+describe('zero-test detection', () => {
+  it('reports zero tests when the runner wrote a results directory with no test results', () => {
+    const ws = path.join(tmpDir, 'zero');
+    fs.mkdirSync(path.join(ws, 'repo', 'allure-results'), { recursive: true });
+    fs.writeFileSync(path.join(ws, 'repo', 'allure-results', 'x-container.json'), '{}');
+    expect(ranZeroTests(ws)).toBe(true);
+  });
+
+  it('does not claim zero tests when there is no results directory — the project may not use Allure', () => {
+    expect(ranZeroTests(path.join(tmpDir, 'no-allure'))).toBe(false);
+  });
+
+  it('does not claim zero tests when at least one result exists', () => {
+    const ws = path.join(tmpDir, 'some');
+    fs.mkdirSync(path.join(ws, 'allure-results'), { recursive: true });
+    fs.writeFileSync(path.join(ws, 'allure-results', 'a-result.json'), '{}');
+    expect(ranZeroTests(ws)).toBe(false);
+  });
+
+  it('fails a run whose runner exits 0 but executes nothing, instead of reporting it passed', async () => {
+    const doc = fakeRunDoc();
+    vi.spyOn(ExecutionRun, 'create').mockResolvedValue(doc as never);
+    vi.spyOn(devicesService, 'acquireLock').mockResolvedValue({} as never);
+    const released = waitForReleaseLock();
+    // The runner writes an empty results dir (a filter that matched nothing) and exits 0.
+    const script = "require('fs').mkdirSync('allure-results',{recursive:true});process.exit(0)";
+
+    await triggerExecutionRun({ ...baseInput, run: { command: 'node', args: ['-e', script] } });
+    await released;
+
+    expect(doc.status).toBe('failed');
+    expect(doc.failureKind).toBe('precondition');
+  });
+
+  it('ignores results left in the workspace before the run — only what this run writes counts', async () => {
+    const doc = fakeRunDoc();
+    // Stale results from a previous tool run / a committed folder.
+    fs.mkdirSync(path.join(doc.workspacePath as string, 'allure-results'), { recursive: true });
+    fs.writeFileSync(
+      path.join(doc.workspacePath as string, 'allure-results', 'old-result.json'),
+      JSON.stringify({ name: 'stale', status: 'failed', historyId: 'h1' }),
+    );
+    vi.spyOn(ExecutionRun, 'create').mockResolvedValue(doc as never);
+    vi.spyOn(devicesService, 'acquireLock').mockResolvedValue({} as never);
+    const released = waitForReleaseLock();
+
+    await triggerExecutionRun({ ...baseInput, run: { command: 'node', args: ['-e', 'process.exit(0)'] } });
+    await released;
+
+    // The stale failure must not appear as this run's result.
+    expect(doc.status).toBe('passed');
+    expect(doc.testSummary).toBeUndefined();
+  });
+});
+
+describe('npm cache snapshot', () => {
+  it('only counts a snapshot that finished — a bare directory is not a hit', () => {
+    const dir = path.join(tmpDir, 'cache-half');
+    fs.mkdirSync(dir, { recursive: true });
+    expect(isCompleteCache(dir)).toBe(false);
+    fs.writeFileSync(path.join(dir, CACHE_COMPLETE_MARKER), 'x');
+    expect(isCompleteCache(dir)).toBe(true);
+  });
+
+  it('writes the entry via a temp dir and leaves no temp debris behind', async () => {
+    const repo = path.join(tmpDir, 'repo');
+    fs.mkdirSync(path.join(repo, 'node_modules', 'pkg'), { recursive: true });
+    fs.writeFileSync(path.join(repo, 'node_modules', 'pkg', 'index.js'), 'module.exports = 1');
+    const cacheDir = path.join(tmpDir, '.cache', 'key1');
+
+    await saveCacheIfMissing(repo, cacheDir);
+
+    expect(isCompleteCache(cacheDir)).toBe(true);
+    expect(fs.existsSync(path.join(cacheDir, 'pkg', 'index.js'))).toBe(true);
+    expect(fs.readdirSync(path.join(tmpDir, '.cache')).filter((n) => n.includes('.tmp-'))).toEqual([]);
+  });
+
+  it('replaces a half-written entry left by a crash rather than trusting it', async () => {
+    const repo = path.join(tmpDir, 'repo2');
+    fs.mkdirSync(path.join(repo, 'node_modules', 'good'), { recursive: true });
+    fs.writeFileSync(path.join(repo, 'node_modules', 'good', 'index.js'), '1');
+    const cacheDir = path.join(tmpDir, '.cache', 'key2');
+    fs.mkdirSync(path.join(cacheDir, 'partial'), { recursive: true }); // no marker: interrupted copy
+
+    await saveCacheIfMissing(repo, cacheDir);
+
+    expect(isCompleteCache(cacheDir)).toBe(true);
+    expect(fs.existsSync(path.join(cacheDir, 'partial'))).toBe(false);
+    expect(fs.existsSync(path.join(cacheDir, 'good', 'index.js'))).toBe(true);
+  });
+});
+
+describe('offline device fail-fast', () => {
+  const offlineFor = (ms: number) =>
+    vi.spyOn(devicesService, 'getDevice').mockResolvedValue({
+      udid: 'd1',
+      platform: 'android',
+      status: 'offline',
+      lastSeenAt: new Date(Date.now() - ms),
+    } as never);
+
+  it('fails a new run straight away when its device has been gone past the grace period', async () => {
+    offlineFor(OFFLINE_FAIL_FAST_MS + 60_000);
+    const doc = fakeRunDoc();
+    vi.spyOn(ExecutionRun, 'create').mockResolvedValue(doc as never);
+    const acquire = vi.spyOn(devicesService, 'acquireLock');
+
+    await triggerExecutionRun({ ...baseInput, run: { command: 'node', args: ['-e', 'process.exit(0)'] } });
+
+    expect(doc.status).toBe('failed');
+    expect(doc.failureKind).toBe('precondition');
+    expect(acquire).not.toHaveBeenCalled();
+  });
+
+  it('does not fail on a short blip — the run waits in the queue as normal', async () => {
+    offlineFor(10_000);
+    const doc = fakeRunDoc();
+    vi.spyOn(ExecutionRun, 'create').mockResolvedValue(doc as never);
+    vi.spyOn(devicesService, 'acquireLock').mockResolvedValue(null);
+
+    await triggerExecutionRun({ ...baseInput, run: { command: 'node', args: ['-e', 'process.exit(0)'] } });
+
+    expect(doc.status).toBe('queued');
+  });
+
+  it('fails a queued run whose device went away while it waited, instead of leaving it queued forever', async () => {
+    offlineFor(OFFLINE_FAIL_FAST_MS + 60_000);
+    const doc = fakeRunDoc({ status: 'queued', commands: { setup: null, run: { command: 'node', args: [] } } });
+    vi.spyOn(ExecutionRun, 'find').mockReturnValue({ sort: () => Promise.resolve([doc]) } as never);
+    const acquire = vi.spyOn(devicesService, 'acquireLock');
+
+    await dispatchQueuedRuns(PLATFORM_DEFAULTS);
+
+    expect(doc.status).toBe('failed');
+    expect(acquire).not.toHaveBeenCalled();
   });
 });

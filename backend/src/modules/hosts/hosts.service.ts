@@ -1,7 +1,7 @@
 import { Host, IHost } from './host.model';
 import { Device } from '../devices/device.model';
-import { failAbandonedInstallTargets } from '../device-installs/install-runs.service';
-import { failAbandonedUninstallTargets } from '../device-installs/uninstall-runs.service';
+import { failAbandonedInstallTargets, failStrandedQueuedInstallTargets } from '../device-installs/install-runs.service';
+import { failAbandonedUninstallTargets, failStrandedQueuedUninstallTargets } from '../device-installs/uninstall-runs.service';
 
 const OFFLINE_AFTER_MS = 30_000; // mark offline after 30s of no heartbeat
 export const HOST_STALE_CHECK_INTERVAL_MS = 10_000; // how often markStaleHostsOffline should be polled
@@ -88,4 +88,25 @@ export async function markStaleHostsOffline(): Promise<{
     devices: deviceResult.modifiedCount,
     abandonedInstalls: installs + uninstalls,
   };
+}
+
+/** How long a host must have been silent before work queued for it is failed rather than left waiting. */
+export const STRANDED_WORK_AFTER_MS = 3 * 60_000;
+
+/**
+ * Fails queued install/uninstall targets on hosts silent for longer than
+ * `STRANDED_WORK_AFTER_MS`. Run on the same tick as `markStaleHostsOffline`
+ * (which only acts on the online → offline transition, so it would never
+ * reach work queued *after* a host was already down).
+ */
+export async function failWorkStrandedOnOfflineHosts(): Promise<number> {
+  const cutoff = new Date(Date.now() - STRANDED_WORK_AFTER_MS);
+  const hosts = await Host.find({ status: 'offline', lastHeartbeatAt: { $lt: cutoff } }).select('machineId');
+  if (hosts.length === 0) return 0;
+  const machineIds = hosts.map((h) => h.machineId);
+  const [installs, uninstalls] = await Promise.all([
+    failStrandedQueuedInstallTargets(machineIds, cutoff),
+    failStrandedQueuedUninstallTargets(machineIds, cutoff),
+  ]);
+  return installs + uninstalls;
 }

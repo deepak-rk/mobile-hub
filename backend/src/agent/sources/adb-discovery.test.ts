@@ -1,5 +1,13 @@
 import { describe, it, expect } from 'vitest';
-import { parseAdbDevices, isUsableState, connectionTypeFor, resolveDeviceName } from './adb-discovery';
+import {
+  parseAdbDevices,
+  isUsableState,
+  connectionTypeFor,
+  resolveDeviceName,
+  AdbDeviceDiscovery,
+  MISSING_GRACE_POLLS,
+  type AdbExec,
+} from './adb-discovery';
 
 /**
  * adb's output varies by version, transport and device state. Getting this
@@ -113,5 +121,72 @@ describe('connectionTypeFor', () => {
 
   it('defaults to usb', () => {
     expect(connectionTypeFor('RZ8N70XABCD')).toBe('usb');
+  });
+});
+
+/**
+ * Regression for a real lock-stealing bug (2026-11-21): a single failed
+ * property probe dropped the device from the report, and the hub reads an
+ * absent device as gone — marking it offline and releasing its lock, out from
+ * under a run executing on it. Driven through the real class with a scripted
+ * fake adb, since the bug lives in how polls relate to each other.
+ */
+describe('AdbDeviceDiscovery across polls', () => {
+  type Script = { devices: string; failProps?: boolean; bootCompleted?: string };
+
+  function fakeAdb(script: () => Script): AdbExec {
+    return async (args) => {
+      const s = script();
+      if (args[0] === 'devices') return `List of devices attached\n${s.devices}\n`;
+      if (args[0] === 'version') return 'Android Debug Bridge';
+      const prop = args[args.length - 1];
+      if (s.failProps) throw new Error('error: device offline');
+      if (prop === 'sys.boot_completed') return s.bootCompleted ?? '1';
+      if (prop === 'ro.build.version.release') return '14';
+      if (prop === 'ro.product.model') return 'Pixel 7';
+      return '';
+    };
+  }
+
+  const LISTED = 'R58N123ABC device usb:1-1 product:x model:Pixel_7 device:y';
+
+  it('keeps a still-listed device whose property probe failed, using its last good record', async () => {
+    let script: Script = { devices: LISTED };
+    const discovery = new AdbDeviceDiscovery('adb', fakeAdb(() => script));
+    expect((await discovery.discover()).map((d) => d.udid)).toEqual(['R58N123ABC']);
+
+    script = { devices: LISTED, failProps: true };
+    expect((await discovery.discover()).map((d) => d.udid)).toEqual(['R58N123ABC']);
+  });
+
+  it('keeps a device that briefly disappears from adb for a grace period, then drops it', async () => {
+    let script: Script = { devices: LISTED };
+    const discovery = new AdbDeviceDiscovery('adb', fakeAdb(() => script));
+    await discovery.discover();
+
+    script = { devices: '' };
+    for (let i = 0; i < MISSING_GRACE_POLLS; i++) {
+      expect((await discovery.discover()).map((d) => d.udid)).toEqual(['R58N123ABC']);
+    }
+    expect(await discovery.discover()).toEqual([]);
+  });
+
+  it('does not report an emulator until Android has finished booting, then keeps it booted across blips', async () => {
+    const EMU = 'emulator-5554 device product:sdk model:sdk_gphone64 device:emu';
+    let script: Script = { devices: EMU, bootCompleted: '' };
+    const discovery = new AdbDeviceDiscovery('adb', fakeAdb(() => script));
+    expect(await discovery.discover()).toEqual([]); // listed as "device", but still booting
+
+    script = { devices: EMU, bootCompleted: '1' };
+    expect((await discovery.discover()).map((d) => d.udid)).toEqual(['emulator-5554']);
+
+    // A later transient boot-prop read failure must not un-boot it.
+    script = { devices: EMU, bootCompleted: '' };
+    expect((await discovery.discover()).map((d) => d.udid)).toEqual(['emulator-5554']);
+  });
+
+  it('never invents a device it has never seen succeed', async () => {
+    const discovery = new AdbDeviceDiscovery('adb', fakeAdb(() => ({ devices: LISTED, failProps: true })));
+    expect(await discovery.discover()).toEqual([]);
   });
 });

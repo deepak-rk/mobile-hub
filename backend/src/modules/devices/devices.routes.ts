@@ -1,7 +1,7 @@
 import { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 import { acquireLock, getDevice, listDevices, releaseLock, renewLock, syncDevices } from './devices.service';
-import { requireAgentToken } from '../agent-auth/agent-auth';
+import { requireAgentToken, AGENT_TRAFFIC_LOG_LEVEL } from '../agent-auth/agent-auth';
 import { getActiveInstallUdids } from '../device-installs/install-runs.service';
 import { ConflictError, ForbiddenError, NotFoundError, ValidationError } from '../../common/errors/app-error';
 
@@ -42,7 +42,7 @@ export const devicesRoutes: FastifyPluginAsync = async (app) => {
     }));
   });
 
-  app.post('/sync', { preHandler: requireAgentToken }, async (req) => {
+  app.post('/sync', { preHandler: requireAgentToken, logLevel: AGENT_TRAFFIC_LOG_LEVEL }, async (req) => {
     const body = syncBody.safeParse(req.body);
     if (!body.success) {
       throw new ValidationError(body.error.message);

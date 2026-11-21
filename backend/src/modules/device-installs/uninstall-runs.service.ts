@@ -164,3 +164,21 @@ export async function reportUninstallTargetProgress(
   await run.save();
   return run;
 }
+
+/** The uninstall counterpart to `failStrandedQueuedInstallTargets` — same rule, same reason. */
+export async function failStrandedQueuedUninstallTargets(machineIds: string[], createdBefore: Date): Promise<number> {
+  if (machineIds.length === 0) return 0;
+  const match = { machineId: { $in: machineIds }, status: 'queued' };
+  const result = await UninstallRun.updateMany(
+    { createdAt: { $lt: createdBefore }, targets: { $elemMatch: match } },
+    {
+      $set: {
+        'targets.$[t].status': 'error',
+        'targets.$[t].error': 'Host agent offline — the uninstall was never picked up',
+        'targets.$[t].endedAt': new Date(),
+      },
+    },
+    { arrayFilters: [{ 't.machineId': match.machineId, 't.status': 'queued' }] },
+  );
+  return result.modifiedCount;
+}

@@ -1,7 +1,7 @@
 import { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 import { listHosts, getHost, upsertHeartbeat } from './hosts.service';
-import { requireAgentToken } from '../agent-auth/agent-auth';
+import { requireAgentToken, AGENT_TRAFFIC_LOG_LEVEL } from '../agent-auth/agent-auth';
 import { getPendingInstallsForMachine, getActiveInstallCountForMachine } from '../device-installs/install-runs.service';
 import { getPendingUninstallsForMachine, getActiveUninstallCountForMachine } from '../device-installs/uninstall-runs.service';
 import { getActiveRunCountForMachine } from '../execution/execution.service';
@@ -72,7 +72,7 @@ export const hostsRoutes: FastifyPluginAsync = async (app) => {
     );
   });
 
-  app.post('/heartbeat', { preHandler: requireAgentToken }, async (req) => {
+  app.post('/heartbeat', { preHandler: requireAgentToken, logLevel: AGENT_TRAFFIC_LOG_LEVEL }, async (req) => {
     const body = heartbeatBody.safeParse(req.body);
     if (!body.success) {
       throw new ValidationError(body.error.message);
@@ -106,7 +106,7 @@ export const hostsRoutes: FastifyPluginAsync = async (app) => {
   // request on a heartbeat, starts its own local Appium, then POSTs back here
   // once it's actually answering, same shape as install/uninstall progress
   // reports.
-  app.post('/appium-ready', { preHandler: requireAgentToken }, async (req) => {
+  app.post('/appium-ready', { preHandler: requireAgentToken, logLevel: AGENT_TRAFFIC_LOG_LEVEL }, async (req) => {
     const body = appiumReadyBody.safeParse(req.body);
     if (!body.success) throw new ValidationError(body.error.message);
     const { machineId } = req.query as { machineId?: string };
@@ -139,7 +139,7 @@ export const hostsRoutes: FastifyPluginAsync = async (app) => {
    */
   app.post(
     '/stream-frame',
-    { preHandler: requireAgentToken, bodyLimit: 10 * 1024 * 1024 },
+    { preHandler: requireAgentToken, logLevel: AGENT_TRAFFIC_LOG_LEVEL, bodyLimit: 10 * 1024 * 1024 },
     async (req, reply) => {
       const parsed = streamFrameQuery.safeParse(req.query);
       if (!parsed.success) throw new ValidationError(parsed.error.message);
@@ -153,7 +153,7 @@ export const hostsRoutes: FastifyPluginAsync = async (app) => {
   );
 
   /** Same shape as `/stream-frame`, for an agent reporting its local capture broke. */
-  app.post('/stream-error', { preHandler: requireAgentToken }, async (req, reply) => {
+  app.post('/stream-error', { preHandler: requireAgentToken, logLevel: AGENT_TRAFFIC_LOG_LEVEL }, async (req, reply) => {
     const body = streamErrorBody.safeParse(req.body);
     if (!body.success) throw new ValidationError(body.error.message);
     const { machineId } = req.query as { machineId?: string };

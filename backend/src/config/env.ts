@@ -46,11 +46,38 @@ const envSchema = z.object({
   // H264 is verified on real hardware) — must be config, same reasoning as
   // every other operational limit here.
   ANDROID_STREAM_CAP: z.coerce.number().int().positive().default(3),
+  // Upper bound on one run's test command. Without it a hung runner kept its
+  // run `running` forever — the lock TTL eventually freed the device, but the
+  // run never ended. 120 matches what a production farm in this domain
+  // settled on; a long nightly regression may need it raised.
+  EXECUTION_MAX_RUN_MINUTES: z.coerce.number().int().positive().default(120),
   ORG_CONFIG_PATH: z.string().default(path.join(process.cwd(), '..', 'mobilehub.org.yaml')),
   PROJECT_CONFIG_PATH: z.string().default(path.join(process.cwd(), '..', 'mobilehub.project.yaml')),
 });
 
-const parsed = envSchema.safeParse(process.env);
+/**
+ * The placeholder values shipped in `.env.example` start with this. They are
+ * long enough to pass the length checks above, so a deployment that copies
+ * the example verbatim would start in production with a **publicly known**
+ * JWT signing key (anyone could mint an admin token) or agent secret.
+ */
+const PLACEHOLDER_PREFIX = 'replace_with';
+
+/** Exported for testing. */
+export const productionSecretsSchema = envSchema.superRefine((e, ctx) => {
+  if (e.NODE_ENV !== 'production') return;
+  for (const key of ['JWT_SECRET', 'AGENT_TOKEN'] as const) {
+    if (e[key]?.startsWith(PLACEHOLDER_PREFIX)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: [key],
+        message: `${key} is still the .env.example placeholder — generate a real one (openssl rand -hex 32)`,
+      });
+    }
+  }
+});
+
+const parsed = productionSecretsSchema.safeParse(process.env);
 
 if (!parsed.success) {
   console.error('❌ Invalid environment variables:\n', parsed.error.flatten().fieldErrors);

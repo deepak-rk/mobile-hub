@@ -50,7 +50,23 @@ export class AppiumUnavailableError extends Error {
 export interface AppiumEndpoint {
   host: string;
   port: number;
+  /** Origin only (`http://host:port`) — the path is separate, see `path`. */
   baseUrl: string;
+  /**
+   * The base path this server actually answers WebDriver on: `''` for an
+   * Appium 2+ server started the way this hub starts its own, `'/wd/hub'` for
+   * one still run under the legacy convention. Resolved by probing, never
+   * assumed, and handed to the runner — a runner pointed at the wrong path
+   * gets a 404 on session create. (The earlier legacy-path fix resolved this
+   * for health checks and session cleanup, then dropped it before the
+   * endpoint reached the runner.)
+   */
+  path: string;
+}
+
+/** Probes which base path the server answers on and records it on the endpoint. */
+async function withResolvedPath(endpoint: AppiumEndpoint): Promise<AppiumEndpoint> {
+  return { ...endpoint, path: (await resolveAppiumPrefix(endpoint.baseUrl)) ?? '' };
 }
 
 /**
@@ -286,14 +302,14 @@ export async function ensureAppiumServer(device: IDevice, config: EffectiveConfi
 
   const port = await ensurePort(device, config);
   const host = config.appium.host;
-  const endpoint: AppiumEndpoint = { host, port, baseUrl: `http://${host}:${port}` };
+  const endpoint: AppiumEndpoint = { host, port, baseUrl: `http://${host}:${port}`, path: '' };
 
   const contendedUntil = Date.now() + PORT_CONTENTION_TIMEOUT_MS;
   for (;;) {
-    if (await isServerUp(endpoint)) return endpoint;
+    if (await isServerUp(endpoint)) return withResolvedPath(endpoint);
 
     const outcome = await startServer(device, endpoint);
-    if (outcome.kind === 'started') return endpoint;
+    if (outcome.kind === 'started') return withResolvedPath(endpoint);
 
     if (outcome.kind === 'port-busy') {
       if (Date.now() < contendedUntil) {
@@ -349,8 +365,9 @@ export async function ensureRemoteAppiumServer(device: IDevice, _config: Effecti
       host: device.remoteAppium.host,
       port: device.remoteAppium.port,
       baseUrl: `http://${device.remoteAppium.host}:${device.remoteAppium.port}`,
+      path: '',
     };
-    if (await isServerUp(endpoint)) return endpoint;
+    if (await isServerUp(endpoint)) return withResolvedPath(endpoint);
     await Device.findByIdAndUpdate(device._id, { remoteAppium: null });
   }
 
@@ -366,7 +383,7 @@ export async function ensureRemoteAppiumServer(device: IDevice, _config: Effecti
     const fresh = await Device.findById(device._id).select('remoteAppium');
     if (fresh?.remoteAppium) {
       const { host, port } = fresh.remoteAppium;
-      return { host, port, baseUrl: `http://${host}:${port}` };
+      return withResolvedPath({ host, port, baseUrl: `http://${host}:${port}`, path: '' });
     }
   }
 
@@ -443,12 +460,14 @@ export async function closeActiveSessions(device: IDevice, config: EffectiveConf
           host: device.remoteAppium.host,
           port: device.remoteAppium.port,
           baseUrl: `http://${device.remoteAppium.host}:${device.remoteAppium.port}`,
+          path: '',
         }
       : device.appiumPort
         ? {
             host: config.appium.host,
             port: device.appiumPort,
             baseUrl: `http://${config.appium.host}:${device.appiumPort}`,
+            path: '',
           }
         : null;
   if (!endpoint) return;

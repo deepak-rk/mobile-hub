@@ -11,7 +11,7 @@ import { getBuild } from '../builds/builds.service';
 import { assertDriverInstalled, ensureAppiumServer, closeActiveSessions } from './appium.service';
 import { buildRunEnvironment, createRedactor } from './run-environment';
 import { classifySuite } from './automation-commands';
-import { summarizeRunResults, ALLURE_RESULTS_DIRNAME } from './allure-summary';
+import { summarizeRunResults, summarizeAllureResults, ALLURE_RESULTS_DIRNAME } from './allure-summary';
 import { ExecutionRun, IExecutionRun, RunStatus, StageName, FailureKind } from './execution-run.model';
 import { publishExecutionEvent } from './execution.events';
 import { ConflictError } from '../../common/errors/app-error';
@@ -45,6 +45,11 @@ export interface TriggerExecutionInput {
 // (up to) two spawned commands (setup, then execute).
 const runningProcesses = new Map<string, ManagedProcess>();
 const cancelledRuns = new Set<string>();
+// Runs whose orchestration is executing in *this* process, from claim to the
+// end of `runExecution`. Distinct from `runningProcesses`, which only holds a
+// run while one of its commands is alive — between commands a run is still
+// owned here and must still see a cancel.
+const ownedRuns = new Set<string>();
 
 /**
  * How long a workspace with no run record must sit untouched before the sweep
@@ -134,6 +139,14 @@ export async function triggerExecutionRun(
     logPath,
   });
 
+  // A device whose host stopped reporting it is not "busy" — queueing behind
+  // it would wait forever. Fail now, with the reason, instead of letting the
+  // run start and die minutes later at Appium startup.
+  if (isGoneOffline(device)) {
+    await failForOfflineDevice(run);
+    return run;
+  }
+
   const locked = await acquireLock(
     input.deviceUdid,
     input.triggeredBy,
@@ -141,6 +154,11 @@ export async function triggerExecutionRun(
     `execution:${runId.toString()}`,
     input.machineId,
   );
+  if (locked && !(await claimQueuedRun(run))) {
+    // Cancelled in the instant between create and claim — nothing to run.
+    await releaseLock(input.deviceUdid, input.triggeredBy, true, input.machineId);
+    return run;
+  }
   if (!locked) {
     // The device is busy, not broken: leave the run `queued` (its create
     // default) rather than failing it. `dispatchQueuedRuns` — run on a timer
@@ -204,6 +222,15 @@ export async function dispatchQueuedRuns(config: EffectiveConfig): Promise<numbe
     if (attemptedDevices.has(candidate.deviceUdid)) continue;
     attemptedDevices.add(candidate.deviceUdid);
 
+    // A queued run waiting on a device whose host has gone away would
+    // otherwise wait forever — the lock it is waiting for is never contended,
+    // the device is simply not there.
+    const device = await getDevice(candidate.deviceUdid, candidate.machineId).catch(() => null);
+    if (isGoneOffline(device)) {
+      await failForOfflineDevice(candidate);
+      continue;
+    }
+
     const locked = await acquireLock(
       candidate.deviceUdid,
       candidate.triggeredBy,
@@ -213,10 +240,11 @@ export async function dispatchQueuedRuns(config: EffectiveConfig): Promise<numbe
     );
     if (!locked) continue; // still busy — leave it queued, try again next tick
 
-    // Re-read rather than trust the list above: a cancel could have landed
-    // between listing queued runs and winning this lock.
-    const run = await ExecutionRun.findById(candidate._id);
-    if (!run || run.status !== 'queued' || !run.commands) {
+    // Atomic claim rather than "re-read and check": a cancel, or a second
+    // dispatch tick, landing between the list above and this point loses the
+    // write instead of being overwritten by it.
+    const run = candidate;
+    if (!run.commands || !(await claimQueuedRun(run))) {
       await releaseLock(candidate.deviceUdid, candidate.triggeredBy, true, candidate.machineId);
       continue;
     }
@@ -256,14 +284,101 @@ export async function dispatchQueuedRuns(config: EffectiveConfig): Promise<numbe
  * now computes pass rate over test-attributable runs only.
  */
 async function failRun(run: IExecutionRun, kind: FailureKind): Promise<void> {
-  run.failureKind = kind;
-  await setStatus(run, 'failed');
+  await setStatus(run, 'failed', { failureKind: kind });
 }
 
-async function setStatus(run: IExecutionRun, status: RunStatus): Promise<void> {
+/** A run in one of these has a recorded outcome that nothing may overwrite. */
+const TERMINAL_STATUSES: RunStatus[] = ['passed', 'failed', 'cancelled'];
+
+/**
+ * Writes a status transition atomically, and refuses to move a run out of a
+ * terminal status.
+ *
+ * Was `run.status = x; run.save()`. That is a read-modify-write on an
+ * in-memory copy, so two writers raced: a cancel landing while the dispatcher
+ * started the same run could be silently undone (the run executed anyway
+ * while the UI said cancelled), and a late or duplicate failure could
+ * overwrite a recorded pass. A production device farm in this same domain
+ * shipped exactly that second bug — a duplicate worker's failure overwrote a
+ * real pass — and its fix is the rule applied here: a late or duplicate
+ * failure must never overwrite a recorded outcome (`docs/LESSONS.md`
+ * 2026-11-21).
+ *
+ * The in-memory copy is updated to match but its paths are *unmarked*, so a
+ * later `run.save()` (stages, report path, timings) never re-writes status
+ * from a stale copy. Returns false when the write was refused.
+ */
+export async function setStatus(
+  run: IExecutionRun,
+  status: RunStatus,
+  extra: { failureKind?: FailureKind } = {},
+): Promise<boolean> {
+  const result = await ExecutionRun.updateOne(
+    { _id: run._id, status: { $nin: TERMINAL_STATUSES } },
+    { $set: { status, ...extra } },
+  );
+  if (result.matchedCount === 0) return false;
   run.status = status;
-  await run.save();
+  run.unmarkModified('status');
+  if (extra.failureKind !== undefined) {
+    run.failureKind = extra.failureKind;
+    run.unmarkModified('failureKind');
+  }
   publishExecutionEvent(run.id as string, { type: 'status', status });
+  return true;
+}
+
+/**
+ * The one place a run leaves `queued`: an atomic `queued → preparing`.
+ *
+ * Whoever wins this write owns the run; a loser (a second dispatch tick, a
+ * cancel that landed first) touches nothing. Before this, the trigger path
+ * and the dispatcher each read a run, saw `queued`, and later wrote
+ * `preparing` from that read — so a cancel in between was overwritten.
+ */
+async function claimQueuedRun(run: IExecutionRun): Promise<boolean> {
+  const startedAt = new Date();
+  const result = await ExecutionRun.updateOne(
+    { _id: run._id, status: 'queued' },
+    { $set: { status: 'preparing', startedAt } },
+  );
+  if (result.modifiedCount === 0) return false;
+  run.status = 'preparing';
+  run.startedAt = startedAt;
+  run.unmarkModified('status');
+  run.unmarkModified('startedAt');
+  publishExecutionEvent(run.id as string, { type: 'status', status: 'preparing' });
+  return true;
+}
+
+/**
+ * How long a device may sit offline before runs waiting on it are failed
+ * instead of left queued. Long enough to ride out a transient blip (the
+ * stale-host sweep marks a host offline after 30 s); short enough that
+ * someone waiting on a run learns the device is gone in minutes, not never.
+ */
+export const OFFLINE_FAIL_FAST_MS = 2 * 60_000;
+
+function isGoneOffline(device: { status: string; lastSeenAt?: Date | null } | null): boolean {
+  if (!device || (device.status !== 'offline' && device.status !== 'unreachable')) return false;
+  const lastSeen = device.lastSeenAt ? new Date(device.lastSeenAt).getTime() : 0;
+  return Date.now() - lastSeen > OFFLINE_FAIL_FAST_MS;
+}
+
+/**
+ * Fails a run whose device has been offline past the grace period, with the
+ * reason on the record. A precondition failure — the run never touched the
+ * app, so it must not count against the suite's pass rate.
+ */
+async function failForOfflineDevice(run: IExecutionRun): Promise<void> {
+  const stage = run.stages.find((s) => s.name === 'execute');
+  if (stage) {
+    stage.status = 'error';
+    stage.error = 'Device offline — its host has not reported it for over 2 minutes.';
+  }
+  run.endedAt = new Date();
+  await run.save();
+  await setStatus(run, 'failed', { failureKind: 'precondition' });
 }
 
 async function setStage(
@@ -292,7 +407,7 @@ async function runCommand(
   cwd: string,
   logStream: fs.WriteStream,
   runId: string,
-  context: { env?: NodeJS.ProcessEnv; redact?: (text: string) => string } = {},
+  context: { env?: NodeJS.ProcessEnv; redact?: (text: string) => string; timeoutMs?: number } = {},
 ): Promise<RunOutcome> {
   const redact = context.redact ?? ((text: string) => text);
   const onChunk = (chunk: Buffer): void => {
@@ -309,6 +424,7 @@ async function runCommand(
     args: cmd.args,
     cwd,
     env: context.env,
+    timeoutMs: context.timeoutMs,
     onStdout: onChunk,
     onStderr: onChunk,
   });
@@ -394,7 +510,9 @@ async function restoreCache(
   }
 
   const cacheDir = path.join(env.EXECUTIONS_DIR, '.cache', cacheKey);
-  const hit = fs.existsSync(cacheDir);
+  // Complete snapshots only — a directory still being written, or one a crash
+  // cut short, is a miss, not a poisoned hit.
+  const hit = isCompleteCache(cacheDir);
   const line = hit
     ? `restoring_cache: cache hit (${cacheKey})\n`
     : `restoring_cache: no cache yet for ${cacheKey} — will populate after install\n`;
@@ -407,6 +525,56 @@ async function restoreCache(
 
 /** The directory name a runner's Allure reporter writes, per docs/modules/execution.md. */
 const ALLURE_REPORT_DIRNAME = 'allure-report';
+
+/**
+ * Where a runner may write its raw results: the checkout when a repo was
+ * cloned, the workspace root otherwise. Same two places the summary and
+ * report collectors already searched.
+ */
+function resultsDirCandidates(workspacePath: string): string[] {
+  return [path.join(workspacePath, 'repo', ALLURE_RESULTS_DIRNAME), path.join(workspacePath, ALLURE_RESULTS_DIRNAME)];
+}
+
+function reportDirCandidates(workspacePath: string): string[] {
+  return [path.join(workspacePath, 'repo', ALLURE_REPORT_DIRNAME), path.join(workspacePath, ALLURE_REPORT_DIRNAME)];
+}
+
+/**
+ * True only when the runner demonstrably wrote results and none of them were
+ * tests: a results directory exists, and holds no `*-result.json`. No
+ * directory at all says nothing (the project may not use Allure) and returns
+ * false — the distinction `summarizeAllureResults`' own doc comment draws.
+ */
+export function ranZeroTests(workspacePath: string): boolean {
+  const dir = resultsDirCandidates(workspacePath).find((d) => fs.existsSync(d));
+  if (!dir) return false;
+  return !fs.readdirSync(dir).some((f) => f.endsWith('-result.json'));
+}
+
+/**
+ * Copies the runner's raw Allure results — every file, not only
+ * `*-result.json` — into the run's durable artifacts directory.
+ *
+ * Every file because the narrower copy is a known trap: copying only the
+ * result JSON keeps the counts and silently drops the step attachments and
+ * screenshots those results reference. And kept at all because the workspace
+ * is deleted at the end of every run: until now the summary was read in place
+ * and the raw results were lost, so nothing could ever be re-derived from
+ * them (after a fix to the summarizer, or to repair a run interrupted by a
+ * restart).
+ */
+async function persistAllureResults(run: IExecutionRun, logStream: fs.WriteStream): Promise<void> {
+  if (!run.artifactsPath) return;
+  const source = resultsDirCandidates(run.workspacePath).find((d) => fs.existsSync(d));
+  if (!source) return;
+  try {
+    await fs.promises.cp(source, path.join(run.artifactsPath, ALLURE_RESULTS_DIRNAME), { recursive: true });
+  } catch (err) {
+    const line = `results: could not keep raw Allure results: ${err instanceof Error ? err.message : String(err)}\n`;
+    logStream.write(line);
+    publishExecutionEvent(run.id as string, { type: 'log', line });
+  }
+}
 
 /**
  * Records test-case-level counts from the runner's Allure results.
@@ -423,7 +591,11 @@ const ALLURE_REPORT_DIRNAME = 'allure-report';
 function collectTestSummary(run: IExecutionRun, logStream: fs.WriteStream): void {
   let summary;
   try {
-    summary = summarizeRunResults(run.workspacePath, ALLURE_RESULTS_DIRNAME);
+    // The persisted copy first — it is what survives the workspace — falling
+    // back to the workspace for a run with nowhere durable to have copied to.
+    summary =
+      (run.artifactsPath ? summarizeAllureResults(path.join(run.artifactsPath, ALLURE_RESULTS_DIRNAME)) : null) ??
+      summarizeRunResults(run.workspacePath, ALLURE_RESULTS_DIRNAME);
   } catch (err) {
     // Best-effort, same as the report: failing to count tests must not turn a
     // passing run into a failed one.
@@ -532,12 +704,53 @@ async function recordCommit(run: IExecutionRun, repoDir: string): Promise<void> 
   await run.save();
 }
 
-async function saveCacheIfMissing(repoDir: string, cacheDir: string | null): Promise<void> {
-  if (!cacheDir || fs.existsSync(cacheDir)) return;
+/**
+ * Written as the very last step of a cache snapshot. A cache directory only
+ * counts as a hit when it carries this marker — see `isCompleteCache`.
+ */
+export const CACHE_COMPLETE_MARKER = '.mobilehub-cache-complete';
+
+/** A cache entry is usable only if its snapshot finished. Existence alone is not enough. */
+export function isCompleteCache(cacheDir: string): boolean {
+  return fs.existsSync(path.join(cacheDir, CACHE_COMPLETE_MARKER));
+}
+
+/**
+ * Snapshots `node_modules` into the shared cache atomically: copy into a
+ * private temp directory, mark it complete, then rename into place.
+ *
+ * Was a direct copy into the final directory, with "the directory exists"
+ * as the hit test. A crash, a cancel, or a second run with the same key
+ * part-way through left a half-copied tree that then passed as a valid hit
+ * for every later run, permanently — and a concurrent run could restore from
+ * the directory while it was still being written. A production device farm
+ * in this domain hit exactly this: a half-copied cache entry passed its
+ * integrity check and every run with that key failed with
+ * `Cannot find module` until the entry was found and deleted by hand.
+ *
+ * Exported for testing.
+ */
+export async function saveCacheIfMissing(repoDir: string, cacheDir: string | null): Promise<void> {
+  if (!cacheDir || isCompleteCache(cacheDir)) return;
   const nodeModules = path.join(repoDir, 'node_modules');
   if (!fs.existsSync(nodeModules)) return;
   await fs.promises.mkdir(path.dirname(cacheDir), { recursive: true });
-  await fs.promises.cp(nodeModules, cacheDir, { recursive: true });
+
+  const tmp = `${cacheDir}.tmp-${process.pid}-${crypto.randomBytes(4).toString('hex')}`;
+  try {
+    await fs.promises.cp(nodeModules, tmp, { recursive: true });
+    fs.writeFileSync(path.join(tmp, CACHE_COMPLETE_MARKER), new Date().toISOString());
+    // An incomplete entry from before this fix (no marker) is not a cache, it
+    // is debris in the way — remove it so the rename can land.
+    if (fs.existsSync(cacheDir) && !isCompleteCache(cacheDir)) fs.rmSync(cacheDir, { recursive: true, force: true });
+    await fs.promises.rename(tmp, cacheDir);
+  } catch {
+    // Lost the race to another run with the same key (its rename landed first)
+    // or the copy failed. Either way the cache is no worse than before; never
+    // fail a run over a cache write.
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
 }
 
 async function runExecution(
@@ -547,6 +760,9 @@ async function runExecution(
   appiumConfig?: EffectiveConfig['appium'],
 ): Promise<void> {
   const runId = run.id as string;
+  // Synchronous, before the first await: the claim that preceded this call
+  // and ownership must not be separated by a tick a cancel could land in.
+  ownedRuns.add(runId);
   fs.mkdirSync(run.workspacePath, { recursive: true });
   fs.mkdirSync(path.dirname(run.logPath), { recursive: true });
   const logStream = fs.createWriteStream(run.logPath, { flags: 'a' });
@@ -560,9 +776,8 @@ async function runExecution(
   const redact = createRedactor(automation.env);
 
   try {
-    await setStatus(run, 'preparing');
-    run.startedAt = new Date();
-    await run.save();
+    // `queued → preparing` (and startedAt) was already written atomically by
+    // `claimQueuedRun` — whoever reached this point owns the run.
 
     // Every stage funnels through this so a cancel, a spawn failure, a
     // timeout and a nonzero exit all reach *both* the stage record and the run
@@ -661,6 +876,7 @@ async function runExecution(
               osVersion: device.osVersion,
             },
             appPath: build?.artifactPath ?? undefined,
+            runId,
           });
         }
       } catch (err) {
@@ -670,10 +886,32 @@ async function runExecution(
       }
     }
 
-    const runOutcome = await runCommand(input.run, cwd, logStream, runId, { env: runEnv, redact });
+    // Results already sitting in the checkout — committed to the test repo, or
+    // left by an earlier tool run in the same tree — would otherwise be read
+    // back as *this* run's results: wrong numbers, or a run that executed
+    // nothing still showing a full suite. Only what this run writes counts.
+    for (const dir of [...resultsDirCandidates(run.workspacePath), ...reportDirCandidates(run.workspacePath)]) {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+
+    const runOutcome = await runCommand(input.run, cwd, logStream, runId, {
+      env: runEnv,
+      redact,
+      timeoutMs: env.EXECUTION_MAX_RUN_MINUTES * 60_000,
+    });
 
     // The only stage whose nonzero exit is a genuine *test* result.
     if (!(await settleStage('execute', runOutcome, 'test'))) return;
+
+    // Exit 0 is not a pass if nothing ran. A tag or suite filter that matches
+    // no tests makes the runner exit cleanly, and reporting that as green is
+    // a wrong result. Only decidable when the runner wrote Allure results at
+    // all — a project not using Allure gives no signal, so it is left alone.
+    if (ranZeroTests(run.workspacePath)) {
+      await setStage(run, 'execute', 'error', 'The runner exited cleanly but executed no tests — the suite/tag filter matched nothing.');
+      await failRun(run, 'precondition');
+      return;
+    }
     await setStatus(run, 'passed');
   } catch (err) {
     publishExecutionEvent(runId, {
@@ -683,6 +921,11 @@ async function runExecution(
     // An exception in the orchestrator itself is infrastructure by definition.
     await failRun(run, 'infra');
   } finally {
+    // First of all, before anything can fail or the workspace is removed:
+    // keep the runner's raw results. They are the only source a result can be
+    // rebuilt from later, and they used to be read in place and then deleted
+    // with the workspace.
+    await persistAllureResults(run, logStream);
     // Before `run.save()` so `reportPath` is persisted by it, and before the
     // workspace is removed below — the report lives inside the workspace until
     // this copies it out. Both orderings are load-bearing.
@@ -708,6 +951,7 @@ async function runExecution(
     logStream.end();
     runningProcesses.delete(runId);
     cancelledRuns.delete(runId);
+    ownedRuns.delete(runId);
     // The workspace holds a full git clone plus a copied node_modules, so
     // leaving it behind grew the disk without bound. Safe to remove only
     // because run.log now lives under artifactsPath, outside this tree.
@@ -741,9 +985,30 @@ export async function cancelExecutionRun(id: string): Promise<IExecutionRun | nu
   // from the queue is just setting its own status directly, not signalling a
   // live orchestration the way the running/preparing path below does.
   if (run.status === 'queued') {
-    run.status = 'cancelled';
-    run.endedAt = new Date();
-    await run.save();
+    // Atomic: only wins if the run is *still* queued. If the dispatcher
+    // claimed it a moment ago, this matches nothing and the run is cancelled
+    // through the in-flight path below instead — rather than being written
+    // `cancelled` while it goes on executing, which is what a read-then-save
+    // here allowed.
+    const endedAt = new Date();
+    const result = await ExecutionRun.updateOne(
+      { _id: run._id, status: 'queued' },
+      { $set: { status: 'cancelled', endedAt } },
+    );
+    if (result.modifiedCount > 0) {
+      run.status = 'cancelled';
+      run.endedAt = endedAt;
+      publishExecutionEvent(id, { type: 'status', status: 'cancelled' });
+      return run;
+    }
+  }
+
+  // Not executing here (an orphan a restart left behind, or a run that ended
+  // between the read above and now): there is no orchestration to signal, so
+  // signalling one did nothing and left the id in `cancelledRuns` forever.
+  // Write the cancel directly instead — refused if it already finished.
+  if (!ownedRuns.has(id)) {
+    await setStatus(run, 'cancelled');
     return run;
   }
 

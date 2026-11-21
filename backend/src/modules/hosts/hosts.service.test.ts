@@ -3,7 +3,7 @@ import { Host } from './host.model';
 import { Device } from '../devices/device.model';
 import { InstallRun } from '../device-installs/install-run.model';
 import { UninstallRun } from '../device-installs/uninstall-run.model';
-import { markStaleHostsOffline, upsertHeartbeat } from './hosts.service';
+import { markStaleHostsOffline, upsertHeartbeat, failWorkStrandedOnOfflineHosts, STRANDED_WORK_AFTER_MS } from './hosts.service';
 
 /**
  * A device is only reachable through its host's agent. When that agent dies
@@ -166,5 +166,41 @@ describe('markStaleHostsOffline — abandoned install/uninstall targets', () => 
     expect(result.abandonedInstalls).toBe(0);
     expect(installUpdate).not.toHaveBeenCalled();
     expect(uninstallUpdate).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * Queued install work on a host that has *stayed* down is a silent dead end —
+ * failed after 3 min, matching a production farm's fail-fast. Not on the
+ * first stale tick: `markStaleHostsOffline` still leaves `queued` alone.
+ */
+describe('failWorkStrandedOnOfflineHosts', () => {
+  it('fails queued targets only on hosts offline past the threshold, and only work queued before it', async () => {
+    const find = vi.spyOn(Host, 'find').mockReturnValue({ select: () => Promise.resolve([{ machineId: 'host-1' }]) } as never);
+    const installUpdate = vi.spyOn(InstallRun, 'updateMany').mockResolvedValue({ modifiedCount: 2 } as never);
+    const uninstallUpdate = vi.spyOn(UninstallRun, 'updateMany').mockResolvedValue({ modifiedCount: 1 } as never);
+
+    expect(await failWorkStrandedOnOfflineHosts()).toBe(3);
+
+    const [hostFilter] = find.mock.calls[0] as unknown as [{ status: string; lastHeartbeatAt: { $lt: Date } }];
+    expect(hostFilter.status).toBe('offline');
+    expect(Date.now() - hostFilter.lastHeartbeatAt.$lt.getTime()).toBeGreaterThanOrEqual(STRANDED_WORK_AFTER_MS - 1000);
+    const [runFilter, , options] = installUpdate.mock.calls[0] as [
+      { createdAt: { $lt: Date } },
+      unknown,
+      { arrayFilters: { 't.status': string; 't.machineId': { $in: string[] } }[] },
+    ];
+    expect(runFilter.createdAt.$lt).toBeInstanceOf(Date);
+    expect(options.arrayFilters[0]['t.status']).toBe('queued');
+    expect(options.arrayFilters[0]['t.machineId'].$in).toEqual(['host-1']);
+    expect(uninstallUpdate).toHaveBeenCalled();
+  });
+
+  it('does nothing when no host has been down that long', async () => {
+    vi.spyOn(Host, 'find').mockReturnValue({ select: () => Promise.resolve([]) } as never);
+    const installUpdate = vi.spyOn(InstallRun, 'updateMany');
+
+    expect(await failWorkStrandedOnOfflineHosts()).toBe(0);
+    expect(installUpdate).not.toHaveBeenCalled();
   });
 });

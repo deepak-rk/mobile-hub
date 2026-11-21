@@ -36,13 +36,50 @@ describe('buildRunEnvironment', () => {
     expect(env.PLATFORM_VERSION).toBe('14');
   });
 
-  it('lets configured values override what the hub inferred', () => {
-    // An org pointing at a remote grid should win over the local endpoint.
+  /**
+   * Reversed 2026-11-21. Configured env is org/project-wide; these are per-run
+   * facts. A configured APPIUM_HOST/DEVICE_UDID pinned every run to one host
+   * or device — the same bug a production farm hit when a test repo's
+   * hardcoded remote host survived because the hub only wrote when missing.
+   */
+  it('never lets configured values override the per-run device and Appium coordinates', () => {
     const env = buildRunEnvironment({
-      configured: { APPIUM_BASE_URL: 'https://grid.example.com' },
-      appium: { host: '127.0.0.1', port: 4723, baseUrl: 'http://127.0.0.1:4723' },
+      configured: { APPIUM_BASE_URL: 'https://grid.example.com', DEVICE_UDID: 'pinned-device', APP_ENV: 'staging' },
+      appium: { host: '127.0.0.1', port: 4723, baseUrl: 'http://127.0.0.1:4723', path: '' },
+      device: { udid: 'emulator-5554', platform: 'android', osVersion: '14', name: 'Pixel' },
     });
-    expect(env.APPIUM_BASE_URL).toBe('https://grid.example.com');
+    expect(env.APPIUM_BASE_URL).toBe('http://127.0.0.1:4723');
+    expect(env.DEVICE_UDID).toBe('emulator-5554');
+    // Everything that isn't a per-run fact still comes through.
+    expect(env.APP_ENV).toBe('staging');
+  });
+
+  it('hands the runner the base path, so a legacy /wd/hub server is not dialled at its bare origin', () => {
+    const env = buildRunEnvironment({
+      configured: {},
+      appium: { host: '10.0.0.5', port: 4723, baseUrl: 'http://10.0.0.5:4723', path: '/wd/hub' },
+    });
+    expect(env.APPIUM_PATH).toBe('/wd/hub');
+    expect(env.APPIUM_BASE_URL).toBe('http://10.0.0.5:4723/wd/hub');
+  });
+
+  it('uses "/" as the path for a server on the default base path', () => {
+    const env = buildRunEnvironment({
+      configured: {},
+      appium: { host: 'h', port: 1, baseUrl: 'http://h:1', path: '' },
+    });
+    expect(env.APPIUM_PATH).toBe('/');
+    expect(env.APPIUM_BASE_URL).toBe('http://h:1');
+  });
+
+  it('derives the driver from the platform and passes the run id', () => {
+    const env = buildRunEnvironment({
+      configured: {},
+      device: { udid: 'u', platform: 'ios', osVersion: '17', name: 'n' },
+      runId: 'run-42',
+    });
+    expect(env.AUTOMATION_NAME).toBe('XCUITest');
+    expect(env.RUN_ID).toBe('run-42');
   });
 });
 
