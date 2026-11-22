@@ -16,18 +16,18 @@ import { ValidationError } from '../../common/errors/app-error';
  * difference is that supplying them is now the exception.
  */
 
-/** Frameworks whose invocation this module knows how to build. */
-const KNOWN_FRAMEWORKS = ['appium', 'wdio'] as const;
+/** Runners whose invocation this module knows how to build. */
+const KNOWN_RUNNERS = ['wdio'] as const;
 
 // A 400 ValidationError, not a 409/404 — the request itself is malformed
 // (nothing usable was configured or supplied), matching what
 // execution.routes.ts was already mapping this to under the code
 // 'NO_RUN_COMMAND', now baked in here instead of a route-level instanceof check.
 export class UnsupportedFrameworkError extends ValidationError {
-  constructor(framework: string) {
+  constructor(runner: string) {
     super(
-      `No run command is known for framework '${framework}'. ` +
-        `Either supply an explicit run command with the trigger, or configure one of: ${KNOWN_FRAMEWORKS.join(', ')}.`,
+      `No run command is known for runner '${runner}'. ` +
+        `Either supply an explicit run command with the trigger, or set automation.runner to one of: ${KNOWN_RUNNERS.join(', ')}.`,
       'NO_RUN_COMMAND',
     );
   }
@@ -47,7 +47,7 @@ export function resolveInstallCommand(automation: AutomationConfig): RunCommand 
   if (automation.install) return automation.install;
   // Only meaningful for the JS frameworks this knows; anything else must
   // declare its own rather than have npm assumed on its behalf.
-  if (!isKnownFramework(automation.framework)) return null;
+  if (!isKnownRunner(automation.runner)) return null;
   return { command: 'npm', args: ['ci'] };
 }
 
@@ -61,12 +61,10 @@ export function resolveInstallCommand(automation: AutomationConfig): RunCommand 
 export function resolveRunCommand(automation: AutomationConfig, suite?: string): RunCommand {
   if (automation.run) return automation.run;
 
-  if (!isKnownFramework(automation.framework)) {
-    throw new UnsupportedFrameworkError(automation.framework);
+  if (!isKnownRunner(automation.runner)) {
+    throw new UnsupportedFrameworkError(automation.runner);
   }
 
-  // Both 'appium' and 'wdio' mean the same runner here: mobile-hub's own
-  // default is 'appium', while a team naming the runner directly writes 'wdio'.
   const args = ['wdio', 'run', automation.configPath];
   if (suite) args.push(...selectorArgsFor(suite));
   return { command: 'npx', args };
@@ -113,8 +111,8 @@ function selectorArgsFor(suite: string): string[] {
   }
 }
 
-function isKnownFramework(framework: string): boolean {
-  return (KNOWN_FRAMEWORKS as readonly string[]).includes(framework);
+function isKnownRunner(runner: string): boolean {
+  return (KNOWN_RUNNERS as readonly string[]).includes(runner);
 }
 
 /**
@@ -122,5 +120,5 @@ function isKnownFramework(framework: string): boolean {
  * supplying commands — what the trigger form needs in order to stop asking.
  */
 export function canDeriveCommands(automation: AutomationConfig): boolean {
-  return Boolean(automation.run) || isKnownFramework(automation.framework);
+  return Boolean(automation.run) || isKnownRunner(automation.runner);
 }

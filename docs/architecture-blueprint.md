@@ -284,6 +284,8 @@ automation:
       value: staging
 ```
 
+> **Implemented shape (2026-11-22):** flat keys `runner` (`wdio`), `framework` (`cucumber`), `configPath`, `testDir`, `repoUrl`, `install`/`run`, `env`. `envFile` was dropped: the runner loads its own `.env` from the checkout. The old `framework: appium` still loads as `runner: wdio` + `framework: cucumber`. See `mobilehub.org.yaml.example`.
+
 Mobile Hub clones/pulls the repo, injects env values, and invokes the runner. The `structure` block tells it where to find the config — it doesn't assume a fixed layout.
 
 ### Data models (additions)

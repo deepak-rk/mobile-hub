@@ -105,9 +105,13 @@ const streamingConfigSchema = z
 
 const automationConfigSchema = z
   .object({
+    // The process that runs the suite (`wdio` is the one whose command this
+    // platform can build) and, separately, the test framework inside it
+    // (`cucumber` is the one whose suites can be discovered). These were one
+    // key, `framework: appium`, which said neither.
+    runner: z.string().optional(),
     framework: z.string().optional(),
     configPath: z.string().optional(),
-    envFile: z.string().optional(),
     testDir: z.string().optional(),
     // Unset by default: execution.service.ts's pulling/restoring_cache stages
     // stay the existing honest not-implemented stub until an org opts in by
@@ -184,9 +188,11 @@ export interface AutomationCommand {
 }
 
 export interface AutomationConfig {
+  /** Runs the suite; decides the derived install/run commands (`wdio`). */
+  runner: string;
+  /** Test framework inside the runner; decides suite discovery (`cucumber`). */
   framework: string;
   configPath: string;
-  envFile: string;
   testDir: string;
   repoUrl: string | null;
   /** Overrides the command derived from `framework`; null means derive it. */
@@ -227,10 +233,28 @@ export function resolveProjects(
       // an operator typed into the trigger form anyway.
       displayName: project.displayName ?? id,
       platform: project.platform ?? null,
-      automation: { ...automation, ...stripUndefined(project.automation) },
+      automation: normalizeAutomation({ ...automation, ...stripUndefined(project.automation) }),
     };
   }
   return resolved;
+}
+
+/**
+ * Reads the old single `framework` key, so configs written before the
+ * runner/framework split keep working unchanged.
+ *
+ * `framework: appium` (this platform's old default) meant "WebdriverIO running
+ * Cucumber"; `framework: wdio` named only the runner, with no suite discovery.
+ * An explicit `runner` is never overridden.
+ */
+const LEGACY_FRAMEWORKS: Record<string, { runner: string; framework: string }> = {
+  appium: { runner: 'wdio', framework: 'cucumber' },
+  wdio: { runner: 'wdio', framework: 'unspecified' },
+};
+
+export function normalizeAutomation(automation: AutomationConfig): AutomationConfig {
+  const legacy = LEGACY_FRAMEWORKS[automation.framework];
+  return legacy ? { ...automation, ...legacy } : automation;
 }
 
 /**
@@ -260,9 +284,9 @@ export const PLATFORM_DEFAULTS: EffectiveConfig = {
   appium: { enabled: false, host: '127.0.0.1', basePort: 4723, remoteEnabled: false },
   streaming: { remoteEnabled: false },
   automation: {
-    framework: 'appium',
+    runner: 'wdio',
+    framework: 'cucumber',
     configPath: 'wdio.conf.js',
-    envFile: '.env',
     testDir: 'test',
     repoUrl: null,
     // Derived from framework/configPath unless an org declares otherwise.

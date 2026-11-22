@@ -244,6 +244,8 @@ automation:
       value: encrypted:v1:...    # encrypted at rest in OrgConfig
 ```
 
+> **Implemented shape (2026-11-22):** flat keys `runner` (`wdio`), `framework` (`cucumber`), `configPath`, `testDir`, `repoUrl`, `install`/`run`, `env`. `envFile` was dropped: the runner loads its own `.env` from the checkout. The old `framework: appium` still loads as `runner: wdio` + `framework: cucumber`. See `mobilehub.org.yaml.example`.
+
 `ConfigService` resolves and merges org + project config before each run. The `env` values are decrypted at run time and injected into the runner process's environment — they are never written to disk or logged.
 
 If `features.execution === false` for an org, all execution endpoints return `403 Feature disabled`.

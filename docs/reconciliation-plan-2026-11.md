@@ -64,8 +64,8 @@ Not live-verified: Docker/Mongo was down this session. First thing once it is ba
 2. **Platform is a run input**, not a project property. An app declares `platforms: [android, ios]`; build and device lists follow the run's platform.
 3. **Variant** (the farm's "entity") as an optional run dimension: `variants:` in app config → picker + `VARIANT` env. The farm also derives tags from it and groups executions by platform × variant — adopt both when the runner status tree lands.
 4. **Config split**: org file = platform concerns; app file = the app, its platforms, variants, automation repo, runner env. Per-host Appium wiring leaves YAML (agent env; the hub stores the reported endpoint per device — already does).
-5. `framework` → `runner` (wdio) + `framework` (cucumber); driver derived from platform (done in the env).
-6. Remove the dead `envFile` key.
+5. ~~`framework` → `runner` + `framework`~~ **Done** (legacy `framework: appium` still loads as wdio + cucumber); driver derived from platform (done in the env).
+6. ~~Remove the dead `envFile` key~~ **Done** (now a config error, not silently ignored).
 7. **Seed config from code, prove it with a golden diff** (farm lesson 72: config written from summaries had ~30 wrong values). Any example YAML in this change is copied from the schema with file:line references and checked by a test that loads it.
 
 ---

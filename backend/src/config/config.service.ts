@@ -5,6 +5,7 @@ import {
   PLATFORM_DEFAULTS,
   RawProjectConfig,
   resolveProjects,
+  normalizeAutomation,
 } from './org-config.schema';
 import dynamicImport from '../common/dynamic-import';
 import type * as LayeredConfigTs from 'layered-config-ts';
@@ -41,5 +42,6 @@ export async function loadEffectiveConfig(orgPath: string, projectPath: string):
   // still holds the raw YAML shape (optional fields, no inherited automation) —
   // the two only coincide after resolving, which is what this does.
   const rawProjects = merged.projects as unknown as Record<string, RawProjectConfig> | undefined;
-  return { ...merged, projects: resolveProjects(rawProjects, merged.automation) };
+  const automation = normalizeAutomation(merged.automation);
+  return { ...merged, automation, projects: resolveProjects(rawProjects, automation) };
 }

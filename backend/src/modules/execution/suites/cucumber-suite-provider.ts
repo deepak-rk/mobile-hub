@@ -19,7 +19,7 @@ const MAX_FEATURE_FILES = 500;
  * pick when debugging one area.
  */
 export class CucumberSuiteProvider implements SuiteProvider {
-  readonly framework = 'appium';
+  readonly framework = 'cucumber';
 
   async discover(repoDir: string, automation: AutomationConfig): Promise<DiscoveredSuite[]> {
     const testDir = path.resolve(repoDir, automation.testDir);

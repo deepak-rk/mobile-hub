@@ -30,27 +30,21 @@ describe('resolveRunCommand', () => {
     expect(cmd.args).toEqual(['wdio', 'run', 'wdio.conf.js', '--suite', 'smoke tests']);
   });
 
-  it('treats appium and wdio as the same runner', () => {
-    expect(resolveRunCommand(automation({ framework: 'wdio' }))).toEqual(
-      resolveRunCommand(automation({ framework: 'appium' })),
-    );
-  });
-
   it('prefers an explicitly configured run command over anything derived', () => {
     // A config that cannot be overridden is a cage rather than a default.
     const cmd = resolveRunCommand(automation({ run: { command: 'make', args: ['e2e'] } }), 'smoke');
     expect(cmd).toEqual({ command: 'make', args: ['e2e'] });
   });
 
-  it('refuses to guess for a framework it does not know', () => {
-    expect(() => resolveRunCommand(automation({ framework: 'espresso' }))).toThrow(UnsupportedFrameworkError);
+  it('refuses to guess for a runner it does not know', () => {
+    expect(() => resolveRunCommand(automation({ runner: 'espresso' }))).toThrow(UnsupportedFrameworkError);
     // The error has to name both ways out, since it surfaces as a 400.
-    expect(() => resolveRunCommand(automation({ framework: 'espresso' }))).toThrow(/supply an explicit run command/i);
+    expect(() => resolveRunCommand(automation({ runner: 'espresso' }))).toThrow(/supply an explicit run command/i);
   });
 });
 
 describe('resolveInstallCommand', () => {
-  it('defaults to npm ci for a known framework', () => {
+  it('defaults to npm ci for a known runner', () => {
     expect(resolveInstallCommand(automation())).toEqual({ command: 'npm', args: ['ci'] });
   });
 
@@ -62,21 +56,21 @@ describe('resolveInstallCommand', () => {
     expect(cmd).toEqual({ command: 'npm', args: ['install'] });
   });
 
-  it('assumes nothing for an unknown framework', () => {
-    expect(resolveInstallCommand(automation({ framework: 'espresso' }))).toBeNull();
+  it('assumes nothing for an unknown runner', () => {
+    expect(resolveInstallCommand(automation({ runner: 'espresso' }))).toBeNull();
   });
 });
 
 describe('canDeriveCommands', () => {
-  it('is true for a known framework and for an explicit command', () => {
+  it('is true for a known runner and for an explicit command', () => {
     expect(canDeriveCommands(automation())).toBe(true);
-    expect(canDeriveCommands(automation({ framework: 'gradle', run: { command: 'gradle', args: ['test'] } }))).toBe(
+    expect(canDeriveCommands(automation({ runner: 'gradle', run: { command: 'gradle', args: ['test'] } }))).toBe(
       true,
     );
   });
 
   it('is false when nothing tells us how to run', () => {
-    expect(canDeriveCommands(automation({ framework: 'gradle' }))).toBe(false);
+    expect(canDeriveCommands(automation({ runner: 'gradle' }))).toBe(false);
   });
 });
 

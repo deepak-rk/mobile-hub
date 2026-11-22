@@ -69,9 +69,9 @@ describe('loadEffectiveConfig', () => {
 describe('project resolution', () => {
   it('inherits org automation and overrides only what a project declares', () => {
     const orgAutomation = {
-      framework: 'appium',
+      runner: 'wdio',
+      framework: 'cucumber',
       configPath: 'wdio.conf.js',
-      envFile: '.env',
       testDir: 'test',
       repoUrl: 'https://example.com/org-default.git',
       install: null,
@@ -98,7 +98,26 @@ describe('project resolution', () => {
     // Not overridden, so it must still be the org value — the bug this guards
     // against is a partial override silently blanking its siblings.
     expect(resolved.overrider.automation.configPath).toBe('wdio.conf.js');
-    expect(resolved.overrider.automation.framework).toBe('appium');
+    expect(resolved.overrider.automation.framework).toBe('cucumber');
+  });
+
+  it('reads the pre-split framework key: appium = wdio + cucumber, wdio = runner only', () => {
+    const resolved = resolveProjects(
+      {
+        legacyAppium: { automation: { framework: 'appium' } },
+        legacyWdio: { automation: { framework: 'wdio' } },
+        explicit: { automation: { runner: 'wdio', framework: 'mocha' } },
+      },
+      PLATFORM_DEFAULTS.automation,
+    );
+    expect(resolved.legacyAppium.automation).toMatchObject({ runner: 'wdio', framework: 'cucumber' });
+    expect(resolved.legacyWdio.automation).toMatchObject({ runner: 'wdio', framework: 'unspecified' });
+    expect(resolved.explicit.automation).toMatchObject({ runner: 'wdio', framework: 'mocha' });
+  });
+
+  it('rejects the removed envFile key instead of silently ignoring it', async () => {
+    const orgPath = writeTmpYaml('automation:\n  envFile: .env\n');
+    await expect(loadEffectiveConfig(orgPath, path.join(os.tmpdir(), 'missing.yaml'))).rejects.toThrow(ConfigError);
   });
 
   it('returns nothing when no projects are declared', () => {

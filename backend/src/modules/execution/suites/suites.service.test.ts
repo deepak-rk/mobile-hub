@@ -42,7 +42,7 @@ describe('discoverSuites branch handling', () => {
   let cloneArgs: string[][];
   const automation: AutomationConfig = {
     ...PLATFORM_DEFAULTS.automation,
-    framework: 'appium',
+    framework: 'cucumber',
     repoUrl: 'https://example.com/suites-test.git',
   };
 

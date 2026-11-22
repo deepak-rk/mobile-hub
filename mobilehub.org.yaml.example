@@ -36,9 +36,14 @@ devices:
   lockTtlMinutes: 45 # a held lock auto-releases after this long unless renewed; omit to disable expiry
 
 automation:
-  framework: appium
-  # Commands are derived from framework + configPath. Declare install/run only
-  # to override that — a framework the hub doesn't know, or a one-off shape.
+  # runner decides the derived install/run commands (wdio is the one the hub
+  # can build); framework decides suite discovery (cucumber reads .feature
+  # files under testDir). The old single key `framework: appium` still loads
+  # and means runner: wdio + framework: cucumber.
+  runner: wdio
+  framework: cucumber
+  # Commands are derived from runner + configPath. Declare install/run only
+  # to override that — a runner the hub doesn't know, or a one-off shape.
   # install: { command: npm, args: [ci] }
   #
   # Injected into the runner and redacted from run logs. The child gets an
@@ -47,7 +52,7 @@ automation:
   # env:
   #   APP_ENV: staging
   configPath: wdio.conf.js
-  envFile: .env
+  # The runner loads its own .env from the checkout; the hub never reads one.
   testDir: test
 
 # Applications under test, keyed by the same id that lands on an
@@ -63,17 +68,17 @@ automation:
 # its own; it is this project's `automation.repoUrl`. Listing an automation
 # repo here would make the test suite look like an app you could install.
 #
-# Because `framework` and `configPath` are declared, the platform builds the
+# Because `runner` and `configPath` are declared, the platform builds the
 # install and run commands itself — an operator picks a project and a suite,
 # not a shell command. Declare `automation.install` / `automation.run` only to
-# override that (a framework the platform doesn't know, or a one-off shape).
+# override that (a runner the platform doesn't know, or a one-off shape).
 projects:
   demo-app:
     displayName: Demo App
     platform: android
     automation:
-      # This project has its own repo; everything else (framework, configPath,
-      # envFile, testDir) is inherited from the org defaults above.
+      # This project has its own repo; everything else (runner, framework,
+      # configPath, testDir) is inherited from the org defaults above.
       repoUrl: https://github.com/example/demo-app-automation.git
 
   checkout:
