@@ -317,7 +317,14 @@ export const executionRoutes: FastifyPluginAsync = async (app) => {
       throw new ForbiddenError('Path escapes the report directory.');
     }
 
-    return reply.sendFile(relativePath, run.reportPath);
+    // The sandboxed report page has the opaque origin "null", so a report
+    // that loads its own data with fetch()/XHR (Allure 2's multi-file layout
+    // reads data/*.json that way) is making a CORS request. Production runs
+    // with CORS off, so without this the report rendered empty there while
+    // working in dev, where CORS reflects any origin. Only "null" is allowed
+    // and never with credentials: the route is already unauthenticated, so
+    // this reveals nothing a plain GET could not.
+    return reply.header('access-control-allow-origin', 'null').sendFile(relativePath, run.reportPath);
   });
 
   app.post('/:id/cancel', { preHandler: app.requireRole('operator', 'admin') }, async (req) => {

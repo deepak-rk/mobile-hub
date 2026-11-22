@@ -76,6 +76,23 @@ describe('Content-Security-Policy', () => {
     expect(res.headers['cross-origin-resource-policy']).toBe('cross-origin');
   });
 
+  // The sandboxed page's origin is "null"; a multi-file report fetches its
+  // own data/*.json. Tests run with CORS off, as production does, which is
+  // where this was broken (dev's permissive CORS hid it).
+  it("lets a sandboxed report fetch its own files, and only the report", async () => {
+    const id = new Types.ObjectId().toString();
+    const res = await app.inject({
+      method: 'GET',
+      url: `/api/execution/${id}/report/index.html`,
+      headers: { origin: 'null' },
+    });
+    expect(res.headers['access-control-allow-origin']).toBe('null');
+    expect(res.headers['access-control-allow-credentials']).toBeUndefined();
+
+    const api = await app.inject({ method: 'GET', url: '/health', headers: { origin: 'null' } });
+    expect(api.headers['access-control-allow-origin']).toBeUndefined();
+  });
+
   it('keeps the strict policy on the report redirect, which renders nothing', async () => {
     const id = new Types.ObjectId().toString();
     const res = await app.inject({ method: 'GET', url: `/api/execution/${id}/report` });
