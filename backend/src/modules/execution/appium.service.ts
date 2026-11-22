@@ -448,11 +448,12 @@ export async function reportRemoteAppiumReady(deviceUdid: string, machineId: str
 type ListedSession = { id?: string; sessionId?: string; capabilities?: Record<string, string | undefined> };
 
 /**
- * Appium 2 removed `GET /sessions` (it 404s) and lists sessions at
- * `GET /appium/sessions` instead; Appium 1 and some older servers only have
- * the former. Asking only the old route made session cleanup a silent no-op
- * on every Appium 2 server, so the next run on that device failed to create
- * a session. Tries the current route first.
+ * Servers disagree on where sessions are listed: newer Appium releases use
+ * `GET /appium/sessions` and 404 the old `GET /sessions`, while others (2.11.2,
+ * checked live 2026-11-22) still serve only `GET /sessions` and 404 the new
+ * one. Asking only one route made session cleanup a silent no-op on the other
+ * kind, so the next run on that device failed to create a session. Tries the
+ * newer route first, then the older one.
  */
 async function listSessions(baseUrl: string, prefix: string): Promise<ListedSession[]> {
   for (const route of ['/appium/sessions', '/sessions']) {
