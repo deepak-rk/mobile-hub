@@ -12,11 +12,11 @@
  * native GUI binary — so the emulator is found and killed by process name,
  * verified by re-querying afterward, not by trusting the kill call's return.
  */
-import { readFile, rm } from 'node:fs/promises';
+import { readdir, readFile, rm } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 
-import { ADB_PATH, API_PORT, FRONTEND_PORT, PIDFILE, log } from './lib/config.mjs';
+import { ADB_PATH, API_PORT, AVD_DIR, FRONTEND_PORT, PIDFILE, log } from './lib/config.mjs';
 import { findProcessByPort, findProcesses, isWindows, killByName, killTree, tryRun } from './lib/platform.mjs';
 
 async function readPidfile() {
@@ -106,6 +106,16 @@ async function stopEmulator() {
     log('emulator stopped and verified gone.');
   } else {
     log('no emulator process was running.');
+  }
+
+  // A crashed emulator leaves its locks behind (hardware-qemu.ini.lock is a
+  // directory), and every later boot then fails as "multiple instances".
+  // Only safe to clear once nothing is running — verified just above.
+  if (stillRunning.length === 0 && existsSync(AVD_DIR)) {
+    for (const name of (await readdir(AVD_DIR)).filter((n) => n.endsWith('.lock'))) {
+      await rm(path.join(AVD_DIR, name), { recursive: true, force: true });
+      log(`cleared stale AVD lock ${name}.`);
+    }
   }
 
   return stillRunning.length === 0;

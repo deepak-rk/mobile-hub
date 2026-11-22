@@ -19,6 +19,14 @@ export const PIDFILE = path.join(LOG_DIR, 'pids.json');
 export const AVD_NAME = process.env.AVD_NAME ?? 'Pixel_3a_API_34_extension_level_7_x86_64';
 export const ADB_PATH = defaultAdbPath();
 export const EMULATOR_BIN = defaultEmulatorBin();
+// Where the AVD's disk images and lock files live (the emulator's own default).
+export const AVD_DIR = path.join(
+  process.env.ANDROID_AVD_HOME ?? path.join(os.homedir(), '.android', 'avd'),
+  `${AVD_NAME}.avd`,
+);
+// Window off unless asked for: the device is driven over adb and viewed
+// through the hub's own stream, so a desktop window is only a debugging aid.
+export const EMULATOR_WINDOW = process.env.EMULATOR_WINDOW === '1';
 
 export const MONGO_CONTAINER = process.env.MONGO_CONTAINER ?? 'mh-mongo';
 export const MONGODB_URI = process.env.MONGODB_URI ?? 'mongodb://localhost:27017/mobilehub_dev';

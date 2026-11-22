@@ -19,6 +19,7 @@ import {
   AVD_NAME,
   ADB_PATH,
   EMULATOR_BIN,
+  EMULATOR_WINDOW,
   MONGO_CONTAINER,
   MONGODB_URI,
   JWT_SECRET,
@@ -130,6 +131,21 @@ async function ensureMongo() {
   if (!created.ok) die(`failed to create Mongo container "${MONGO_CONTAINER}".`);
 }
 
+// Only what the emulator needs to find the SDK, the AVD, temp space and
+// system DLLs. Its crash reporter records the whole inherited environment,
+// so anything else (API tokens set machine-wide) is left out.
+const EMULATOR_ENV_KEYS = new Set([
+  'PATH', 'SYSTEMROOT', 'SYSTEMDRIVE', 'WINDIR', 'TEMP', 'TMP', 'TMPDIR', 'HOME', 'USERPROFILE',
+  'HOMEDRIVE', 'HOMEPATH', 'LOCALAPPDATA', 'APPDATA', 'PROGRAMDATA', 'PROGRAMFILES', 'COMSPEC',
+  'NUMBER_OF_PROCESSORS', 'PROCESSOR_ARCHITECTURE', 'OS', 'USERNAME', 'USER', 'DISPLAY',
+  'XDG_RUNTIME_DIR', 'LD_LIBRARY_PATH',
+]);
+function emulatorEnv() {
+  return Object.fromEntries(
+    Object.entries(process.env).filter(([k]) => EMULATOR_ENV_KEYS.has(k.toUpperCase()) || k.toUpperCase().startsWith('ANDROID_')),
+  );
+}
+
 async function ensureEmulator() {
   // NOTE: on Windows, emulator.exe's crashpad reporter dumps the full process
   // environment into its log file — never cat/tail that log raw (docs/LESSONS.md).
@@ -139,13 +155,24 @@ async function ensureEmulator() {
     return;
   }
 
-  log(`Booting Android emulator (${AVD_NAME})...`);
-  const emuLogFile = path.join(LOG_DIR, 'emulator.log');
-  const fd = await import('node:fs').then((fs) => fs.openSync(emuLogFile, 'a'));
-  const child = spawn(EMULATOR_BIN, ['-avd', AVD_NAME, '-no-snapshot-save'], {
-    stdio: ['ignore', fd, fd],
+  log(`Booting Android emulator (${AVD_NAME}, ${EMULATOR_WINDOW ? 'windowed' : 'headless'})...`);
+  // Flags chosen for stability on an ordinary laptop, not speed:
+  // - software GPU (swiftshader): the host GPU driver path ("auto") crashed
+  //   the emulator repeatedly on a hybrid Intel+NVIDIA laptop; software
+  //   rendering takes the driver out of the picture entirely.
+  // - cold boot, no snapshot: a half-written snapshot from a crash is
+  //   another way to crash on the next start.
+  // - 2 cores / 2 GB: an AVD config can ask for every host core (this one
+  //   asked for 10), starving the hub and the browser beside it.
+  // Output goes nowhere (see the NOTE above) and the child gets only the
+  // environment it needs, so a crash dump cannot carry unrelated secrets.
+  const args = ['-avd', AVD_NAME, '-gpu', 'swiftshader_indirect', '-no-snapshot', '-no-boot-anim', '-no-audio', '-cores', '2', '-memory', '2048'];
+  if (!EMULATOR_WINDOW) args.push('-no-window');
+  const child = spawn(EMULATOR_BIN, args, {
+    stdio: 'ignore',
     detached: true,
     windowsHide: true,
+    env: emulatorEnv(),
   });
   child.unref();
   await recordPid('emulator', child.pid);
