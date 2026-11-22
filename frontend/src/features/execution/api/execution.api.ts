@@ -32,7 +32,8 @@ export function useExecutionRuns(filters: RunFilters = {}) {
     queryKey: ['runs', params],
     queryFn: async () => (await api.get<ExecutionRun[]>('/execution', { params })).data,
     // Keep the list moving while anything is still running.
-    refetchInterval: (query) => (query.state.data?.some((r) => isInFlight(r.status)) ? 3000 : false),
+    refetchInterval: (query) =>
+      query.state.data?.some((r) => isInFlight(r.status)) ? 3000 : false,
   });
 }
 
@@ -96,7 +97,8 @@ export interface ProjectOption {
 export function useProjects() {
   return useQuery({
     queryKey: ['execution', 'projects'],
-    queryFn: async () => (await api.get<{ projects: ProjectOption[] }>('/execution/projects')).data.projects,
+    queryFn: async () =>
+      (await api.get<{ projects: ProjectOption[] }>('/execution/projects')).data.projects,
   });
 }
 
@@ -134,9 +136,12 @@ export function useSuites(projectId: string | undefined, branch?: string) {
     queryKey: ['execution', 'suites', projectId, debouncedBranch ?? null],
     queryFn: async () =>
       (
-        await api.get<{ suites: DiscoveredSuite[]; unavailable?: string }>(`/execution/projects/${projectId}/suites`, {
-          params: debouncedBranch ? { branch: debouncedBranch } : undefined,
-        })
+        await api.get<{ suites: DiscoveredSuite[]; unavailable?: string }>(
+          `/execution/projects/${projectId}/suites`,
+          {
+            params: debouncedBranch ? { branch: debouncedBranch } : undefined,
+          },
+        )
       ).data,
     enabled: Boolean(projectId),
     // Discovery clones or fetches a repo; re-running it because a component
@@ -158,7 +163,9 @@ export function useBranches(projectId: string | undefined) {
     queryKey: ['execution', 'branches', projectId],
     queryFn: async () =>
       (
-        await api.get<{ branches: string[]; unavailable?: string }>(`/execution/projects/${projectId}/branches`)
+        await api.get<{ branches: string[]; defaultBranch?: string | null; unavailable?: string }>(
+          `/execution/projects/${projectId}/branches`,
+        )
       ).data,
     enabled: Boolean(projectId),
     staleTime: 5 * 60_000,
@@ -183,7 +190,8 @@ export interface TriggerRunInput {
 export function useTriggerRun() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (input: TriggerRunInput) => (await api.post<ExecutionRun>('/execution', input)).data,
+    mutationFn: async (input: TriggerRunInput) =>
+      (await api.post<ExecutionRun>('/execution', input)).data,
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ['runs'] });
       void qc.invalidateQueries({ queryKey: ['devices'] });

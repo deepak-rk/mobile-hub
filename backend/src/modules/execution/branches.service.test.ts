@@ -1,6 +1,16 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import * as supervisor from '../../common/process-supervisor';
-import { discoverBranches, parseLsRemoteHeads, BranchDiscoveryError } from './branches.service';
+import { discoverBranches, parseDefaultBranch, parseLsRemoteHeads, BranchDiscoveryError } from './branches.service';
+
+describe('parseDefaultBranch', () => {
+  it('reads the HEAD symref line, including slashes in the name', () => {
+    expect(parseDefaultBranch('ref: refs/heads/release/2.x\tHEAD\nabc\tHEAD\n')).toBe('release/2.x');
+  });
+
+  it('returns null when the remote does not report HEAD', () => {
+    expect(parseDefaultBranch('abc\trefs/heads/main\n')).toBeNull();
+  });
+});
 
 describe('parseLsRemoteHeads', () => {
   it('extracts branch names from real git ls-remote --heads output', () => {
@@ -51,7 +61,17 @@ describe('discoverBranches', () => {
   it('returns real branch names on success', async () => {
     mockGitOutput('a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2\trefs/heads/main\n');
 
-    expect(await discoverBranches('https://example.com/repo.git')).toEqual(['main']);
+    expect(await discoverBranches('https://example.com/repo.git')).toEqual({ branches: ['main'], defaultBranch: null });
+  });
+
+  it('reports the remote default branch from --symref output', async () => {
+    const sha = 'a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2';
+    mockGitOutput(`ref: refs/heads/develop\tHEAD\n${sha}\tHEAD\n${sha}\trefs/heads/develop\n${sha}\trefs/heads/main\n`);
+
+    expect(await discoverBranches('https://example.com/develop-default.git')).toEqual({
+      branches: ['develop', 'main'],
+      defaultBranch: 'develop',
+    });
   });
 
   it('throws BranchDiscoveryError when git exits non-zero', async () => {

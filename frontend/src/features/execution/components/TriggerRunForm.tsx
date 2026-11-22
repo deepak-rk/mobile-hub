@@ -1,4 +1,4 @@
-import { FormEvent, useState } from 'react';
+import { FormEvent, useEffect, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Button, Card, CardBody, Dialog, EmptyState, Field } from 'react-design-kit';
 import type { ApiError } from '@/services/api';
@@ -6,7 +6,13 @@ import { icons, iconSize } from '@/lib/icons';
 import { useAuth } from '@/features/auth/useAuth';
 import { useDevices } from '@/features/devices/api/devices.api';
 import { deviceKey } from '@/features/devices/lib/deviceKey';
-import { useBranches, useProjects, useReloadConfig, useSuites, useTriggerRun } from '../api/execution.api';
+import {
+  useBranches,
+  useProjects,
+  useReloadConfig,
+  useSuites,
+  useTriggerRun,
+} from '../api/execution.api';
 import { resolvePresetDevice, useRunPresets } from '../hooks/useRunPresets';
 import styles from './TriggerRunForm.module.css';
 
@@ -39,6 +45,9 @@ export function TriggerRunForm() {
 
   const [project, setProject] = useState('');
   const [branch, setBranch] = useState('main');
+  // Until someone picks a branch (or a preset does), follow the repo's own
+  // default branch rather than assuming `main`.
+  const [branchChosen, setBranchChosen] = useState(false);
   const [suite, setSuite] = useState('');
   // Host + udid (`deviceKey`), not a bare udid: `emulator-5554` on two hosts
   // is two devices, and a udid-keyed picker would select both as one.
@@ -68,12 +77,20 @@ export function TriggerRunForm() {
     ? 'Reading suites from the automation repo…'
     : suitesError
       ? `${(suitesError as ApiError).message ?? 'Could not read suites'} — type one.`
-      : (suiteData?.unavailable ?? (suites && suites.length === 0 ? 'No suites found in the repo — type one.' : ''));
-  const { data: branchData, isFetching: branchesLoading } = useBranches(configuredProject ? project : undefined);
+      : (suiteData?.unavailable ??
+        (suites && suites.length === 0 ? 'No suites found in the repo — type one.' : ''));
+  const { data: branchData, isFetching: branchesLoading } = useBranches(
+    configuredProject ? project : undefined,
+  );
   const branches = branchData?.branches;
   const branchHint = branchesLoading
     ? 'Reading branches from the remote…'
-    : (branchData?.unavailable ?? (branches && branches.length === 0 ? 'No branches found — type one.' : ''));
+    : (branchData?.unavailable ??
+      (branches && branches.length === 0 ? 'No branches found — type one.' : ''));
+  const defaultBranch = branchData?.defaultBranch;
+  useEffect(() => {
+    if (!branchChosen && defaultBranch) setBranch(defaultBranch);
+  }, [branchChosen, defaultBranch]);
 
   if (!user) {
     return (
@@ -83,7 +100,10 @@ export function TriggerRunForm() {
             icon={icons.locked}
             title="Sign in to trigger a run"
             body="Dispatching a run requires an operator or admin session."
-            action={{ label: 'Sign in', onClick: () => navigate('/login', { state: { from: location.pathname } }) }}
+            action={{
+              label: 'Sign in',
+              onClick: () => navigate('/login', { state: { from: location.pathname } }),
+            }}
           />
         </CardBody>
       </Card>
@@ -106,7 +126,9 @@ export function TriggerRunForm() {
 
   // Only devices that can actually take a run — the backend rejects a locked
   // device with 409, so offering one would just produce a confusing failure.
-  const availableDevices = devices?.filter((d) => !d.lock && d.status !== 'offline' && d.status !== 'unreachable');
+  const availableDevices = devices?.filter(
+    (d) => !d.lock && d.status !== 'offline' && d.status !== 'unreachable',
+  );
 
   function applyPreset(id: string) {
     setSelectedPresetId(id);
@@ -114,6 +136,7 @@ export function TriggerRunForm() {
     if (!preset) return;
     setProject(preset.project);
     setBranch(preset.branch);
+    setBranchChosen(true);
     setSuite(preset.suite);
     setSetupCmd(preset.setupCmd);
     setRunCmd(preset.runCmd);
@@ -123,7 +146,8 @@ export function TriggerRunForm() {
     // over if it's still eligible — a saved preset shouldn't silently point at
     // a device that's since gone offline or been locked by someone else.
     const device = resolvePresetDevice(preset, devices ?? []);
-    const stillAvailable = device && availableDevices?.some((d) => deviceKey(d) === deviceKey(device));
+    const stillAvailable =
+      device && availableDevices?.some((d) => deviceKey(d) === deviceKey(device));
     setSelectedDeviceKey(device && stillAvailable ? deviceKey(device) : '');
   }
 
@@ -293,7 +317,9 @@ export function TriggerRunForm() {
                   edited was the one that took. */}
               {reloadConfig.isError ? (
                 <span className={styles.hintError}>
-                  {reloadConfig.error instanceof Error ? reloadConfig.error.message : 'Config reload failed.'}
+                  {reloadConfig.error instanceof Error
+                    ? reloadConfig.error.message
+                    : 'Config reload failed.'}
                 </span>
               ) : reloadConfig.isSuccess ? (
                 <span className={styles.hint}>
@@ -319,7 +345,10 @@ export function TriggerRunForm() {
                   className={styles.select}
                   value={branch}
                   required
-                  onChange={(e) => setBranch(e.target.value)}
+                  onChange={(e) => {
+                    setBranch(e.target.value);
+                    setBranchChosen(true);
+                  }}
                 >
                   {branches.map((b) => (
                     <option key={b} value={b}>
@@ -334,7 +363,10 @@ export function TriggerRunForm() {
                   value={branch}
                   required
                   placeholder="e.g. main"
-                  onChange={(e) => setBranch(e.target.value)}
+                  onChange={(e) => {
+                    setBranch(e.target.value);
+                    setBranchChosen(true);
+                  }}
                 />
               )}
               {branchHint ? <span className={styles.hint}>{branchHint}</span> : null}
@@ -362,7 +394,9 @@ export function TriggerRunForm() {
                   {suites.map((s) => (
                     <option key={s.id} value={s.id}>
                       {/* An unknown count is left off rather than shown as "0 features". */}
-                      {s.kind === 'tag' && s.fileCount !== undefined ? `${s.name} · ${s.fileCount} features` : s.name}
+                      {s.kind === 'tag' && s.fileCount !== undefined
+                        ? `${s.name} · ${s.fileCount} features`
+                        : s.name}
                     </option>
                   ))}
                 </select>
@@ -393,7 +427,8 @@ export function TriggerRunForm() {
                 <option value="">Select an available device…</option>
                 {availableDevices?.map((d) => (
                   <option key={d._id} value={deviceKey(d)}>
-                    {d.name} · {d.platform === 'ios' ? 'iOS' : 'Android'} {d.osVersion} · {d.machineId}
+                    {d.name} · {d.platform === 'ios' ? 'iOS' : 'Android'} {d.osVersion} ·{' '}
+                    {d.machineId}
                   </option>
                 ))}
               </select>
@@ -424,7 +459,7 @@ export function TriggerRunForm() {
             onChange={(e) => setRunCmd(e.target.value)}
           />
 
-          {formError ?? apiError ? (
+          {(formError ?? apiError) ? (
             <div className={styles.error} role="alert">
               {formError ?? apiError?.message ?? 'The run could not be started.'}
             </div>
@@ -448,7 +483,12 @@ export function TriggerRunForm() {
             <Button type="button" variant="ghost" onClick={() => setPresetDialogOpen(false)}>
               Cancel
             </Button>
-            <Button type="submit" form="preset-name-form" variant="primary" disabled={!presetName.trim()}>
+            <Button
+              type="submit"
+              form="preset-name-form"
+              variant="primary"
+              disabled={!presetName.trim()}
+            >
               Save
             </Button>
           </>

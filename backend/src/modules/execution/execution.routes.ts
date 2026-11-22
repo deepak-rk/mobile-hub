@@ -163,8 +163,7 @@ export const executionRoutes: FastifyPluginAsync = async (app) => {
     }
 
     try {
-      const branches = await discoverBranches(project.automation.repoUrl, { refresh: Boolean(refresh) });
-      return { branches };
+      return await discoverBranches(project.automation.repoUrl, { refresh: Boolean(refresh) });
     } catch (err) {
       if (err instanceof BranchDiscoveryError) {
         return { branches: [], unavailable: err.message };
