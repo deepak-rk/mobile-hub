@@ -151,6 +151,10 @@ export async function triggerExecutionRun(
         : { name: 'restoring_cache', status: 'skipped', error: NOT_IMPLEMENTED_STAGE_ERROR },
       { name: 'installing', status: input.setup ? 'pending' : 'skipped' },
       { name: 'execute', status: 'pending' },
+      // Everything after the suite: keeping results, the report, closing the
+      // Appium session, releasing the device, removing the workspace. Its own
+      // stage so a slow cleanup is not mistaken for a suite still running.
+      { name: 'collecting', status: 'pending' },
     ],
     snapshot: {
       platform: device?.platform ?? null,
@@ -1053,6 +1057,7 @@ async function runExecution(
     // An exception in the orchestrator itself is infrastructure by definition.
     await failRun(run, 'infra', 'unknown');
   } finally {
+    await setStage(run, 'collecting', 'running').catch(() => {});
     // First of all, before anything can fail or the workspace is removed:
     // keep the runner's raw results. They are the only source a result can be
     // rebuilt from later, and they used to be read in place and then deleted
@@ -1105,6 +1110,7 @@ async function runExecution(
     // isAdmin: true — a system-initiated release must succeed regardless of
     // ownership edge cases; this is cleanup, not a user-initiated unlock.
     await releaseLock(input.deviceUdid, input.triggeredBy, true, input.machineId);
+    await setStage(run, 'collecting', 'done').catch(() => {});
   }
 }
 

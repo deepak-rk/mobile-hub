@@ -345,6 +345,33 @@ describe('triggerExecutionRun', () => {
     expect(doc.endedAt).toBeInstanceOf(Date);
   });
 
+  it('gives cleanup its own stage, after the suite, ending done on a failed run too', async () => {
+    for (const exit of [0, 1]) {
+      const doc = fakeRunDoc({
+        stages: [
+          { name: 'pulling', status: 'skipped' },
+          { name: 'restoring_cache', status: 'skipped' },
+          { name: 'installing', status: 'skipped' },
+          { name: 'execute', status: 'pending' },
+          { name: 'collecting', status: 'pending' },
+        ],
+      });
+      vi.spyOn(ExecutionRun, 'create').mockResolvedValue(doc as never);
+      vi.spyOn(devicesService, 'acquireLock').mockResolvedValue({} as never);
+      const released = waitForReleaseLock();
+      await triggerExecutionRun({ ...baseInput, run: { command: 'node', args: ['-e', `process.exit(${exit})`] } });
+      await released;
+      // releaseLock resolves just before the stage is marked done.
+      await new Promise((r) => setTimeout(r, 20));
+
+      const stages = doc.stages as { name: string; status: string; startedAt?: Date; endedAt?: Date }[];
+      const execute = stages.find((st) => st.name === 'execute')!;
+      const collecting = stages.find((st) => st.name === 'collecting')!;
+      expect(collecting.status).toBe('done');
+      expect(collecting.startedAt!.getTime()).toBeGreaterThanOrEqual(execute.endedAt!.getTime());
+    }
+  });
+
   it('classes a failed dependency install, and a runner that cannot start', async () => {
     const cases: [Partial<TriggerExecutionInput>, string][] = [
       [

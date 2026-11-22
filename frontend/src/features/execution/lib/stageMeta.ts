@@ -11,6 +11,7 @@ export const STAGE_LABELS: Record<RunStage['name'], string> = {
   restoring_cache: 'Restore cache',
   installing: 'Install dependencies',
   execute: 'Execute suite',
+  collecting: 'Collect results & clean up',
 };
 
 export function stageIcon(status: RunStage['status']) {

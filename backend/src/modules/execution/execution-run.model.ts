@@ -7,7 +7,7 @@ import type { TestSummary } from './allure-summary';
  */
 export type ITestSummary = TestSummary;
 
-export type StageName = 'pulling' | 'restoring_cache' | 'installing' | 'execute';
+export type StageName = 'pulling' | 'restoring_cache' | 'installing' | 'execute' | 'collecting';
 export type StageStatus = 'pending' | 'running' | 'done' | 'error' | 'skipped';
 export type RunStatus = 'queued' | 'preparing' | 'running' | 'passed' | 'failed' | 'cancelled';
 
@@ -217,7 +217,7 @@ const runCommandsSchema = new Schema<IRunCommands>(
 
 const stageSchema = new Schema<IStage>(
   {
-    name: { type: String, enum: ['pulling', 'restoring_cache', 'installing', 'execute'], required: true },
+    name: { type: String, enum: ['pulling', 'restoring_cache', 'installing', 'execute', 'collecting'], required: true },
     status: { type: String, enum: ['pending', 'running', 'done', 'error', 'skipped'], default: 'pending' },
     startedAt: { type: Date, default: null },
     endedAt: { type: Date, default: null },
