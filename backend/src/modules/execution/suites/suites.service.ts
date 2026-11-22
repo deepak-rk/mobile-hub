@@ -102,8 +102,62 @@ export async function discoverSuites(
  */
 async function ensureCheckout(repoUrl: string, branch?: string): Promise<string> {
   const id = branch === undefined ? repoUrl : `${repoUrl}#branch=${branch}`;
-  const dir = path.join(env.EXECUTIONS_DIR, '.suites', crypto.createHash('sha256').update(id).digest('hex'));
+  const root = path.join(env.EXECUTIONS_DIR, '.suites');
+  const dir = path.join(root, crypto.createHash('sha256').update(id).digest('hex'));
 
+  // Two form renders for the same branch arrive together often enough (two
+  // tabs, a refresh mid-load). Without this both would clone into the same
+  // directory, or one would pull while the other is still cloning.
+  const running = inflight.get(dir);
+  if (running) return running;
+
+  const work = checkout(dir, repoUrl, branch).then((d) => {
+    // Marks the checkout as used; pruning goes by this, not by git activity.
+    const now = new Date();
+    fs.utimesSync(d, now, now);
+    return d;
+  });
+  inflight.set(dir, work);
+  try {
+    return await work;
+  } finally {
+    inflight.delete(dir);
+    pruneStaleCheckouts(root);
+  }
+}
+
+const inflight = new Map<string, Promise<string>>();
+/** A checkout nobody has asked for in this long is a branch that is gone or done. */
+export const STALE_CHECKOUT_MS = 14 * 24 * 60 * 60_000;
+
+/**
+ * Removes checkouts not used for `STALE_CHECKOUT_MS`.
+ *
+ * Every branch typed into the form leaves a checkout behind, so without this
+ * `.suites` only ever grows. A pruned checkout that turns out to be wanted
+ * again is simply re-cloned. Best-effort: a failure here must never fail the
+ * discovery call that triggered it.
+ */
+function pruneStaleCheckouts(root: string): void {
+  const cutoff = Date.now() - STALE_CHECKOUT_MS;
+  let entries: string[];
+  try {
+    entries = fs.readdirSync(root);
+  } catch {
+    return;
+  }
+  for (const name of entries) {
+    const dir = path.join(root, name);
+    if (inflight.has(dir)) continue;
+    try {
+      if (fs.statSync(dir).mtimeMs < cutoff) fs.rmSync(dir, { recursive: true, force: true });
+    } catch {
+      // Removed concurrently, or locked by a virus scanner: try again next time.
+    }
+  }
+}
+
+async function checkout(dir: string, repoUrl: string, branch?: string): Promise<string> {
   if (fs.existsSync(path.join(dir, '.git'))) {
     // Best-effort refresh. A fetch failure (offline, credentials expired)
     // leaves the previous checkout in place, which is better than failing the

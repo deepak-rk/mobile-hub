@@ -5,7 +5,7 @@ import * as path from 'path';
 import * as supervisor from '../../../common/process-supervisor';
 import { env } from '../../../config/env';
 import { PLATFORM_DEFAULTS, AutomationConfig } from '../../../config/org-config.schema';
-import { branchRefSchema, discoverSuites, SuiteDiscoveryError } from './suites.service';
+import { branchRefSchema, discoverSuites, STALE_CHECKOUT_MS, SuiteDiscoveryError } from './suites.service';
 
 describe('branchRefSchema', () => {
   it.each(['main', 'feature/login', 'release-1.2', 'user_x/fix.thing'])('accepts %s', (b) => {
@@ -98,6 +98,45 @@ describe('discoverSuites branch handling', () => {
     const callsBefore = vi.mocked(supervisor.run).mock.calls.length;
     expect(names(await discoverSuites('p-cache', automation, { branch: 'a' }))).toEqual(['on a']);
     expect(vi.mocked(supervisor.run).mock.calls.length).toBe(callsBefore);
+  });
+
+  it('shares one clone between concurrent calls for the same branch', async () => {
+    // A real clone takes time; let the fake one finish only after both calls
+    // have started, which is the window the race lives in.
+    const instant = vi.mocked(supervisor.run).getMockImplementation()!;
+    vi.mocked(supervisor.run).mockImplementation((opts) => {
+      if (opts.args?.[0] !== 'clone') return instant(opts);
+      const result = new Promise<supervisor.RunOutcome>((resolve) =>
+        setTimeout(() => resolve(instant(opts).result), 20),
+      );
+      return { result, pid: 1, cancel: () => {} };
+    });
+    const [a, b] = await Promise.all([
+      discoverSuites('p-race-1', automation, { branch: 'same' }),
+      discoverSuites('p-race-2', automation, { branch: 'same' }),
+    ]);
+    expect(names(a)).toEqual(['on same']);
+    expect(names(b)).toEqual(['on same']);
+    expect(cloneArgs).toHaveLength(1);
+  });
+
+  it('prunes checkouts unused for the stale window, and keeps the one in use', async () => {
+    const root = path.join(tmp, '.suites');
+    const stale = path.join(root, 'old-branch-checkout');
+    const recent = path.join(root, 'recent-checkout');
+    fs.mkdirSync(stale, { recursive: true });
+    fs.mkdirSync(recent, { recursive: true });
+    const old = new Date(Date.now() - STALE_CHECKOUT_MS - 60_000);
+    fs.utimesSync(stale, old, old);
+
+    expect(names(await discoverSuites('p-prune', automation, { branch: 'live' }))).toEqual(['on live']);
+
+    expect(fs.existsSync(stale)).toBe(false);
+    expect(fs.existsSync(recent)).toBe(true);
+    // The checkout just used survives and is still a checkout.
+    const kept = fs.readdirSync(root).filter((n) => n !== 'recent-checkout');
+    expect(kept).toHaveLength(1);
+    expect(fs.existsSync(path.join(root, kept[0], '.git'))).toBe(true);
   });
 
   it('reports a branch that cannot be cloned as a discovery error, not a crash', async () => {
