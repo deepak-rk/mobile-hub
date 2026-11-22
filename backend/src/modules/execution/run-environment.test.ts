@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, beforeEach } from 'vitest';
 import { buildRunEnvironment, createRedactor, resolveAndroidSdkRoot } from './run-environment';
 
 /**
@@ -111,6 +111,26 @@ describe('createRedactor', () => {
 });
 
 describe('resolveAndroidSdkRoot', () => {
+  // A declared root wins, so these tests must not see the machine's own:
+  // CI runner images export ANDROID_HOME, which made every derivation case
+  // below fail there while passing on a dev box that has none set.
+  const saved = { home: process.env.ANDROID_HOME, root: process.env.ANDROID_SDK_ROOT };
+  beforeEach(() => {
+    delete process.env.ANDROID_HOME;
+    delete process.env.ANDROID_SDK_ROOT;
+  });
+  afterEach(() => {
+    for (const [key, value] of [['ANDROID_HOME', saved.home], ['ANDROID_SDK_ROOT', saved.root]] as const) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  });
+
+  it('prefers a declared ANDROID_HOME over deriving one', () => {
+    process.env.ANDROID_HOME = '/opt/android-sdk';
+    expect(resolveAndroidSdkRoot('C:/Users/x/AppData/Local/Android/Sdk/platform-tools/adb.exe')).toBe('/opt/android-sdk');
+  });
+
   // Appium's UiAutomator2 driver refuses a session without this exported, and
   // it is not set on every machine that can otherwise run adb — this one
   // included, which is how a real run failed at session creation.
