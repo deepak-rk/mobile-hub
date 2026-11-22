@@ -1,5 +1,6 @@
 import * as fs from 'fs';
 import * as path from 'path';
+import * as os from 'os';
 import * as crypto from 'crypto';
 import { Types } from 'mongoose';
 import * as supervisor from '../../common/process-supervisor';
@@ -30,7 +31,7 @@ import {
   ErrorClass,
 } from './execution-run.model';
 import { publishExecutionEvent } from './execution.events';
-import { ConflictError, ValidationError } from '../../common/errors/app-error';
+import { ConflictError, NotFoundError, ValidationError } from '../../common/errors/app-error';
 
 export class RunNotCancellableError extends ConflictError {
   constructor(status: string) {
@@ -1254,16 +1255,25 @@ export async function recoverOrphanedRuns(
 ): Promise<number> {
   const orphaned = await ExecutionRun.find({ status: { $in: ['queued', 'preparing', 'running'] } });
   for (const run of orphaned) {
+    // Whatever the runner finished before the restart is kept: its results
+    // are still in the workspace (recovery runs before the workspace sweep).
+    const summary = await repairRunFromResults(run);
+    const failedTests = summary ? summary.failed + summary.broken : 0;
     const runningStage = run.stages.find((s) => s.status === 'running');
     if (runningStage) {
       runningStage.status = 'error';
-      runningStage.error = 'Backend restarted mid-run';
+      runningStage.error = summary
+        ? `Backend restarted mid-run; results recovered for ${summary.total} test(s), ${failedTests} failed`
+        : 'Backend restarted mid-run';
       runningStage.endedAt = new Date();
     }
     run.status = 'failed';
-    // A backend restart is infrastructure, not a test result.
-    run.failureKind = 'infra';
-    run.errorClass = 'hub_restarted';
+    // A restart is infrastructure, not a test result. But tests that had
+    // already failed did fail, and blanket-classing those as a restart would
+    // hide a real regression behind an infra excuse. A run whose recovered
+    // tests all passed is still not called passed: the rest never ran.
+    run.failureKind = failedTests > 0 ? 'test' : 'infra';
+    run.errorClass = failedTests > 0 ? 'test_assertion' : 'hub_restarted';
     run.endedAt = new Date();
     await run.save();
     await releaseLock(run.deviceUdid, run.triggeredBy, true, run.machineId);
@@ -1374,5 +1384,53 @@ export function releasePrepSlot(): void {
 /** Test-only view of the counter. */
 export function prepSlotsInUse(): number {
   return prepActive;
+}
+
+/**
+ * Rebuilds a run's test summary from its raw results, keeping a durable copy
+ * of them first. Repair only: it never changes a run's status and never
+ * fails anything for results being absent (returns null).
+ *
+ * Used by restart recovery, so tests a runner finished before the hub went
+ * down keep their outcome, and by the resync route, so a run can be
+ * re-derived after a summarizer fix.
+ */
+export async function repairRunFromResults(run: IExecutionRun): Promise<IExecutionRun['testSummary']> {
+  let logStream: fs.WriteStream | null = null;
+  try {
+    if (run.logPath) {
+      fs.mkdirSync(path.dirname(run.logPath), { recursive: true });
+      logStream = fs.createWriteStream(run.logPath, { flags: 'a' });
+      // A log that cannot be appended to must not crash the process.
+      logStream.on('error', () => {});
+    }
+    const sink = logStream ?? fs.createWriteStream(os.devNull);
+    await persistAllureResults(run, sink);
+    collectTestSummary(run, sink);
+    if (!logStream) sink.end();
+    return run.testSummary ?? null;
+  } finally {
+    logStream?.end();
+  }
+}
+
+/**
+ * Re-derives a finished run's test summary from its kept raw results, for
+ * example after a fix to the summarizer. Never touches status: a recorded
+ * outcome stays recorded. In-flight runs are refused, since their results
+ * are still being written. `resynced: false` means there were no results to
+ * read, which is not an error.
+ */
+export async function resyncExecutionRun(id: string): Promise<{ run: IExecutionRun; resynced: boolean }> {
+  const run = await ExecutionRun.findById(id);
+  if (!run) throw new NotFoundError('Execution run not found');
+  if (!TERMINAL_STATUSES.includes(run.status)) {
+    throw new ConflictError('Only a finished run can be resynced; this one is still in flight.', 'RUN_IN_FLIGHT');
+  }
+  const summary = await repairRunFromResults(run);
+  if (!summary) return { run, resynced: false };
+  // Field-level write, not run.save(): only the summary changes.
+  await ExecutionRun.updateOne({ _id: run._id }, { $set: { testSummary: summary } });
+  return { run, resynced: true };
 }
 

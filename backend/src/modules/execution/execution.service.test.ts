@@ -27,6 +27,7 @@ import {
   copyDirCancellable,
   OFFLINE_FAIL_FAST_MS,
   TriggerExecutionInput,
+  resyncExecutionRun,
   acquirePrepSlot,
   releasePrepSlot,
   prepSlotsInUse,
@@ -410,6 +411,42 @@ describe('triggerExecutionRun', () => {
   });
 });
 
+describe('resyncExecutionRun', () => {
+  function keptResults(doc: Record<string, unknown>, statuses: string[]) {
+    const dir = path.join(doc.artifactsPath as string, 'allure-results');
+    fs.mkdirSync(dir, { recursive: true });
+    statuses.forEach((status, i) =>
+      fs.writeFileSync(path.join(dir, `k${i}-result.json`), JSON.stringify({ uuid: `k${i}`, name: `t${i}`, status })),
+    );
+  }
+
+  it('rebuilds the summary of a finished run from its kept results, leaving status alone', async () => {
+    const doc = fakeRunDoc({ _id: 'run-1', status: 'failed', failureKind: 'test' });
+    keptResults(doc, ['passed', 'broken']);
+    vi.spyOn(ExecutionRun, 'findById').mockResolvedValue(doc as never);
+    const update = vi.spyOn(ExecutionRun, 'updateOne').mockResolvedValue({} as never);
+
+    const result = await resyncExecutionRun('run-1');
+
+    expect(result.resynced).toBe(true);
+    const set = (update.mock.calls[0] as unknown[])[1] as { $set: Record<string, unknown> };
+    const fields = set.$set;
+    expect(Object.keys(fields)).toEqual(['testSummary']);
+    expect(fields.testSummary).toMatchObject({ total: 2, passed: 1, broken: 1 });
+    expect(doc.status).toBe('failed');
+  });
+
+  it('refuses a run still in flight, and reports absent results without failing', async () => {
+    vi.spyOn(ExecutionRun, 'findById').mockResolvedValueOnce(fakeRunDoc({ status: 'running' }) as never);
+    await expect(resyncExecutionRun('run-1')).rejects.toMatchObject({ code: 'RUN_IN_FLIGHT', statusCode: 409 });
+
+    vi.spyOn(ExecutionRun, 'findById').mockResolvedValueOnce(fakeRunDoc({ status: 'passed' }) as never);
+    const update = vi.spyOn(ExecutionRun, 'updateOne');
+    expect((await resyncExecutionRun('run-1')).resynced).toBe(false);
+    expect(update).not.toHaveBeenCalled();
+  });
+});
+
 describe('recoverOrphanedRuns', () => {
   it('marks a mid-flight run failed, its running stage errored, and releases the lock', async () => {
     const orphan = fakeRunDoc({
@@ -437,6 +474,57 @@ describe('recoverOrphanedRuns', () => {
     // machineId is passed through: releasing by udid alone could release a
     // same-udid device on a different host (see fakeRunDoc's own note).
     expect(releaseLock).toHaveBeenCalledWith('d1', 'user-1', true, 'host-1');
+  });
+
+  /** Writes Allure result files where a runner leaves them in a cloned checkout. */
+  function writeResults(workspacePath: string, statuses: string[]) {
+    const dir = path.join(workspacePath, 'repo', 'allure-results');
+    fs.mkdirSync(dir, { recursive: true });
+    statuses.forEach((status, i) => {
+      fs.writeFileSync(
+        path.join(dir, `r${i}-result.json`),
+        JSON.stringify({ uuid: `r${i}`, historyId: `h${i}`, name: `test ${i}`, status }),
+      );
+    });
+  }
+
+  const midExecute = () =>
+    fakeRunDoc({
+      status: 'running',
+      stages: [
+        { name: 'pulling', status: 'done' },
+        { name: 'restoring_cache', status: 'done' },
+        { name: 'installing', status: 'done' },
+        { name: 'execute', status: 'running' },
+      ],
+    });
+
+  it('keeps tests that had already failed as a test failure, with their results', async () => {
+    const orphan = midExecute();
+    writeResults(orphan.workspacePath as string, ['passed', 'failed', 'passed']);
+    vi.spyOn(ExecutionRun, 'find').mockResolvedValue([orphan] as never);
+    vi.spyOn(devicesService, 'releaseLock').mockResolvedValue(null);
+
+    await recoverOrphanedRuns();
+
+    expect(orphan).toMatchObject({ status: 'failed', failureKind: 'test', errorClass: 'test_assertion' });
+    expect(orphan.testSummary).toMatchObject({ total: 3, passed: 2, failed: 1 });
+    // Durable copy made before the workspace sweep can delete it.
+    expect(fs.existsSync(path.join(orphan.artifactsPath as string, 'allure-results', 'r1-result.json'))).toBe(true);
+    const execStage = (orphan.stages as { name: string; error?: string }[]).find((s) => s.name === 'execute');
+    expect(execStage?.error).toMatch(/results recovered for 3 test\(s\), 1 failed/);
+  });
+
+  it('never calls a restarted run passed, even when every recovered test passed', async () => {
+    const orphan = midExecute();
+    writeResults(orphan.workspacePath as string, ['passed', 'passed']);
+    vi.spyOn(ExecutionRun, 'find').mockResolvedValue([orphan] as never);
+    vi.spyOn(devicesService, 'releaseLock').mockResolvedValue(null);
+
+    await recoverOrphanedRuns();
+
+    expect(orphan).toMatchObject({ status: 'failed', failureKind: 'infra', errorClass: 'hub_restarted' });
+    expect(orphan.testSummary).toMatchObject({ total: 2, passed: 2 });
   });
 
   it('does nothing when no run is mid-flight', async () => {

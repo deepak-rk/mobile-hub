@@ -10,6 +10,7 @@ import {
   getExecutionRun,
   getQueuePosition,
   listExecutionRuns,
+  resyncExecutionRun,
   triggerExecutionRun,
 } from './execution.service';
 import type { IExecutionRun } from './execution-run.model';
@@ -390,6 +391,15 @@ export const executionRoutes: FastifyPluginAsync = async (app) => {
     return reply
       .header('access-control-allow-origin', 'null')
       .sendFile(relativePath, run.reportPath);
+  });
+
+  /**
+   * Rebuilds a finished run's test summary from its kept raw results. Repair
+   * only: never changes the run's status.
+   */
+  app.post('/:id/resync', { preHandler: app.requireRole('operator', 'admin') }, async (req) => {
+    const { id } = req.params as { id: string };
+    return resyncExecutionRun(id);
   });
 
   app.post('/:id/cancel', { preHandler: app.requireRole('operator', 'admin') }, async (req) => {
