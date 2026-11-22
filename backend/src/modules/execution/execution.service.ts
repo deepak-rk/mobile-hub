@@ -3,18 +3,33 @@ import * as path from 'path';
 import * as crypto from 'crypto';
 import { Types } from 'mongoose';
 import * as supervisor from '../../common/process-supervisor';
-import { RunOutcome, describeOutcome, isSuccess, ManagedProcess } from '../../common/process-supervisor';
+import {
+  RunOutcome,
+  describeOutcome,
+  isSuccess,
+  ManagedProcess,
+} from '../../common/process-supervisor';
 import { env } from '../../config/env';
-import { EffectiveConfig, PLATFORM_DEFAULTS } from '../../config/org-config.schema';
+import { EffectiveConfig, PLATFORM_DEFAULTS, ProjectConfig } from '../../config/org-config.schema';
 import { acquireLock, getDevice, releaseLock } from '../devices/devices.service';
 import { getBuild } from '../builds/builds.service';
 import { assertDriverInstalled, ensureAppiumServer, closeActiveSessions } from './appium.service';
 import { buildRunEnvironment, createRedactor } from './run-environment';
 import { classifySuite } from './automation-commands';
-import { summarizeRunResults, summarizeAllureResults, ALLURE_RESULTS_DIRNAME } from './allure-summary';
-import { ExecutionRun, IExecutionRun, RunStatus, StageName, FailureKind } from './execution-run.model';
+import {
+  summarizeRunResults,
+  summarizeAllureResults,
+  ALLURE_RESULTS_DIRNAME,
+} from './allure-summary';
+import {
+  ExecutionRun,
+  IExecutionRun,
+  RunStatus,
+  StageName,
+  FailureKind,
+} from './execution-run.model';
 import { publishExecutionEvent } from './execution.events';
-import { ConflictError } from '../../common/errors/app-error';
+import { ConflictError, ValidationError } from '../../common/errors/app-error';
 
 export class RunNotCancellableError extends ConflictError {
   constructor(status: string) {
@@ -33,6 +48,8 @@ export interface TriggerExecutionInput {
   buildId?: string;
   project: string;
   branch: string;
+  /** Required when the project declares variants; rejected when it does not. */
+  variant?: string;
   suite: string;
   triggeredBy: string;
   /** Runs before the test command (e.g. dependency install). Skipped if omitted. */
@@ -81,7 +98,9 @@ export async function triggerExecutionRun(
   input: TriggerExecutionInput,
   automation: EffectiveConfig['automation'] = PLATFORM_DEFAULTS.automation,
   appiumConfig?: EffectiveConfig['appium'],
+  project?: ProjectConfig,
 ): Promise<IExecutionRun> {
+  assertVariantAllowed(project, input.variant);
   const runId = new Types.ObjectId();
   const workspacePath = path.join(env.EXECUTIONS_DIR, runId.toString());
   // The log lives outside the workspace so cleaning the workspace up doesn't
@@ -97,6 +116,17 @@ export async function triggerExecutionRun(
   // null rather than blocking the trigger, since the lock acquisition below
   // is what actually decides whether this run may proceed.
   const device = await getDevice(input.deviceUdid, input.machineId).catch(() => null);
+  if (
+    device &&
+    project &&
+    project.platforms.length > 0 &&
+    !project.platforms.includes(device.platform)
+  ) {
+    throw new ValidationError(
+      `${project.displayName} is not declared for ${device.platform} (platforms: ${project.platforms.join(', ')}). Pick a device on a declared platform.`,
+      'PLATFORM_NOT_SUPPORTED',
+    );
+  }
 
   const run = await ExecutionRun.create({
     _id: runId,
@@ -105,6 +135,7 @@ export async function triggerExecutionRun(
     buildId: input.buildId ?? null,
     project: input.project,
     branch: input.branch,
+    variant: input.variant ?? null,
     suite: input.suite,
     triggeredBy: input.triggeredBy,
     status: 'queued',
@@ -502,7 +533,11 @@ export function computeCacheKey(
  * not be interrupted, so a cancel landing during `restoring_cache` waited for
  * the whole copy. Per-package granularity bounds that wait to one package.
  */
-export async function copyDirCancellable(src: string, dest: string, isCancelled: () => boolean): Promise<boolean> {
+export async function copyDirCancellable(
+  src: string,
+  dest: string,
+  isCancelled: () => boolean,
+): Promise<boolean> {
   await fs.promises.mkdir(dest, { recursive: true });
   for (const entry of await fs.promises.readdir(src)) {
     if (isCancelled()) return false;
@@ -537,7 +572,9 @@ async function restoreCache(
   logStream.write(line);
   publishExecutionEvent(run.id as string, { type: 'log', line });
 
-  const completed = hit ? await copyDirCancellable(cacheDir, path.join(repoDir, 'node_modules'), isCancelled) : true;
+  const completed = hit
+    ? await copyDirCancellable(cacheDir, path.join(repoDir, 'node_modules'), isCancelled)
+    : true;
   return { cacheDir, completed };
 }
 
@@ -550,11 +587,17 @@ const ALLURE_REPORT_DIRNAME = 'allure-report';
  * report collectors already searched.
  */
 function resultsDirCandidates(workspacePath: string): string[] {
-  return [path.join(workspacePath, 'repo', ALLURE_RESULTS_DIRNAME), path.join(workspacePath, ALLURE_RESULTS_DIRNAME)];
+  return [
+    path.join(workspacePath, 'repo', ALLURE_RESULTS_DIRNAME),
+    path.join(workspacePath, ALLURE_RESULTS_DIRNAME),
+  ];
 }
 
 function reportDirCandidates(workspacePath: string): string[] {
-  return [path.join(workspacePath, 'repo', ALLURE_REPORT_DIRNAME), path.join(workspacePath, ALLURE_REPORT_DIRNAME)];
+  return [
+    path.join(workspacePath, 'repo', ALLURE_REPORT_DIRNAME),
+    path.join(workspacePath, ALLURE_REPORT_DIRNAME),
+  ];
 }
 
 /**
@@ -586,7 +629,9 @@ async function persistAllureResults(run: IExecutionRun, logStream: fs.WriteStrea
   const source = resultsDirCandidates(run.workspacePath).find((d) => fs.existsSync(d));
   if (!source) return;
   try {
-    await fs.promises.cp(source, path.join(run.artifactsPath, ALLURE_RESULTS_DIRNAME), { recursive: true });
+    await fs.promises.cp(source, path.join(run.artifactsPath, ALLURE_RESULTS_DIRNAME), {
+      recursive: true,
+    });
   } catch (err) {
     const line = `results: could not keep raw Allure results: ${err instanceof Error ? err.message : String(err)}\n`;
     logStream.write(line);
@@ -612,8 +657,9 @@ function collectTestSummary(run: IExecutionRun, logStream: fs.WriteStream): void
     // The persisted copy first — it is what survives the workspace — falling
     // back to the workspace for a run with nowhere durable to have copied to.
     summary =
-      (run.artifactsPath ? summarizeAllureResults(path.join(run.artifactsPath, ALLURE_RESULTS_DIRNAME)) : null) ??
-      summarizeRunResults(run.workspacePath, ALLURE_RESULTS_DIRNAME);
+      (run.artifactsPath
+        ? summarizeAllureResults(path.join(run.artifactsPath, ALLURE_RESULTS_DIRNAME))
+        : null) ?? summarizeRunResults(run.workspacePath, ALLURE_RESULTS_DIRNAME);
   } catch (err) {
     // Best-effort, same as the report: failing to count tests must not turn a
     // passing run into a failed one.
@@ -760,7 +806,8 @@ export async function saveCacheIfMissing(repoDir: string, cacheDir: string | nul
     fs.writeFileSync(path.join(tmp, CACHE_COMPLETE_MARKER), new Date().toISOString());
     // An incomplete entry from before this fix (no marker) is not a cache, it
     // is debris in the way — remove it so the rename can land.
-    if (fs.existsSync(cacheDir) && !isCompleteCache(cacheDir)) fs.rmSync(cacheDir, { recursive: true, force: true });
+    if (fs.existsSync(cacheDir) && !isCompleteCache(cacheDir))
+      fs.rmSync(cacheDir, { recursive: true, force: true });
     await fs.promises.rename(tmp, cacheDir);
   } catch {
     // Lost the race to another run with the same key (its rename landed first)
@@ -790,7 +837,7 @@ async function runExecution(
   let cacheDir: string | null = null;
   // Built once the Appium endpoint is known, so the runner and the install
   // step share one environment and one redactor.
-  let runEnv = buildRunEnvironment({ configured: automation.env });
+  let runEnv = buildRunEnvironment({ configured: automation.env, variant: run.variant });
   const redact = createRedactor(automation.env);
 
   try {
@@ -802,7 +849,11 @@ async function runExecution(
     // status. The previous code updated the stage only on the nonzero-exit
     // path, which is how a run could read "failed" with a stage stuck on
     // "running" forever (docs/LESSONS.md).
-    const settleStage = async (stage: StageName, outcome: RunOutcome, kindOnFailure: FailureKind): Promise<boolean> => {
+    const settleStage = async (
+      stage: StageName,
+      outcome: RunOutcome,
+      kindOnFailure: FailureKind,
+    ): Promise<boolean> => {
       if (isSuccess(outcome)) {
         await setStage(run, stage, 'done');
         return true;
@@ -815,7 +866,8 @@ async function runExecution(
       // A spawn failure or timeout is never the application's fault, whichever
       // stage it happened in — it is infrastructure, and must not be counted
       // against a suite's pass rate.
-      const kind = outcome.kind === 'spawn-failed' || outcome.kind === 'timeout' ? 'infra' : kindOnFailure;
+      const kind =
+        outcome.kind === 'spawn-failed' || outcome.kind === 'timeout' ? 'infra' : kindOnFailure;
       await setStage(run, stage, 'error', describeOutcome(outcome));
       await failRun(run, kind);
       return false;
@@ -825,7 +877,10 @@ async function runExecution(
       const repoDir = path.join(run.workspacePath, 'repo');
       await setStage(run, 'pulling', 'running');
       const cloneOutcome = await runCommand(
-        { command: 'git', args: ['clone', '--branch', input.branch, '--single-branch', automation.repoUrl, repoDir] },
+        {
+          command: 'git',
+          args: ['clone', '--branch', input.branch, '--single-branch', automation.repoUrl, repoDir],
+        },
         run.workspacePath,
         logStream,
         runId,
@@ -850,7 +905,10 @@ async function runExecution(
 
     if (input.setup && !cancelledRuns.has(runId)) {
       await setStage(run, 'installing', 'running');
-      const setupOutcome = await runCommand(input.setup, cwd, logStream, runId, { env: runEnv, redact });
+      const setupOutcome = await runCommand(input.setup, cwd, logStream, runId, {
+        env: runEnv,
+        redact,
+      });
       // Dependency install failing is an environment problem, not a test result.
       if (!(await settleStage('installing', setupOutcome, 'infra'))) return;
       await saveCacheIfMissing(cwd, cacheDir);
@@ -875,7 +933,9 @@ async function runExecution(
           // Cheap and up front: a missing driver otherwise surfaces only after
           // the runner has started and tried to open a session.
           await assertDriverInstalled(device.platform);
-          const endpoint = await ensureAppiumServer(device, { appium: appiumConfig } as EffectiveConfig);
+          const endpoint = await ensureAppiumServer(device, {
+            appium: appiumConfig,
+          } as EffectiveConfig);
           const line = `Appium ready at ${endpoint.baseUrl} for ${device.udid}\n`;
           logStream.write(line);
           publishExecutionEvent(runId, { type: 'log', line });
@@ -901,6 +961,7 @@ async function runExecution(
             },
             appPath: build?.artifactPath ?? undefined,
             runId,
+            variant: run.variant,
           });
         }
       } catch (err) {
@@ -914,7 +975,10 @@ async function runExecution(
     // left by an earlier tool run in the same tree — would otherwise be read
     // back as *this* run's results: wrong numbers, or a run that executed
     // nothing still showing a full suite. Only what this run writes counts.
-    for (const dir of [...resultsDirCandidates(run.workspacePath), ...reportDirCandidates(run.workspacePath)]) {
+    for (const dir of [
+      ...resultsDirCandidates(run.workspacePath),
+      ...reportDirCandidates(run.workspacePath),
+    ]) {
       fs.rmSync(dir, { recursive: true, force: true });
     }
 
@@ -932,7 +996,12 @@ async function runExecution(
     // a wrong result. Only decidable when the runner wrote Allure results at
     // all — a project not using Allure gives no signal, so it is left alone.
     if (ranZeroTests(run.workspacePath)) {
-      await setStage(run, 'execute', 'error', 'The runner exited cleanly but executed no tests — the suite/tag filter matched nothing.');
+      await setStage(
+        run,
+        'execute',
+        'error',
+        'The runner exited cleanly but executed no tests — the suite/tag filter matched nothing.',
+      );
       await failRun(run, 'precondition');
       return;
     }
@@ -967,7 +1036,10 @@ async function runExecution(
     // cancelled during `pulling`) has nothing to clean up here.
     if (appiumConfig?.enabled) {
       const device = await getDevice(input.deviceUdid, input.machineId).catch(() => null);
-      if (device) await closeActiveSessions(device, { appium: appiumConfig } as EffectiveConfig).catch(() => undefined);
+      if (device)
+        await closeActiveSessions(device, { appium: appiumConfig } as EffectiveConfig).catch(
+          () => undefined,
+        );
     }
 
     run.endedAt = new Date();
@@ -1071,7 +1143,10 @@ export async function getExecutionRun(id: string): Promise<IExecutionRun | null>
 
 /** Runs currently in flight on this machine — for host diagnostics, not the run list itself. */
 export async function getActiveRunCountForMachine(machineId: string): Promise<number> {
-  return ExecutionRun.countDocuments({ machineId, status: { $in: ['queued', 'preparing', 'running'] } });
+  return ExecutionRun.countDocuments({
+    machineId,
+    status: { $in: ['queued', 'preparing', 'running'] },
+  });
 }
 
 /**
@@ -1136,7 +1211,9 @@ export async function sweepFinishedWorkspaces(): Promise<number> {
   return removed;
 }
 
-export async function recoverOrphanedRuns(appiumConfig?: EffectiveConfig['appium']): Promise<number> {
+export async function recoverOrphanedRuns(
+  appiumConfig?: EffectiveConfig['appium'],
+): Promise<number> {
   const orphaned = await ExecutionRun.find({ status: { $in: ['queued', 'preparing', 'running'] } });
   for (const run of orphaned) {
     const runningStage = run.stages.find((s) => s.status === 'running');
@@ -1156,7 +1233,10 @@ export async function recoverOrphanedRuns(appiumConfig?: EffectiveConfig['appium
     // device's long-lived, separately-running Appium server.
     if (appiumConfig?.enabled) {
       const device = await getDevice(run.deviceUdid, run.machineId).catch(() => null);
-      if (device) await closeActiveSessions(device, { appium: appiumConfig } as EffectiveConfig).catch(() => undefined);
+      if (device)
+        await closeActiveSessions(device, { appium: appiumConfig } as EffectiveConfig).catch(
+          () => undefined,
+        );
     }
   }
   return orphaned.length;
@@ -1173,7 +1253,9 @@ export async function recoverOrphanedRuns(appiumConfig?: EffectiveConfig['appium
  * Boot-only: at that point no run in this process can be writing a snapshot.
  * Returns how many were removed.
  */
-export async function sweepStaleCacheSnapshots(cacheRoot = path.join(env.EXECUTIONS_DIR, '.cache')): Promise<number> {
+export async function sweepStaleCacheSnapshots(
+  cacheRoot = path.join(env.EXECUTIONS_DIR, '.cache'),
+): Promise<number> {
   let entries: string[];
   try {
     entries = await fs.promises.readdir(cacheRoot);
@@ -1181,6 +1263,44 @@ export async function sweepStaleCacheSnapshots(cacheRoot = path.join(env.EXECUTI
     return 0; // no cache yet
   }
   const stale = entries.filter((name) => /\.tmp-\d+-[0-9a-f]+$/.test(name));
-  await Promise.all(stale.map((name) => fs.promises.rm(path.join(cacheRoot, name), { recursive: true, force: true })));
+  await Promise.all(
+    stale.map((name) =>
+      fs.promises.rm(path.join(cacheRoot, name), { recursive: true, force: true }),
+    ),
+  );
   return stale.length;
+}
+
+/**
+ * A project with variants needs one per run, and only a declared one; a
+ * project without them takes none. Checked at trigger time so a typo is a 400
+ * now rather than a suite running against the wrong target minutes later.
+ */
+export function assertVariantAllowed(
+  project: ProjectConfig | undefined,
+  variant: string | undefined,
+): void {
+  const declared = project?.variants ?? [];
+  const name = project?.displayName ?? 'This project';
+  if (declared.length === 0) {
+    if (variant) {
+      throw new ValidationError(
+        `${name} declares no variants, so a run cannot name one ('${variant}').`,
+        'VARIANT_NOT_DECLARED',
+      );
+    }
+    return;
+  }
+  if (!variant) {
+    throw new ValidationError(
+      `${name} declares variants; pick one of: ${declared.join(', ')}.`,
+      'VARIANT_REQUIRED',
+    );
+  }
+  if (!declared.includes(variant)) {
+    throw new ValidationError(
+      `Unknown variant '${variant}'. Declared: ${declared.join(', ')}.`,
+      'VARIANT_UNKNOWN',
+    );
+  }
 }

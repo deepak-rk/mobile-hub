@@ -14,6 +14,8 @@ export interface ExecutionRun {
   deviceUdid: string;
   project: string;
   branch: string;
+  /** Null when the project declares no variants (and on runs predating them). */
+  variant?: string | null;
   suite: string;
   triggeredBy: string;
   status: RunStatus;

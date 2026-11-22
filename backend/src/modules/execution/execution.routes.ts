@@ -22,7 +22,10 @@ import type { JwtPayload } from 'fastify-auth-kit';
 import { ForbiddenError, NotFoundError, ValidationError } from '../../common/errors/app-error';
 import { REPORT_CSP_DIRECTIVES } from '../../common/content-security-policy';
 
-const commandSchema = z.object({ command: z.string().min(1), args: z.array(z.string()).default([]) });
+const commandSchema = z.object({
+  command: z.string().min(1),
+  args: z.array(z.string()).default([]),
+});
 
 // Every filter optional; an empty string means "not filtering" (the frontend
 // can send a cleared field), same as the unvalidated reads this replaced.
@@ -41,6 +44,7 @@ const triggerBody = z.object({
   buildId: z.string().optional(),
   project: z.string().min(1),
   branch: z.string().min(1),
+  variant: z.string().min(1).max(64).optional(),
   suite: z.string().min(1),
   // Both optional now: a configured project already declares how it installs
   // and runs, so making the operator retype it was the config not being used.
@@ -99,10 +103,29 @@ export const executionRoutes: FastifyPluginAsync = async (app) => {
     // narrowed rather than asserted.
     const declared = Object.values(app.config.projects);
     const historical = await ExecutionRun.distinct('project');
-    const byId = new Map(declared.map((p) => [p.id, { id: p.id, displayName: p.displayName, declared: true }]));
+    // platforms/variants are what the trigger form needs to offer the right
+    // devices and a variant picker; empty for a name seen only in history.
+    const byId = new Map(
+      declared.map((p) => [
+        p.id,
+        {
+          id: p.id,
+          displayName: p.displayName,
+          declared: true,
+          platforms: p.platforms,
+          variants: p.variants,
+        },
+      ]),
+    );
     for (const name of historical) {
       if (typeof name === 'string' && name && !byId.has(name)) {
-        byId.set(name, { id: name, displayName: name, declared: false });
+        byId.set(name, {
+          id: name,
+          displayName: name,
+          declared: false,
+          platforms: [],
+          variants: [],
+        });
       }
     }
     const projects = [...byId.values()].sort((a, b) => a.displayName.localeCompare(b.displayName));
@@ -126,11 +149,17 @@ export const executionRoutes: FastifyPluginAsync = async (app) => {
     const { refresh, branch } = query.data;
     const project = app.config.projects[projectId];
     if (!project) {
-      throw new NotFoundError(`No project '${projectId}' is declared in config.`, 'PROJECT_NOT_CONFIGURED');
+      throw new NotFoundError(
+        `No project '${projectId}' is declared in config.`,
+        'PROJECT_NOT_CONFIGURED',
+      );
     }
 
     try {
-      const suites = await discoverSuites(projectId, project.automation, { refresh: Boolean(refresh), branch });
+      const suites = await discoverSuites(projectId, project.automation, {
+        refresh: Boolean(refresh),
+        branch,
+      });
       return { suites };
     } catch (err) {
       if (err instanceof SuiteDiscoveryError) {
@@ -156,7 +185,10 @@ export const executionRoutes: FastifyPluginAsync = async (app) => {
     const { refresh } = req.query as { refresh?: string };
     const project = app.config.projects[projectId];
     if (!project) {
-      throw new NotFoundError(`No project '${projectId}' is declared in config.`, 'PROJECT_NOT_CONFIGURED');
+      throw new NotFoundError(
+        `No project '${projectId}' is declared in config.`,
+        'PROJECT_NOT_CONFIGURED',
+      );
     }
     if (!project.automation.repoUrl) {
       return { branches: [], unavailable: 'This project has no automation.repoUrl configured.' };
@@ -192,7 +224,8 @@ export const executionRoutes: FastifyPluginAsync = async (app) => {
       }
       // A declared project's own automation block wins over the org default —
       // that per-project override is the entire point of declaring one.
-      const automation = app.config.projects[body.data.project]?.automation ?? app.config.automation;
+      const project = app.config.projects[body.data.project];
+      const automation = project?.automation ?? app.config.automation;
       // Config decides how to install and run unless this trigger overrode it.
       // A busy device no longer 409s here — triggerExecutionRun queues the run
       // instead (dispatchQueuedRuns starts it once the device frees up).
@@ -206,6 +239,7 @@ export const executionRoutes: FastifyPluginAsync = async (app) => {
         { ...body.data, setup, run: runCommand, triggeredBy: req.user.sub },
         automation,
         app.config.appium,
+        project,
       );
       return reply.status(201).send(run);
     },
@@ -235,7 +269,8 @@ export const executionRoutes: FastifyPluginAsync = async (app) => {
       const original = await getExecutionRun(id);
       if (!original) throw new NotFoundError('Execution run not found');
 
-      const automation = app.config.projects[original.project]?.automation ?? app.config.automation;
+      const project = app.config.projects[original.project];
+      const automation = project?.automation ?? app.config.automation;
       const setup = resolveInstallCommand(automation) ?? undefined;
       const runCommand = resolveRunCommand(automation, original.suite);
 
@@ -246,6 +281,7 @@ export const executionRoutes: FastifyPluginAsync = async (app) => {
           buildId: original.buildId?.toString(),
           project: original.project,
           branch: original.branch,
+          variant: original.variant ?? undefined,
           suite: original.suite,
           setup,
           run: runCommand,
@@ -253,6 +289,7 @@ export const executionRoutes: FastifyPluginAsync = async (app) => {
         },
         automation,
         app.config.appium,
+        project,
       );
       return reply.status(201).send(run);
     },
@@ -287,7 +324,9 @@ export const executionRoutes: FastifyPluginAsync = async (app) => {
     const prepared = download
       ? reply.header('Content-Disposition', `attachment; filename="run-${id}.log"`)
       : reply;
-    return prepared.header('Content-Type', 'text/plain; charset=utf-8').send(fs.createReadStream(run.logPath));
+    return prepared
+      .header('Content-Type', 'text/plain; charset=utf-8')
+      .send(fs.createReadStream(run.logPath));
   });
 
   /**
@@ -348,7 +387,9 @@ export const executionRoutes: FastifyPluginAsync = async (app) => {
     // working in dev, where CORS reflects any origin. Only "null" is allowed
     // and never with credentials: the route is already unauthenticated, so
     // this reveals nothing a plain GET could not.
-    return reply.header('access-control-allow-origin', 'null').sendFile(relativePath, run.reportPath);
+    return reply
+      .header('access-control-allow-origin', 'null')
+      .sendFile(relativePath, run.reportPath);
   });
 
   app.post('/:id/cancel', { preHandler: app.requireRole('operator', 'admin') }, async (req) => {

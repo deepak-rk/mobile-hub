@@ -62,6 +62,8 @@ export interface IExecutionRun extends Document {
   buildId: Types.ObjectId | null;
   project: string;
   branch: string;
+  /** The project variant this run targets; null when the project declares none. */
+  variant: string | null;
   suite: string;
   triggeredBy: string;
   status: RunStatus;
@@ -201,6 +203,7 @@ const executionRunSchema = new Schema<IExecutionRun>(
     buildId: { type: Schema.Types.ObjectId, ref: 'Build', default: null },
     project: { type: String, required: true, index: true },
     branch: { type: String, required: true },
+    variant: { type: String, default: null },
     suite: { type: String, required: true },
     triggeredBy: { type: String, required: true },
     status: {

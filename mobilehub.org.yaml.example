@@ -75,15 +75,23 @@ automation:
 projects:
   demo-app:
     displayName: Demo App
-    platform: android
+    # The platforms this app ships on. A run's platform is its device's, and
+    # the trigger form only offers devices on these. Omit to allow any.
+    platforms: [android, ios]
+    # Optional run dimension: one build, several targets (brand, market,
+    # config). When declared, every run picks one and the runner gets it as
+    # VARIANT. Omit it and runs have no variant.
+    # variants: [brand-a, brand-b]
     automation:
       # This project has its own repo; everything else (runner, framework,
       # configPath, testDir) is inherited from the org defaults above.
       repoUrl: https://github.com/example/demo-app-automation.git
 
+  # Most deployments declare one app, and the trigger form then skips the
+  # project picker. A second app is optional.
   checkout:
     displayName: Checkout
-    platform: ios
+    platforms: [ios]
     automation:
       repoUrl: https://github.com/example/checkout-automation.git
       testDir: e2e

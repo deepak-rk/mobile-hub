@@ -49,6 +49,7 @@ export function TriggerRunForm() {
   // default branch rather than assuming `main`.
   const [branchChosen, setBranchChosen] = useState(false);
   const [suite, setSuite] = useState('');
+  const [variant, setVariant] = useState('');
   // Host + udid (`deviceKey`), not a bare udid: `emulator-5554` on two hosts
   // is two devices, and a udid-keyed picker would select both as one.
   const [selectedDeviceKey, setSelectedDeviceKey] = useState('');
@@ -63,6 +64,17 @@ export function TriggerRunForm() {
   // build the commands. One known only from run history cannot, and still
   // needs a command typed in.
   const configuredProject = projects?.find((p) => p.id === project)?.declared ?? false;
+  // One app per deployment: only declared projects are offered. Names that
+  // exist only in run history stay in analytics filters, not here, since a
+  // run against one would fall back to org defaults it never declared.
+  const declaredProjects = projects?.filter((p) => p.declared) ?? [];
+  const onlyProject = declaredProjects.length === 1 ? declaredProjects[0] : undefined;
+  useEffect(() => {
+    if (onlyProject && project === '') setProject(onlyProject.id);
+  }, [onlyProject, project]);
+  const selectedProject = projects?.find((p) => p.id === project);
+  const variants = selectedProject?.variants ?? [];
+  const platforms = selectedProject?.platforms ?? [];
   // Above the early returns below, not beside the field it feeds: hooks must
   // run in the same order on every render, and the sign-in and role guards
   // return before that point.
@@ -126,8 +138,13 @@ export function TriggerRunForm() {
 
   // Only devices that can actually take a run — the backend rejects a locked
   // device with 409, so offering one would just produce a confusing failure.
+  // and only on a platform the app ships on: the backend rejects any other.
   const availableDevices = devices?.filter(
-    (d) => !d.lock && d.status !== 'offline' && d.status !== 'unreachable',
+    (d) =>
+      !d.lock &&
+      d.status !== 'offline' &&
+      d.status !== 'unreachable' &&
+      (platforms.length === 0 || platforms.includes(d.platform)),
   );
 
   function applyPreset(id: string) {
@@ -138,6 +155,7 @@ export function TriggerRunForm() {
     setBranch(preset.branch);
     setBranchChosen(true);
     setSuite(preset.suite);
+    setVariant(preset.variant ?? '');
     setSetupCmd(preset.setupCmd);
     setRunCmd(preset.runCmd);
     // Resolved against every device, not just the available ones, so a legacy
@@ -160,6 +178,7 @@ export function TriggerRunForm() {
       name,
       project: project.trim(),
       branch: branch.trim(),
+      ...(variant ? { variant } : {}),
       suite: suite.trim(),
       machineId: device?.machineId ?? '',
       deviceUdid: device?.udid ?? '',
@@ -191,6 +210,9 @@ export function TriggerRunForm() {
         deviceUdid: device.udid,
         project: project.trim(),
         branch: branch.trim(),
+        // Only sent for a project that declares variants; a stale value from
+        // a preset or another project would be a 400.
+        variant: variants.includes(variant) ? variant : undefined,
         suite: suite.trim(),
         setup: parseCommand(setupCmd) ?? undefined,
         // Omitted rather than sent empty, so the backend falls back to the
@@ -283,7 +305,14 @@ export function TriggerRunForm() {
                   dropdown with nothing in it: on a fresh install there are no
                   projects yet, and an empty select would block the very first
                   run. Free text is the honest fallback there. */}
-              {projects && projects.length > 0 ? (
+              {onlyProject && project === onlyProject.id ? (
+                <input
+                  id="project"
+                  className={styles.select}
+                  value={onlyProject.displayName}
+                  readOnly
+                />
+              ) : declaredProjects.length > 0 ? (
                 <select
                   id="project"
                   className={styles.select}
@@ -292,13 +321,9 @@ export function TriggerRunForm() {
                   onChange={(e) => setProject(e.target.value)}
                 >
                   <option value="">Select a project…</option>
-                  {projects.map((p) => (
+                  {declaredProjects.map((p) => (
                     <option key={p.id} value={p.id}>
-                      {/* A project seen only in run history isn't configured,
-                          so its automation falls back to org defaults — worth
-                          saying, since that decides whether a repo gets cloned. */}
                       {p.displayName}
-                      {p.declared ? '' : ' (not configured)'}
                     </option>
                   ))}
                 </select>
@@ -372,6 +397,30 @@ export function TriggerRunForm() {
               {branchHint ? <span className={styles.hint}>{branchHint}</span> : null}
             </div>
           </div>
+
+          {variants.length > 0 ? (
+            <div className={styles.row}>
+              <div className={styles.field}>
+                <label className={styles.label} htmlFor="variant">
+                  Variant
+                </label>
+                <select
+                  id="variant"
+                  className={styles.select}
+                  value={variants.includes(variant) ? variant : ''}
+                  required
+                  onChange={(e) => setVariant(e.target.value)}
+                >
+                  <option value="">Select a variant…</option>
+                  {variants.map((v) => (
+                    <option key={v} value={v}>
+                      {v}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+          ) : null}
 
           <div className={styles.row}>
             <div className={styles.field}>

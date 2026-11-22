@@ -294,6 +294,7 @@ export function RunDetailPage() {
                       ? [{ term: 'Failure', value: FAILURE_KIND_LABELS[run.failureKind] }]
                       : []),
                     { term: 'Branch', value: <Mono>{run.branch}</Mono> },
+                    ...(run.variant ? [{ term: 'Variant', value: <Mono>{run.variant}</Mono> }] : []),
                     { term: 'Suite', value: <Mono>{run.suite}</Mono> },
                     {
                       term: 'Device',

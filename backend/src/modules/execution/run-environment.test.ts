@@ -12,6 +12,12 @@ afterEach(() => {
 });
 
 describe('buildRunEnvironment', () => {
+  it('passes the run variant as VARIANT, and a configured VARIANT never pins a run without one', () => {
+    expect(buildRunEnvironment({ configured: {}, variant: 'beta' }).VARIANT).toBe('beta');
+    expect(buildRunEnvironment({ configured: { VARIANT: 'pinned' }, variant: 'beta' }).VARIANT).toBe('beta');
+    expect(buildRunEnvironment({ configured: { VARIANT: 'pinned' } }).VARIANT).toBeUndefined();
+  });
+
   it('does not pass through an arbitrary parent variable', () => {
     process.env.MH_FAKE_SECRET = 'super-secret-token';
     const env = buildRunEnvironment({ configured: {} });

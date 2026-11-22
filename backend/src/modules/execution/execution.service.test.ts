@@ -6,7 +6,7 @@ import { execSync } from 'child_process';
 import { Types } from 'mongoose';
 import { ExecutionRun } from './execution-run.model';
 import { env } from '../../config/env';
-import { PLATFORM_DEFAULTS } from '../../config/org-config.schema';
+import { PLATFORM_DEFAULTS, resolveProjects } from '../../config/org-config.schema';
 import * as devicesService from '../devices/devices.service';
 import {
   triggerExecutionRun,
@@ -174,6 +174,51 @@ const baseInput = {
   suite: 'smoke',
   triggeredBy: 'user-1',
 };
+
+describe('triggerExecutionRun: project platforms and variants', () => {
+  const projects = resolveProjects(
+    {
+      iosOnly: { platforms: ['ios'] },
+      branded: { variants: ['alpha', 'beta'] },
+      plain: {},
+    },
+    PLATFORM_DEFAULTS.automation,
+  );
+  const runCmd = { command: 'node', args: ['-e', 'process.exit(0)'] };
+
+  function trigger(project: keyof typeof projects, variant?: string) {
+    return triggerExecutionRun(
+      { ...baseInput, project, variant, run: runCmd },
+      projects[project].automation,
+      undefined,
+      projects[project],
+    );
+  }
+
+  it('rejects a device on a platform the project does not declare, before creating a run', async () => {
+    const create = vi.spyOn(ExecutionRun, 'create');
+    // The shared getDevice stub returns an Android device.
+    await expect(trigger('iosOnly')).rejects.toMatchObject({ code: 'PLATFORM_NOT_SUPPORTED', statusCode: 400 });
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['branded', undefined, 'VARIANT_REQUIRED'],
+    ['branded', 'gamma', 'VARIANT_UNKNOWN'],
+    ['plain', 'alpha', 'VARIANT_NOT_DECLARED'],
+  ] as const)('%s with variant %s is a 400 %s', async (project, variant, code) => {
+    const create = vi.spyOn(ExecutionRun, 'create');
+    await expect(trigger(project, variant)).rejects.toMatchObject({ code, statusCode: 400 });
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  it('stores a declared variant on the run', async () => {
+    const create = vi.spyOn(ExecutionRun, 'create').mockResolvedValue(fakeRunDoc() as never);
+    vi.spyOn(devicesService, 'acquireLock').mockResolvedValue(null);
+    await trigger('branded', 'beta');
+    expect((create.mock.calls[0][0] as { variant: string | null }).variant).toBe('beta');
+  });
+});
 
 describe('triggerExecutionRun', () => {
   it('leaves the run queued and never starts orchestration if the lock is unavailable', async () => {

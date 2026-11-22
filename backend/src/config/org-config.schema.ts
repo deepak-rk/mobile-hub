@@ -37,8 +37,14 @@ const buildConfigSchema = z
   .object({
     provider: buildProviderNameSchema.optional(),
     url: z.object({}).strict().optional(),
-    nexus: z.object({ baseUrl: z.string().optional(), repository: z.string().optional() }).strict().optional(),
-    s3: z.object({ bucket: z.string().optional(), region: z.string().optional() }).strict().optional(),
+    nexus: z
+      .object({ baseUrl: z.string().optional(), repository: z.string().optional() })
+      .strict()
+      .optional(),
+    s3: z
+      .object({ bucket: z.string().optional(), region: z.string().optional() })
+      .strict()
+      .optional(),
     webhook: z.object({ endpoint: z.string().optional() }).strict().optional(),
     retention: buildRetentionConfigSchema.optional(),
   })
@@ -63,7 +69,9 @@ const deviceConfigSchema = z
   .strict();
 
 /** A command as argv, never a shell string — nothing here is shell-interpreted. */
-const commandSchema = z.object({ command: z.string().min(1), args: z.array(z.string()).default([]) }).strict();
+const commandSchema = z
+  .object({ command: z.string().min(1), args: z.array(z.string()).default([]) })
+  .strict();
 
 const appiumConfigSchema = z
   .object({
@@ -140,10 +148,27 @@ const automationConfigSchema = z
  * point: the platform adapts to an organisation's conventions rather than
  * demanding every project restate them (root CLAUDE.md §11).
  */
+const platformSchema = z.enum(['android', 'ios']);
+/** Same conservative charset as a branch name: it reaches the runner as VARIANT. */
+const variantIdSchema = z
+  .string()
+  .regex(
+    /^[A-Za-z0-9._-]{1,64}$/,
+    'A variant id may contain only letters, digits, ".", "_" and "-".',
+  );
+
 const projectConfigSchema = z
   .object({
     displayName: z.string().optional(),
-    platform: z.enum(['android', 'ios']).optional(),
+    // The platforms this app ships on. A run's platform is its device's
+    // platform; declaring this rejects a run on a platform the app lacks.
+    platforms: z.array(platformSchema).min(1).optional(),
+    /** @deprecated single-platform form, read as `platforms: [platform]`. */
+    platform: platformSchema.optional(),
+    // Optional run dimension (one build, several brand/market/config
+    // targets). When declared, every run picks one and the runner gets it as
+    // VARIANT; when absent, runs have no variant.
+    variants: z.array(variantIdSchema).min(1).optional(),
     automation: automationConfigSchema.optional(),
   })
   .strict();
@@ -202,10 +227,15 @@ export interface AutomationConfig {
   env: Record<string, string>;
 }
 
+export type Platform = 'android' | 'ios';
+
 export interface ProjectConfig {
   id: string;
   displayName: string;
-  platform: 'android' | 'ios' | null;
+  /** Empty means not declared: any platform is accepted. */
+  platforms: Platform[];
+  /** Empty means the project has no variant dimension. */
+  variants: string[];
   /** Fully resolved: the project's own overrides merged over the org defaults. */
   automation: AutomationConfig;
 }
@@ -232,7 +262,8 @@ export function resolveProjects(
       // A project that doesn't name itself is shown by its id, which is what
       // an operator typed into the trigger form anyway.
       displayName: project.displayName ?? id,
-      platform: project.platform ?? null,
+      platforms: project.platforms ?? (project.platform ? [project.platform] : []),
+      variants: [...new Set(project.variants ?? [])],
       automation: normalizeAutomation({ ...automation, ...stripUndefined(project.automation) }),
     };
   }
@@ -264,7 +295,9 @@ export function normalizeAutomation(automation: AutomationConfig): AutomationCon
  */
 function stripUndefined<T extends object>(source: T | undefined): Partial<T> {
   if (!source) return {};
-  return Object.fromEntries(Object.entries(source).filter(([, v]) => v !== undefined)) as Partial<T>;
+  return Object.fromEntries(
+    Object.entries(source).filter(([, v]) => v !== undefined),
+  ) as Partial<T>;
 }
 
 export const PLATFORM_DEFAULTS: EffectiveConfig = {

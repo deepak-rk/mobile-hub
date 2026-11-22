@@ -84,6 +84,8 @@ export interface RunEnvironmentInput {
   appPath?: string;
   /** This run's id, so a suite can tag its own artifacts with it. */
   runId?: string;
+  /** The project variant, passed as VARIANT. */
+  variant?: string | null;
 }
 
 /** The Appium driver each platform needs — what WDIO sends as `appium:automationName`. */
@@ -137,6 +139,9 @@ export function buildRunEnvironment(input: RunEnvironmentInput): NodeJS.ProcessE
   }
   if (input.appPath) env.APP_PATH = input.appPath;
   if (input.runId) env.RUN_ID = input.runId;
+  // Per-run, like the values above: a configured VARIANT must not pin every run.
+  if (input.variant) env.VARIANT = input.variant;
+  else delete env.VARIANT;
   return env;
 }
 

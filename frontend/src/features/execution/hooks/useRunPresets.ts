@@ -8,6 +8,7 @@ export interface RunPreset {
   name: string;
   project: string;
   branch: string;
+  variant?: string;
   suite: string;
   /**
    * Host of the saved device. Optional only because presets saved before

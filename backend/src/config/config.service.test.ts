@@ -120,7 +120,42 @@ describe('project resolution', () => {
     await expect(loadEffectiveConfig(orgPath, path.join(os.tmpdir(), 'missing.yaml'))).rejects.toThrow(ConfigError);
   });
 
+  it('reads platforms, the legacy single platform, and de-duplicated variants', () => {
+    const resolved = resolveProjects(
+      {
+        both: { platforms: ['android', 'ios'], variants: ['a', 'b', 'a'] },
+        legacy: { platform: 'ios' },
+        none: {},
+      },
+      PLATFORM_DEFAULTS.automation,
+    );
+    expect(resolved.both).toMatchObject({ platforms: ['android', 'ios'], variants: ['a', 'b'] });
+    expect(resolved.legacy).toMatchObject({ platforms: ['ios'], variants: [] });
+    expect(resolved.none).toMatchObject({ platforms: [], variants: [] });
+  });
+
   it('returns nothing when no projects are declared', () => {
     expect(resolveProjects(undefined, PLATFORM_DEFAULTS.automation)).toEqual({});
   });
 });
+
+/**
+ * The example files are what a new deployment copies, so they must load
+ * through the real loader. Config written from memory rather than from the
+ * schema is how a reference farm ended up with ~30 wrong values; this keeps the
+ * examples honest every time the schema changes.
+ */
+describe('example config files', () => {
+  const repoRoot = path.resolve(__dirname, '../../..');
+
+  it('load through the real loader and resolve as documented', async () => {
+    const config = await loadEffectiveConfig(
+      path.join(repoRoot, 'mobilehub.org.yaml.example'),
+      path.join(repoRoot, 'mobilehub.project.yaml.example'),
+    );
+    expect(config.automation).toMatchObject({ runner: 'wdio', framework: 'cucumber', testDir: 'e2e' });
+    expect(config.projects['demo-app']).toMatchObject({ platforms: ['android', 'ios'], variants: [] });
+    expect(config.projects['checkout'].platforms).toEqual(['ios']);
+  });
+});
+

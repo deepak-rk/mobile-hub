@@ -92,6 +92,10 @@ export interface ProjectOption {
    * one silently falls back to the org defaults, which the picker says out loud.
    */
   declared: boolean;
+  /** Platforms the app ships on; empty means any. Filters the device picker. */
+  platforms: ('android' | 'ios')[];
+  /** Optional run dimension; when non-empty every run picks one. */
+  variants: string[];
 }
 
 export function useProjects() {
@@ -178,6 +182,8 @@ export interface TriggerRunInput {
   deviceUdid: string;
   project: string;
   branch: string;
+  /** Required when the project declares variants. */
+  variant?: string;
   suite: string;
   setup?: { command: string; args: string[] };
   /**
