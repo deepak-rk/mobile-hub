@@ -1,7 +1,7 @@
 export type RunStatus = 'queued' | 'preparing' | 'running' | 'passed' | 'failed' | 'cancelled';
 
 export interface RunStage {
-  name: 'pulling' | 'restoring_cache' | 'installing' | 'execute' | 'collecting';
+  name: 'pulling' | 'restoring_cache' | 'installing' | 'app_preflight' | 'execute' | 'collecting';
   status: 'pending' | 'running' | 'done' | 'error' | 'skipped';
   startedAt: string | null;
   endedAt: string | null;

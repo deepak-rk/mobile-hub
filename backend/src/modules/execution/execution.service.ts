@@ -18,6 +18,7 @@ import { assertDriverInstalled, ensureAppiumServer, closeActiveSessions } from '
 import { buildRunEnvironment, createRedactor } from './run-environment';
 import { classifySuite } from './automation-commands';
 import { checkoutWorktree, cleanupSharedRepos } from './repo-checkout';
+import { ensureAppOnDevice } from './app-preflight';
 import {
   summarizeRunResults,
   summarizeAllureResults,
@@ -151,6 +152,8 @@ export async function triggerExecutionRun(
         ? { name: 'restoring_cache', status: 'pending' }
         : { name: 'restoring_cache', status: 'skipped', error: NOT_IMPLEMENTED_STAGE_ERROR },
       { name: 'installing', status: input.setup ? 'pending' : 'skipped' },
+      // Only a run that names a build has an app to put on the device.
+      { name: 'app_preflight', status: input.buildId ? 'pending' : 'skipped' },
       { name: 'execute', status: 'pending' },
       // Everything after the suite: keeping results, the report, closing the
       // Appium session, releasing the device, removing the workspace. Its own
@@ -948,6 +951,29 @@ async function runExecution(
         releasePrepSlot();
       }
       await saveCacheIfMissing(cwd, cacheDir);
+    }
+
+    if (run.buildId && !cancelledRuns.has(runId)) {
+      await setStage(run, 'app_preflight', 'running');
+      const preflight = await ensureAppOnDevice({
+        buildId: run.buildId.toString(),
+        machineId: run.machineId,
+        udid: run.deviceUdid,
+        triggeredBy: run.triggeredBy,
+        log: (line) => {
+          logStream.write(line);
+          publishExecutionEvent(runId, { type: 'log', line });
+        },
+        isCancelled: () => cancelledRuns.has(runId),
+      });
+      if (!preflight.ok) {
+        await setStage(run, 'app_preflight', 'error', preflight.message);
+        if (preflight.errorClass === 'cancelled') await setStatus(run, 'cancelled');
+        // Not the app's fault either way: the build or the install is the problem.
+        else await failRun(run, 'infra', preflight.errorClass);
+        return;
+      }
+      await setStage(run, 'app_preflight', 'done');
     }
 
     if (cancelledRuns.has(runId)) {

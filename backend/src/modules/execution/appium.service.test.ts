@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import {
+  assertDriverInstalled,
   closeActiveSessions,
   ensureRemoteAppiumServer,
   getPendingAppiumRequestsForMachine,
@@ -308,5 +309,17 @@ describe('closeActiveSessions — Appium 2 and shared servers', () => {
     const deleted = fetchSpy.mock.calls.filter(([, o]) => (o as RequestInit | undefined)?.method === 'DELETE').map(([u]) => u as string);
     expect(deleted.some((u) => u.endsWith('/session/mine'))).toBe(true);
     expect(deleted.some((u) => u.endsWith('/session/theirs'))).toBe(false);
+  });
+});
+
+describe('assertDriverInstalled', () => {
+  it('reports a driver listing that could not run as such, not as a missing driver', async () => {
+    const path = process.env.PATH;
+    process.env.PATH = ''; // `appium` cannot be found: the listing itself fails
+    try {
+      await expect(assertDriverInstalled('android')).rejects.toThrow(/Could not check Appium's installed drivers/);
+    } finally {
+      process.env.PATH = path;
+    }
   });
 });

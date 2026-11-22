@@ -157,8 +157,16 @@ export async function assertDriverInstalled(platform: string): Promise<void> {
     onStdout: collect,
     onStderr: collect,
   });
-  await listed.result;
+  const outcome = await listed.result;
 
+  // A listing that timed out or crashed says nothing about the driver; it
+  // used to be reported as "driver not installed", sending people to
+  // reinstall a driver that was there all along.
+  if (!output.includes(driver) && !supervisor.isSuccess(outcome)) {
+    throw new AppiumUnavailableError(
+      `Could not check Appium's installed drivers (\`appium driver list\` ${supervisor.describeOutcome(outcome)}).`,
+    );
+  }
   if (!output.includes(driver)) {
     throw new AppiumUnavailableError(
       `Appium has no '${driver}' driver installed, which ${platform} sessions require. ` +

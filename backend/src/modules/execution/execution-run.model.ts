@@ -7,7 +7,7 @@ import type { TestSummary } from './allure-summary';
  */
 export type ITestSummary = TestSummary;
 
-export type StageName = 'pulling' | 'restoring_cache' | 'installing' | 'execute' | 'collecting';
+export type StageName = 'pulling' | 'restoring_cache' | 'installing' | 'app_preflight' | 'execute' | 'collecting';
 export type StageStatus = 'pending' | 'running' | 'done' | 'error' | 'skipped';
 export type RunStatus = 'queued' | 'preparing' | 'running' | 'passed' | 'failed' | 'cancelled';
 
@@ -42,6 +42,7 @@ export const ERROR_CLASSES = [
   'network_timeout',
   'appium_session',
   'build_missing',
+  'install_failed',
   'test_assertion',
   'no_tests_matched',
   'run_timeout',
@@ -217,7 +218,7 @@ const runCommandsSchema = new Schema<IRunCommands>(
 
 const stageSchema = new Schema<IStage>(
   {
-    name: { type: String, enum: ['pulling', 'restoring_cache', 'installing', 'execute', 'collecting'], required: true },
+    name: { type: String, enum: ['pulling', 'restoring_cache', 'installing', 'app_preflight', 'execute', 'collecting'], required: true },
     status: { type: String, enum: ['pending', 'running', 'done', 'error', 'skipped'], default: 'pending' },
     startedAt: { type: Date, default: null },
     endedAt: { type: Date, default: null },

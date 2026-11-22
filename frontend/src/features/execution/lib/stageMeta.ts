@@ -10,6 +10,7 @@ export const STAGE_LABELS: Record<RunStage['name'], string> = {
   pulling: 'Pull repository',
   restoring_cache: 'Restore cache',
   installing: 'Install dependencies',
+  app_preflight: 'Put app on device',
   execute: 'Execute suite',
   collecting: 'Collect results & clean up',
 };

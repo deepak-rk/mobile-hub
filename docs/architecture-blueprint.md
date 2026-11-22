@@ -399,6 +399,8 @@ installing       → npm install (only if cache miss or package.json changed)
 execute          → invoke the test runner (wdio, appium, espresso, etc.)
 ```
 
+Implemented shape (2026-11-22) adds two stages: `app_preflight` before `execute` (put the run's build on the device through the install flow; skipped when the run names no build) and `collecting` after it (results, report, Appium session close, lock release, workspace removal).
+
 These map directly to the `stages` array on `ExecutionRun` (§4). The `restoring_cache` stage is where the cache key validation happens — a cache miss skips straight to `installing`.
 
 #### Workspace and cache directory layout

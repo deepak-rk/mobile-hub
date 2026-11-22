@@ -44,7 +44,7 @@ Orchestrate end-to-end mobile test runs: clone the automation repo, restore cach
   status: 'queued' | 'preparing' | 'running' | 'passed' | 'failed' | 'cancelled',
   stages: [
     {
-      name: 'pulling' | 'restoring_cache' | 'installing' | 'execute',
+      name: 'pulling' | 'restoring_cache' | 'installing' | 'app_preflight' | 'execute' | 'collecting',
       status: 'pending' | 'running' | 'done' | 'error',
       startedAt: Date | null,
       endedAt: Date | null,
