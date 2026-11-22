@@ -494,11 +494,29 @@ export function computeCacheKey(
  * as a hit. `saveCacheIfMissing` populates the cache after a successful
  * `setup` so the *next* run with the same key gets a real hit.
  */
+/**
+ * Copies `src` into `dest` one top-level entry at a time, checking
+ * `isCancelled` between entries. Returns false when it stopped early.
+ *
+ * A single recursive `fs.cp` of a node_modules tree took 34 s live and could
+ * not be interrupted, so a cancel landing during `restoring_cache` waited for
+ * the whole copy. Per-package granularity bounds that wait to one package.
+ */
+export async function copyDirCancellable(src: string, dest: string, isCancelled: () => boolean): Promise<boolean> {
+  await fs.promises.mkdir(dest, { recursive: true });
+  for (const entry of await fs.promises.readdir(src)) {
+    if (isCancelled()) return false;
+    await fs.promises.cp(path.join(src, entry), path.join(dest, entry), { recursive: true });
+  }
+  return !isCancelled();
+}
+
 async function restoreCache(
   run: IExecutionRun,
   repoDir: string,
   logStream: fs.WriteStream,
-): Promise<{ cacheDir: string | null }> {
+  isCancelled: () => boolean,
+): Promise<{ cacheDir: string | null; completed: boolean }> {
   const cacheKey = computeCacheKey(repoDir);
   run.cacheKey = cacheKey;
 
@@ -506,7 +524,7 @@ async function restoreCache(
     const line = 'restoring_cache: no package.json found — nothing to key a cache on\n';
     logStream.write(line);
     publishExecutionEvent(run.id as string, { type: 'log', line });
-    return { cacheDir: null };
+    return { cacheDir: null, completed: true };
   }
 
   const cacheDir = path.join(env.EXECUTIONS_DIR, '.cache', cacheKey);
@@ -519,8 +537,8 @@ async function restoreCache(
   logStream.write(line);
   publishExecutionEvent(run.id as string, { type: 'log', line });
 
-  if (hit) await fs.promises.cp(cacheDir, path.join(repoDir, 'node_modules'), { recursive: true });
-  return { cacheDir };
+  const completed = hit ? await copyDirCancellable(cacheDir, path.join(repoDir, 'node_modules'), isCancelled) : true;
+  return { cacheDir, completed };
 }
 
 /** The directory name a runner's Allure reporter writes, per docs/modules/execution.md. */
@@ -819,8 +837,14 @@ async function runExecution(
       await recordCommit(run, repoDir);
 
       await setStage(run, 'restoring_cache', 'running');
-      ({ cacheDir } = await restoreCache(run, repoDir, logStream));
+      const restored = await restoreCache(run, repoDir, logStream, () => cancelledRuns.has(runId));
+      cacheDir = restored.cacheDir;
       await run.save(); // persist cacheKey set inside restoreCache
+      if (!restored.completed) {
+        await setStage(run, 'restoring_cache', 'error', 'cancelled');
+        await setStatus(run, 'cancelled');
+        return;
+      }
       await setStage(run, 'restoring_cache', 'done');
     }
 

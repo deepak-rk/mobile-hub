@@ -23,6 +23,7 @@ import {
   isCompleteCache,
   CACHE_COMPLETE_MARKER,
   sweepStaleCacheSnapshots,
+  copyDirCancellable,
   OFFLINE_FAIL_FAST_MS,
 } from './execution.service';
 
@@ -862,5 +863,30 @@ describe('sweepStaleCacheSnapshots', () => {
 
   it('is a no-op when there is no cache directory yet', async () => {
     expect(await sweepStaleCacheSnapshots(path.join(os.tmpdir(), 'mh-does-not-exist-xyz'))).toBe(0);
+  });
+});
+
+describe('copyDirCancellable', () => {
+  let root: string;
+  beforeEach(() => {
+    root = fs.mkdtempSync(path.join(os.tmpdir(), 'mh-copy-'));
+    for (const pkg of ['a', 'b', 'c']) {
+      fs.mkdirSync(path.join(root, 'src', pkg), { recursive: true });
+      fs.writeFileSync(path.join(root, 'src', pkg, 'index.js'), pkg);
+    }
+  });
+  afterEach(() => fs.rmSync(root, { recursive: true, force: true }));
+
+  it('copies every entry when never cancelled', async () => {
+    expect(await copyDirCancellable(path.join(root, 'src'), path.join(root, 'dest'), () => false)).toBe(true);
+    expect(fs.readdirSync(path.join(root, 'dest')).sort()).toEqual(['a', 'b', 'c']);
+  });
+
+  // A cancel during restoring_cache used to wait out a 34 s copy.
+  it('stops between entries once cancelled, and reports it', async () => {
+    let checks = 0;
+    const done = await copyDirCancellable(path.join(root, 'src'), path.join(root, 'dest'), () => ++checks > 1);
+    expect(done).toBe(false);
+    expect(fs.readdirSync(path.join(root, 'dest'))).toHaveLength(1);
   });
 });
