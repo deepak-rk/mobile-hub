@@ -98,18 +98,6 @@ export async function getPendingUninstallsForMachine(machineId: string): Promise
   return pending;
 }
 
-/** UDIDs with an uninstall currently in flight — same "no lock held" lie this exists to fix, mirroring getActiveInstallUdids. */
-export async function getActiveUninstallUdids(): Promise<Set<string>> {
-  const runs = await UninstallRun.find({ 'targets.status': { $in: IN_FLIGHT_TARGET_STATUSES } });
-  const udids = new Set<string>();
-  for (const run of runs) {
-    for (const target of run.targets) {
-      if (IN_FLIGHT_TARGET_STATUSES.includes(target.status)) udids.add(target.deviceUdid);
-    }
-  }
-  return udids;
-}
-
 /**
  * The uninstall counterpart to `failAbandonedInstallTargets` — see that
  * function for the full reasoning. `queued` is excluded for the same reason:

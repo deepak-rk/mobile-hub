@@ -22,4 +22,10 @@ RUN mkdir -p /home/mobilehub/mobile-hub-executions /home/mobilehub/mobile-hub-bu
     && chown -R mobilehub:mobilehub /home/mobilehub
 USER mobilehub
 EXPOSE 3000
+# "Running" is not "serving": the process exists from the first instant,
+# but answers HTTP only once it has booted, and stops answering if wedged.
+# Node's own fetch, so no curl/wget is needed; the port follows API_PORT
+# like the server does.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
+  CMD ["node", "-e", "fetch('http://127.0.0.1:'+(process.env.API_PORT||3000)+'/health').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"]
 CMD ["node", "backend/dist/server.js"]

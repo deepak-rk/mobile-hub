@@ -51,7 +51,10 @@ services:
     ports:
       - "80:80"
     depends_on:
-      - backend
+      # Healthy, not merely started (see the HEALTHCHECK in backend/Dockerfile):
+      # otherwise nginx serves the UI while every /api call fails.
+      backend:
+        condition: service_healthy
 
 volumes:
   mongo_data:

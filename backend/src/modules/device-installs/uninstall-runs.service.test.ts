@@ -5,7 +5,6 @@ import {
   UnknownDeviceError,
   triggerUninstallRun,
   getPendingUninstallsForMachine,
-  getActiveUninstallUdids,
   getActiveUninstallCountForMachine,
   reportUninstallTargetProgress,
 } from './uninstall-runs.service';
@@ -82,25 +81,6 @@ describe('getPendingUninstallsForMachine', () => {
     const pending = await getPendingUninstallsForMachine('host-1');
 
     expect(pending).toEqual([{ uninstallRunId: 'run-1', deviceUdid: 'd1', packageName: 'com.example.app' }]);
-  });
-});
-
-describe('getActiveUninstallUdids', () => {
-  it('includes queued and uninstalling targets, excludes terminal ones', async () => {
-    vi.spyOn(UninstallRun, 'find').mockResolvedValue([
-      {
-        targets: [
-          { deviceUdid: 'd1', status: 'queued' },
-          { deviceUdid: 'd2', status: 'uninstalling' },
-          { deviceUdid: 'd3', status: 'done' },
-          { deviceUdid: 'd4', status: 'error' },
-        ],
-      },
-    ] as never);
-
-    const active = await getActiveUninstallUdids();
-
-    expect(active).toEqual(new Set(['d1', 'd2']));
   });
 });
 
