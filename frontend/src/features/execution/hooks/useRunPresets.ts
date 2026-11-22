@@ -9,6 +9,12 @@ export interface RunPreset {
   project: string;
   branch: string;
   suite: string;
+  /**
+   * Host of the saved device. Optional only because presets saved before
+   * device identity became host-scoped carry a udid alone — see
+   * `resolvePresetDevice` for how those still load.
+   */
+  machineId?: string;
   deviceUdid: string;
   setupCmd: string;
   runCmd: string;
@@ -16,6 +22,24 @@ export interface RunPreset {
 }
 
 export type RunPresetInput = Omit<RunPreset, 'id' | 'savedAt'>;
+
+/**
+ * The device a preset points at, or undefined when it can't be pinned down.
+ * A udid alone isn't a device (emulator serials repeat across hosts), so a
+ * legacy preset without a host resolves only when exactly one device has that
+ * udid — with two candidates it stays unselected rather than guessing a host.
+ */
+export function resolvePresetDevice<D extends { machineId: string; udid: string }>(
+  preset: Pick<RunPreset, 'machineId' | 'deviceUdid'>,
+  devices: readonly D[],
+): D | undefined {
+  if (!preset.deviceUdid) return undefined;
+  if (preset.machineId) {
+    return devices.find((d) => d.machineId === preset.machineId && d.udid === preset.deviceUdid);
+  }
+  const matches = devices.filter((d) => d.udid === preset.deviceUdid);
+  return matches.length === 1 ? matches[0] : undefined;
+}
 
 function readPresets(): RunPreset[] {
   try {

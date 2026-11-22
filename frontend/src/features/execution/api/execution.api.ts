@@ -11,6 +11,9 @@ export function isInFlight(status: ExecutionRun['status']): boolean {
 export interface RunFilters {
   status?: string;
   project?: string;
+  deviceUdid?: string;
+  /** Host-scopes `deviceUdid` — udids like `emulator-5554` repeat across hosts. */
+  machineId?: string;
 }
 
 /**

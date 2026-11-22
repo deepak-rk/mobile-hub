@@ -4,8 +4,8 @@ import { useSearchParamsState } from 'react-design-kit';
 const PROJECT_DEBOUNCE_MS = 300;
 
 /**
- * URL-synced project filter, backed by the same `project` query param
- * `GET /api/execution` already accepts server-side — filtering happens on
+ * URL-synced project and device filters, backed by the same `project` /
+ * `deviceUdid` / `machineId` query params `GET /api/execution` accepts server-side — filtering happens on
  * the backend, matching the same pattern `useDeviceFilters` established.
  *
  * There is no `status` filter here anymore: the pipeline page's Trigger /
@@ -22,6 +22,11 @@ const PROJECT_DEBOUNCE_MS = 300;
 export function useRunFilters() {
   const [urlProject, setUrlProject] = useSearchParamsState('project', '');
   const [project, setProjectInput] = useState(urlProject);
+  // Set by links into this page (the analytics device breakdowns), not typed,
+  // so not debounced. Host + udid together: a udid alone would merge every
+  // host's `emulator-5554` into one device's history.
+  const [deviceUdid, setDeviceUdid] = useSearchParamsState('deviceUdid', '');
+  const [machineId, setMachineId] = useSearchParamsState('machineId', '');
 
   useEffect(() => {
     const timer = setTimeout(() => setUrlProject(project), PROJECT_DEBOUNCE_MS);
@@ -32,5 +37,11 @@ export function useRunFilters() {
   return {
     project,
     setProject: setProjectInput,
+    deviceUdid,
+    machineId,
+    clearDevice: () => {
+      setDeviceUdid('');
+      setMachineId('');
+    },
   };
 }

@@ -234,13 +234,25 @@ function SuiteBreakdownTable({ rows, project }: { rows: SuiteBreakdown[]; projec
   );
 }
 
+/**
+ * The run list filtered to one device. Carries the host: a udid alone would
+ * also match every other host's device with the same serial (`emulator-5554`).
+ * Rows aggregated before analytics recorded a host have none, and link by
+ * udid only rather than not at all.
+ */
+function deviceRunsHref(udid: string, machineId: string | undefined): string {
+  const params = new URLSearchParams({ deviceUdid: udid });
+  if (machineId) params.set('machineId', machineId);
+  return `/execution?${params.toString()}`;
+}
+
 const deviceColumnHelper = createColumnHelper<DeviceBreakdown>();
 const deviceColumns = [
   deviceColumnHelper.accessor('deviceUdid', {
     header: 'Device',
     cell: (info) => (
       <>
-        <Link className={styles.rowLink} to={`/execution?deviceUdid=${encodeURIComponent(info.getValue())}`}>
+        <Link className={styles.rowLink} to={deviceRunsHref(info.getValue(), info.row.original.machineId)}>
           <Mono>{info.getValue()}</Mono>
         </Link>
         {info.row.original.machineId && <span className={styles.deviceHost}> · {info.row.original.machineId}</span>}
@@ -491,7 +503,7 @@ function DeviceUtilisation({ project, platform }: { project?: string; platform?:
               <span className={styles.rateBar}>
                 <ProgressBar value={r.utilisation * 100} />
               </span>
-              <Link className={styles.recentSuite} to={`/execution?deviceUdid=${encodeURIComponent(r.deviceUdid)}`}>
+              <Link className={styles.recentSuite} to={deviceRunsHref(r.deviceUdid, r.machineId)}>
                 <Mono>{r.deviceUdid}</Mono>
                 <span className={styles.deviceHost}> · {r.machineId}</span>
               </Link>

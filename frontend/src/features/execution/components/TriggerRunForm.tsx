@@ -5,8 +5,9 @@ import type { ApiError } from '@/services/api';
 import { icons, iconSize } from '@/lib/icons';
 import { useAuth } from '@/features/auth/useAuth';
 import { useDevices } from '@/features/devices/api/devices.api';
+import { deviceKey } from '@/features/devices/lib/deviceKey';
 import { useBranches, useProjects, useReloadConfig, useSuites, useTriggerRun } from '../api/execution.api';
-import { useRunPresets } from '../hooks/useRunPresets';
+import { resolvePresetDevice, useRunPresets } from '../hooks/useRunPresets';
 import styles from './TriggerRunForm.module.css';
 
 /** Splits a command string into argv without pretending to be a real shell. */
@@ -39,7 +40,9 @@ export function TriggerRunForm() {
   const [project, setProject] = useState('');
   const [branch, setBranch] = useState('main');
   const [suite, setSuite] = useState('');
-  const [deviceUdid, setDeviceUdid] = useState('');
+  // Host + udid (`deviceKey`), not a bare udid: `emulator-5554` on two hosts
+  // is two devices, and a udid-keyed picker would select both as one.
+  const [selectedDeviceKey, setSelectedDeviceKey] = useState('');
   const [setupCmd, setSetupCmd] = useState('');
   const [runCmd, setRunCmd] = useState('');
   const [formError, setFormError] = useState<string | null>(null);
@@ -107,18 +110,31 @@ export function TriggerRunForm() {
     setSuite(preset.suite);
     setSetupCmd(preset.setupCmd);
     setRunCmd(preset.runCmd);
-    // Only carry the device over if it's still eligible right now — a saved
-    // preset shouldn't silently point at a device that's since gone offline
-    // or been locked by someone else.
-    const stillAvailable = availableDevices?.some((d) => d.udid === preset.deviceUdid);
-    setDeviceUdid(stillAvailable ? preset.deviceUdid : '');
+    // Resolved against every device, not just the available ones, so a legacy
+    // udid-only preset can't look unique merely because the other host's
+    // device with that udid happens to be locked right now. Then only carried
+    // over if it's still eligible — a saved preset shouldn't silently point at
+    // a device that's since gone offline or been locked by someone else.
+    const device = resolvePresetDevice(preset, devices ?? []);
+    const stillAvailable = device && availableDevices?.some((d) => deviceKey(d) === deviceKey(device));
+    setSelectedDeviceKey(device && stillAvailable ? deviceKey(device) : '');
   }
 
   function onSavePreset(e: FormEvent) {
     e.preventDefault();
     const name = presetName.trim();
     if (!name) return;
-    savePreset({ name, project: project.trim(), branch: branch.trim(), suite: suite.trim(), deviceUdid, setupCmd, runCmd });
+    const device = devices?.find((d) => deviceKey(d) === selectedDeviceKey);
+    savePreset({
+      name,
+      project: project.trim(),
+      branch: branch.trim(),
+      suite: suite.trim(),
+      machineId: device?.machineId ?? '',
+      deviceUdid: device?.udid ?? '',
+      setupCmd,
+      runCmd,
+    });
     setPresetName('');
     setPresetDialogOpen(false);
   }
@@ -132,7 +148,7 @@ export function TriggerRunForm() {
     // still needs a command typed here, and the backend says so with a 400
     // naming the two ways out.
     const run = parseCommand(runCmd);
-    const device = devices?.find((d) => d.udid === deviceUdid);
+    const device = devices?.find((d) => deviceKey(d) === selectedDeviceKey);
     if (!device) {
       setFormError('Select a device.');
       return;
@@ -363,13 +379,13 @@ export function TriggerRunForm() {
               <select
                 id="device"
                 className={styles.select}
-                value={deviceUdid}
+                value={selectedDeviceKey}
                 required
-                onChange={(e) => setDeviceUdid(e.target.value)}
+                onChange={(e) => setSelectedDeviceKey(e.target.value)}
               >
                 <option value="">Select an available device…</option>
                 {availableDevices?.map((d) => (
-                  <option key={d._id} value={d.udid}>
+                  <option key={d._id} value={deviceKey(d)}>
                     {d.name} · {d.platform === 'ios' ? 'iOS' : 'Android'} {d.osVersion} · {d.machineId}
                   </option>
                 ))}

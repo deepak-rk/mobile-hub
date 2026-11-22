@@ -15,6 +15,7 @@ import {
   sweepFinishedWorkspaces,
   computeCacheKey,
   getActiveRunCountForMachine,
+  listExecutionRuns,
   getQueuePosition,
   dispatchQueuedRuns,
   setStatus,
@@ -632,6 +633,30 @@ describe('dispatchQueuedRuns', () => {
 
     expect(started).toBe(0);
     expect(releaseLock).toHaveBeenCalled();
+  });
+});
+
+describe('listExecutionRuns', () => {
+  function spyFind() {
+    const sort = vi.fn().mockResolvedValue([]);
+    const find = vi.spyOn(ExecutionRun, 'find').mockReturnValue({ sort } as never);
+    return find;
+  }
+
+  it('scopes a device filter to its host when machineId is given', async () => {
+    const find = spyFind();
+
+    await listExecutionRuns({ deviceUdid: 'emulator-5554', machineId: 'host-2' });
+
+    expect(find).toHaveBeenCalledWith({ deviceUdid: 'emulator-5554', machineId: 'host-2' });
+  });
+
+  it('treats empty filters as absent rather than matching the empty string', async () => {
+    const find = spyFind();
+
+    await listExecutionRuns({ project: '', deviceUdid: '', machineId: '' });
+
+    expect(find).toHaveBeenCalledWith({});
   });
 });
 

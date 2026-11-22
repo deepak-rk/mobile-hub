@@ -24,6 +24,17 @@ import { REPORT_CSP_DIRECTIVES } from '../../common/content-security-policy';
 
 const commandSchema = z.object({ command: z.string().min(1), args: z.array(z.string()).default([]) });
 
+// Every filter optional; an empty string means "not filtering" (the frontend
+// can send a cleared field), same as the unvalidated reads this replaced.
+const listQuery = z.object({
+  project: z.string().optional(),
+  status: z.string().optional(),
+  deviceUdid: z.string().optional(),
+  // Host-scopes `deviceUdid` — see `listExecutionRuns`.
+  machineId: z.string().optional(),
+  suite: z.string().optional(),
+});
+
 const triggerBody = z.object({
   machineId: z.string().min(1),
   deviceUdid: z.string().min(1),
@@ -57,8 +68,11 @@ export const executionRoutes: FastifyPluginAsync = async (app) => {
   });
 
   app.get('/', async (req) => {
-    const { project, status, deviceUdid, suite } = req.query as Record<string, string>;
-    const runs = await listExecutionRuns({ project, status, deviceUdid, suite });
+    const query = listQuery.safeParse(req.query);
+    if (!query.success) {
+      throw new ValidationError(query.error.message);
+    }
+    const runs = await listExecutionRuns(query.data);
     return Promise.all(runs.map(withQueuePosition));
   });
 

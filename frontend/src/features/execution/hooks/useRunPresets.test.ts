@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
-import { useRunPresets, type RunPresetInput } from './useRunPresets';
+import { resolvePresetDevice, useRunPresets, type RunPresetInput } from './useRunPresets';
 
 const STORAGE_KEY = 'mh_execution_presets';
 
@@ -9,6 +9,7 @@ const sample: RunPresetInput = {
   project: 'checkout-app',
   branch: 'main',
   suite: 'regression',
+  machineId: 'host-a',
   deviceUdid: 'emulator-5554',
   setupCmd: 'npm ci',
   runCmd: 'npx wdio run wdio.conf.js',
@@ -88,5 +89,46 @@ describe('useRunPresets', () => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify({ not: 'an array' }));
     const { result } = renderHook(() => useRunPresets());
     expect(result.current.presets).toEqual([]);
+  });
+});
+
+describe('resolvePresetDevice', () => {
+  const hostA = { machineId: 'host-a', udid: 'emulator-5554', name: 'A' };
+  const hostB = { machineId: 'host-b', udid: 'emulator-5554', name: 'B' };
+  const physical = { machineId: 'host-b', udid: 'R58N12345', name: 'Phone' };
+
+  it('matches host + udid, not the same udid on another host', () => {
+    expect(resolvePresetDevice({ machineId: 'host-b', deviceUdid: 'emulator-5554' }, [hostA, hostB])).toBe(hostB);
+  });
+
+  it('resolves nothing when the saved host no longer has that udid', () => {
+    expect(resolvePresetDevice({ machineId: 'host-c', deviceUdid: 'emulator-5554' }, [hostA, hostB])).toBeUndefined();
+  });
+
+  it('resolves a legacy udid-only preset when exactly one device has that udid', () => {
+    expect(resolvePresetDevice({ deviceUdid: 'R58N12345' }, [hostA, hostB, physical])).toBe(physical);
+    expect(resolvePresetDevice({ machineId: '', deviceUdid: 'emulator-5554' }, [hostA])).toBe(hostA);
+  });
+
+  it('leaves a legacy udid-only preset unselected when the udid exists on more than one host', () => {
+    expect(resolvePresetDevice({ deviceUdid: 'emulator-5554' }, [hostA, hostB])).toBeUndefined();
+  });
+
+  it('resolves nothing for a preset saved without a device', () => {
+    expect(resolvePresetDevice({ machineId: '', deviceUdid: '' }, [hostA])).toBeUndefined();
+  });
+});
+
+describe('legacy presets', () => {
+  it('still load when saved before presets carried a machineId', () => {
+    const legacy: Partial<RunPresetInput> = { ...sample };
+    delete legacy.machineId;
+    localStorage.setItem(STORAGE_KEY, JSON.stringify([{ ...legacy, id: 'old', savedAt: '2026-01-01T00:00:00.000Z' }]));
+
+    const { result } = renderHook(() => useRunPresets());
+
+    expect(result.current.presets).toHaveLength(1);
+    expect(result.current.presets[0].machineId).toBeUndefined();
+    expect(result.current.presets[0].deviceUdid).toBe('emulator-5554');
   });
 });

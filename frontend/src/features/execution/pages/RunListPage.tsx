@@ -22,9 +22,9 @@ import styles from './RunListPage.module.css';
  * endpoint.
  */
 export function RunListPage() {
-  const { project, setProject } = useRunFilters();
+  const { project, setProject, deviceUdid, machineId, clearDevice } = useRunFilters();
   const [tab, setTab] = usePipelineTab();
-  const { data: runs, isPending, error, refetch } = useExecutionRuns({ project });
+  const { data: runs, isPending, error, refetch } = useExecutionRuns({ project, deviceUdid, machineId });
 
   const allRuns = runs ?? [];
   const currentRuns = allRuns.filter((r) => isInFlight(r.status));
@@ -61,7 +61,12 @@ export function RunListPage() {
         </div>
       ) : (
         <>
-          <RunFilterBar project={project} onProjectChange={setProject} />
+          <RunFilterBar
+            project={project}
+            onProjectChange={setProject}
+            device={deviceUdid ? { udid: deviceUdid, machineId } : null}
+            onClearDevice={clearDevice}
+          />
 
           <QueryBoundary
             isPending={isPending}
@@ -75,11 +80,11 @@ export function RunListPage() {
                   title="Nothing in flight"
                   body="Trigger a run and it'll show up here while it's queued, preparing, or running."
                 />
-              ) : project ? (
+              ) : project || deviceUdid ? (
                 <EmptyState
                   icon={icons.execution}
-                  title="No runs match this project"
-                  body="Try a different project, or clear the filter to see every finished run."
+                  title="No runs match these filters"
+                  body="Try a different filter, or clear it to see every finished run."
                 />
               ) : (
                 <EmptyState
