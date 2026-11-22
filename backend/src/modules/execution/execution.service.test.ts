@@ -26,6 +26,7 @@ import {
   sweepStaleCacheSnapshots,
   copyDirCancellable,
   OFFLINE_FAIL_FAST_MS,
+  TriggerExecutionInput,
   acquirePrepSlot,
   releasePrepSlot,
   prepSlotsInUse,
@@ -344,18 +345,19 @@ describe('triggerExecutionRun', () => {
   });
 
   it('classes a failed dependency install, and a runner that cannot start', async () => {
-    for (const [input, expected] of [
+    const cases: [Partial<TriggerExecutionInput>, string][] = [
       [
         { setup: { command: 'node', args: ['-e', 'process.exit(3)'] }, run: { command: 'node', args: ['-e', '0'] } },
         'dependency_install_failed',
       ],
       [{ run: { command: 'mh-no-such-binary-xyz', args: [] } }, 'unknown'],
-    ] as const) {
+    ];
+    for (const [input, expected] of cases) {
       const doc = fakeRunDoc();
       vi.spyOn(ExecutionRun, 'create').mockResolvedValue(doc as never);
       vi.spyOn(devicesService, 'acquireLock').mockResolvedValue({} as never);
       const released = waitForReleaseLock();
-      await triggerExecutionRun({ ...baseInput, ...input });
+      await triggerExecutionRun({ ...baseInput, run: { command: 'node', args: [] }, ...input });
       await released;
       expect(doc.status).toBe('failed');
       expect(doc.errorClass).toBe(expected);
@@ -364,7 +366,7 @@ describe('triggerExecutionRun', () => {
 
   it('classes any cancel as cancelled', async () => {
     const doc = fakeRunDoc();
-    fakeDocs.set(doc._id, doc as never);
+    fakeDocs.set(doc._id as string, doc as never);
     expect(await setStatus(doc as never, 'cancelled')).toBe(true);
     expect(doc.errorClass).toBe('cancelled');
   });
