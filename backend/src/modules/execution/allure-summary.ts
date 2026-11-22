@@ -63,6 +63,12 @@ export interface TestCaseOutcome {
   id: string;
   name: string;
   status: 'passed' | 'failed' | 'broken' | 'skipped' | 'unknown';
+  /**
+   * For a failed or broken test: the file name, inside the run's kept Allure
+   * results, of the screenshot taken at the failing step (`failureEvidenceOf`).
+   * Absent when the test passed or no such image was attached.
+   */
+  evidence?: string;
 }
 
 export const ALLURE_RESULTS_DIRNAME = 'allure-results';
@@ -105,8 +111,18 @@ function failureMessageOf(result: AllureResult): string | null {
     : firstLine;
 }
 
-interface AllureResult {
+interface AllureAttachment {
+  source?: string;
+  type?: string;
+}
+
+interface AllureStep {
   status?: string;
+  steps?: AllureStep[];
+  attachments?: AllureAttachment[];
+}
+
+interface AllureResult extends AllureStep {
   statusDetails?: { message?: string; trace?: string };
   historyId?: string;
   testCaseId?: string;
@@ -114,6 +130,45 @@ interface AllureResult {
   name?: string;
   stop?: number;
   start?: number;
+}
+
+const FAILING = new Set(['failed', 'broken']);
+
+/** Only plain file names are ever served back; anything else is ignored. */
+const SAFE_SOURCE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,200}$/;
+
+function imagesUnder(step: AllureStep): string[] {
+  const own = (step.attachments ?? [])
+    .filter((a) => a.type?.startsWith('image/') && a.source && SAFE_SOURCE.test(a.source))
+    .map((a) => a.source as string);
+  return [...own, ...(step.steps ?? []).flatMap(imagesUnder)];
+}
+
+/** The deepest step on the first failing path: where the test actually broke. */
+function failingStep(steps: AllureStep[] | undefined): AllureStep | null {
+  for (const step of steps ?? []) {
+    if (FAILING.has(step.status ?? '')) return failingStep(step.steps) ?? step;
+  }
+  return null;
+}
+
+/**
+ * The screenshot that shows a failure: the last image attached to the failing
+ * step, else the last image attached to the test itself (where an after-test
+ * hook puts a failure screenshot).
+ *
+ * Never the first image in the result. A test attaches screenshots at many
+ * steps, and the first one shows the screen *before* anything went wrong; a
+ * reference farm in this domain showed that image as failure evidence, which
+ * pointed people at a screen that was fine. Images from steps that passed are
+ * not used at all, for the same reason.
+ */
+export function failureEvidenceOf(result: AllureResult): string | null {
+  const step = failingStep(result.steps);
+  const fromStep = step ? imagesUnder(step) : [];
+  if (fromStep.length > 0) return fromStep[fromStep.length - 1];
+  const own = imagesUnder({ attachments: result.attachments });
+  return own.length > 0 ? own[own.length - 1] : null;
 }
 
 /**
@@ -199,10 +254,12 @@ export function summarizeAllureResults(dir: string): TestSummary | null {
 
   for (const [key, result] of latest.entries()) {
     summary.total += 1;
+    const evidence = FAILING.has(result.status ?? '') ? failureEvidenceOf(result) : null;
     summary.testCases.push({
       id: key,
       name: result.fullName ?? result.name ?? key,
       status: normalizeStatus(result.status),
+      ...(evidence ? { evidence } : {}),
     });
     switch (result.status) {
       case 'passed':

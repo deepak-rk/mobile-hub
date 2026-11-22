@@ -215,3 +215,32 @@
     grid-template-columns: 1fr;
   }
 }
+
+.testTotal {
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+  font-weight: normal;
+}
+
+.failedTest {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: var(--space-3);
+  font-size: var(--text-xs);
+}
+
+/* Phone screenshots are tall; a fixed height keeps the list scannable. */
+.evidenceThumb {
+  display: block;
+  height: 96px;
+  width: auto;
+  max-width: 100%;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-control);
+}
+
+.noEvidence {
+  color: var(--text-tertiary);
+}
+

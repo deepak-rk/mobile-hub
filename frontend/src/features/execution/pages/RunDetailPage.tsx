@@ -49,7 +49,14 @@ function artifactUrl(runId: string, suffix: string): string {
  * Allure gets nothing here rather than a row of zeros, which would read as a
  * suite that ran and found nothing.
  */
-function TestSummaryPanel({ summary }: { summary: NonNullable<ExecutionRun['testSummary']> }) {
+export function TestSummaryPanel({
+  runId,
+  summary,
+}: {
+  runId: string;
+  summary: NonNullable<ExecutionRun['testSummary']>;
+}) {
+  const failedTests = (summary.testCases ?? []).filter((t) => t.status === 'failed' || t.status === 'broken');
   const segments = [
     { key: 'passed', count: summary.passed, label: 'Passed', color: 'var(--status-passed)' },
     { key: 'failed', count: summary.failed, label: 'Failed', color: 'var(--status-failed)' },
@@ -66,7 +73,9 @@ function TestSummaryPanel({ summary }: { summary: NonNullable<ExecutionRun['test
     <Card>
       <CardBody>
         <div className={styles.panelHead}>
-          <span className={styles.panelTitle}>Tests</span>
+          <span className={styles.panelTitle}>
+            Tests <span className={styles.testTotal}>{summary.total}</span>
+          </span>
           <span className={styles.testRate}>
             {summary.passRate === null ? '—' : `${Math.round(summary.passRate * 100)}%`}
           </span>
@@ -107,6 +116,37 @@ function TestSummaryPanel({ summary }: { summary: NonNullable<ExecutionRun['test
                 <li key={f.message} className={styles.failureItem}>
                   <span className={styles.failureCount}>{f.count}&times;</span>
                   <span className={styles.failureMessage}>{f.message}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
+
+        {/* Which tests, and what the screen showed when each one broke: the
+            screenshot is from the failing step, not the first one taken. */}
+        {failedTests.length > 0 ? (
+          <div className={styles.failures}>
+            <div className={styles.failuresTitle}>Failed tests</div>
+            <ul className={styles.failureList}>
+              {failedTests.map((t) => (
+                <li key={t.id} className={styles.failedTest}>
+                  <span className={styles.failureMessage}>{t.name}</span>
+                  {t.evidence ? (
+                    <a
+                      href={artifactUrl(runId, `evidence/${encodeURIComponent(t.evidence)}`)}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      <img
+                        className={styles.evidenceThumb}
+                        src={artifactUrl(runId, `evidence/${encodeURIComponent(t.evidence)}`)}
+                        alt={`Screen at the failing step of ${t.name}`}
+                        loading="lazy"
+                      />
+                    </a>
+                  ) : (
+                    <span className={styles.noEvidence}>No screenshot</span>
+                  )}
                 </li>
               ))}
             </ul>
@@ -277,7 +317,7 @@ export function RunDetailPage() {
                 </Card>
               ) : null}
 
-              {run.testSummary ? <TestSummaryPanel summary={run.testSummary} /> : null}
+              {run.testSummary ? <TestSummaryPanel runId={run._id} summary={run.testSummary} /> : null}
 
               <Card>
               <CardBody>

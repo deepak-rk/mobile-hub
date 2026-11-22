@@ -55,6 +55,17 @@ export interface ExecutionRun {
      * failed count alone cannot tell those apart.
      */
     failures: { message: string; count: number }[];
+    /**
+     * One entry per test. `evidence` is set on a failed or broken test that
+     * has a screenshot from its failing step; absent on runs recorded before
+     * evidence existed.
+     */
+    testCases?: {
+      id: string;
+      name: string;
+      status: 'passed' | 'failed' | 'broken' | 'skipped' | 'unknown';
+      evidence?: string;
+    }[];
   } | null;
   stages: RunStage[];
   startedAt: string | null;

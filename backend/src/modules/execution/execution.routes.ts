@@ -19,6 +19,7 @@ import { resolveInstallCommand, resolveRunCommand } from './automation-commands'
 import { branchRefSchema, discoverSuites, SuiteDiscoveryError } from './suites/suites.service';
 import { discoverBranches, BranchDiscoveryError } from './branches.service';
 import { ExecutionRun } from './execution-run.model';
+import { ALLURE_RESULTS_DIRNAME } from './allure-summary';
 import type { JwtPayload } from 'fastify-auth-kit';
 import { ForbiddenError, NotFoundError, ValidationError } from '../../common/errors/app-error';
 import { REPORT_CSP_DIRECTIVES } from '../../common/content-security-policy';
@@ -393,6 +394,21 @@ export const executionRoutes: FastifyPluginAsync = async (app) => {
     return reply
       .header('access-control-allow-origin', 'null')
       .sendFile(relativePath, run.reportPath);
+  });
+
+  /**
+   * The failing-step screenshot of one failed test (see `failureEvidenceOf`).
+   * Serves only a file the run's own summary names as evidence, from the
+   * run's kept Allure results: the name is a lookup key, never a path.
+   */
+  app.get('/:id/evidence/:file', async (req, reply) => {
+    const { id, file } = req.params as { id: string; file: string };
+    const run = await getExecutionRun(id);
+    const named = run?.testSummary?.testCases?.some((t) => t.evidence === file) ?? false;
+    if (!run?.artifactsPath || !named) {
+      throw new NotFoundError('No such evidence for this run.', 'EVIDENCE_UNAVAILABLE');
+    }
+    return reply.sendFile(file, path.join(run.artifactsPath, ALLURE_RESULTS_DIRNAME));
   });
 
   /**

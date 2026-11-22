@@ -196,7 +196,13 @@ const testSummarySchema = new Schema<ITestSummary>(
     testCases: {
       type: [
         new Schema(
-          { id: String, name: String, status: { type: String, enum: ['passed', 'failed', 'broken', 'skipped', 'unknown'] } },
+          {
+            id: String,
+            name: String,
+            status: { type: String, enum: ['passed', 'failed', 'broken', 'skipped', 'unknown'] },
+            // File name of the failing step's screenshot in the kept Allure results.
+            evidence: { type: String, default: undefined },
+          },
           { _id: false },
         ),
       ],

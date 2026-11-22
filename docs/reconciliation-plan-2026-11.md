@@ -89,8 +89,8 @@ Not live-verified: Docker/Mongo was down this session. First thing once it is ba
   - live log parser — in-flight state from the run log; **never return a capped parse as final** (lesson 60).
   - Bubble-up precedence: running → executing · scheduled/queued → scheduled · all ready → ready · all completed → completed · all failed → failed · else partial.
 - Rerun failed-only, rerun with comment (history), bulk rerun/cancel, "clear stuck" (reset to ready).
-- Combined per-execution report: merge + dedupe by history id; failure evidence = screenshot of the **failing step**, not the first image (lesson 61).
-- Count summaries always include broken and total (lesson 65).
+- Combined per-execution report: merge + dedupe by history id; failure evidence = screenshot of the **failing step**, not the first image (lesson 61). **Failure evidence done 2026-11-22** (`failureEvidenceOf`, `GET /:id/evidence/:file`, Failed tests list); the combined report is still open.
+- Count summaries always include broken and total (lesson 65). **Done 2026-11-22** (total now visible on the run page).
 
 ### Phase 4 — device interaction & device config
 - Remote control (tap/swipe/type, home/back/rotate), screenshot, reboot, reconnect, wipe/reset — agent-pulled jobs.
