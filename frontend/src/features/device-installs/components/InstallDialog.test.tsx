@@ -118,4 +118,37 @@ describe('InstallDialog', () => {
       devices: [{ udid: 'a', machineId: 'host-1' }],
     });
   });
+
+  it('shows a done target that carries a note as success-with-warning, with the note as text', async () => {
+    const note = 'Installed, but could not verify com.example on a: adb timed out';
+    get.mockImplementation(async (url: string) => {
+      if (url === '/devices') return { data: [device({ udid: 'a', name: 'Pixel A' }), device({ udid: 'b', name: 'Pixel B' })] };
+      if (url === '/device-installs/run-1') {
+        return {
+          data: {
+            _id: 'run-1',
+            targets: [
+              { deviceUdid: 'a', machineId: 'host-1', status: 'done', progress: 100, error: note },
+              { deviceUdid: 'b', machineId: 'host-1', status: 'done', progress: 100, error: null },
+            ],
+          },
+        };
+      }
+      return { data: [] };
+    });
+    post.mockResolvedValue({ data: { _id: 'run-1', targets: [] } });
+    const user = userEvent.setup();
+    render(<InstallDialog build={build} onClose={() => {}} />, { wrapper });
+
+    await user.click(await screen.findByRole('checkbox', { name: /Pixel A/ }));
+    await user.click(screen.getByRole('checkbox', { name: /Pixel B/ }));
+    await user.click(screen.getByRole('button', { name: 'Install to 2 devices' }));
+
+    // Text, not colour alone: the badge label and the note itself are both rendered.
+    expect(await screen.findByText('Done with warning')).toBeInTheDocument();
+    expect(screen.getByText(note)).toBeInTheDocument();
+    expect(screen.getByText('Warning:')).toBeInTheDocument();
+    // The clean target still reads as plain success.
+    expect(screen.getByText('Done')).toBeInTheDocument();
+  });
 });

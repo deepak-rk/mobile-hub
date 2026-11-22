@@ -305,6 +305,31 @@ describe('getInstalledDevicesForBuild', () => {
     ]);
   });
 
+  it("carries a done target's non-fatal note through as `note`", async () => {
+    vi.spyOn(buildsService, 'getBuild').mockResolvedValue(readyBuild as never);
+    vi.spyOn(InstallRun, 'find').mockReturnValue({
+      sort: vi.fn().mockResolvedValue([
+        {
+          id: 'run-1',
+          buildId: { toString: () => 'build-1' },
+          targets: [
+            {
+              deviceUdid: 'd1',
+              status: 'done',
+              endedAt: new Date('2026-01-01'),
+              error: 'Installed, but 1 runtime permission(s) could not be granted: android.permission.CAMERA.',
+            },
+          ],
+        },
+      ]),
+    } as never);
+    vi.spyOn(devicesService, 'getDevicesByUdids').mockResolvedValue([] as never);
+
+    const [row] = await getInstalledDevicesForBuild('build-1');
+
+    expect(row.note).toContain('android.permission.CAMERA');
+  });
+
   it('returns empty for an unknown build, without querying installs at all', async () => {
     vi.spyOn(buildsService, 'getBuild').mockResolvedValue(null);
     const find = vi.spyOn(InstallRun, 'find');

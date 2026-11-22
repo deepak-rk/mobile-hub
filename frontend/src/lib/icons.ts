@@ -69,6 +69,9 @@ export const icons = {
 
   // Run presets (execution trigger form)
   presetSave: Bookmark,
+
+  // Succeeded, but with something the operator should know about
+  warning: AlertTriangle,
 } as const;
 
 /** Icon sizes by context (guidelines §6). */

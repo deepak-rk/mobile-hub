@@ -173,6 +173,7 @@ export function BuildDetailDialog({ build, onClose }: { build: Build | null; onC
                     <li key={deviceKey({ machineId: d.machineId, udid: d.deviceUdid })}>
                       <Link to={deviceHref(d.deviceUdid, d.machineId)}>{d.deviceName ?? d.deviceUdid}</Link>
                       <span className={styles.installedMeta}>
+                        {d.note ? <StatusBadge status="done-warning" bare /> : null}
                         <span className={styles.installedWhen}>installed {formatRelative(d.installedAt)}</span>
                         {/* Only offered when the agent positively identified
                             the package at install time — nothing to
@@ -184,6 +185,7 @@ export function BuildDetailDialog({ build, onClose }: { build: Build | null; onC
                           </Button>
                         ) : null}
                       </span>
+                      {d.note ? <p className={styles.installedNote}>{d.note}</p> : null}
                     </li>
                   ))}
                 </ul>

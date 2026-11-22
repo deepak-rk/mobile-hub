@@ -267,14 +267,16 @@ export function parseUngrantedRuntimePermissions(dumpsysOutput: string): string[
  * individual permission failing to grant (already handled elsewhere, or a
  * device that refuses it for its own reasons) is a secondary enhancement not
  * landing, not a reason to report the install itself as failed. Even being
- * unable to read the permission list at all is swallowed the same way.
+ * unable to read the permission list at all is not thrown — it comes back as
+ * `listError`, so the caller can surface it (see `describePermissionGrantNote`)
+ * rather than the install reading as fully provisioned.
  */
 export async function grantRuntimePermissions(
   adbPath: string,
   deviceUdid: string,
   packageName: string,
   runFn: Runner = run,
-): Promise<{ granted: string[]; failed: string[] }> {
+): Promise<{ granted: string[]; failed: string[]; listError?: string }> {
   const granted: string[] = [];
   const failed: string[] = [];
   try {
@@ -291,11 +293,28 @@ export async function grantRuntimePermissions(
         failed.push(permission);
       }
     }
-  } catch {
+  } catch (err) {
     // Couldn't even read the permission list — nothing to grant. The install
-    // this follows already succeeded and stays that way.
+    // this follows already succeeded and stays that way, but the caller is
+    // told so it can say the grant step did not happen.
+    return { granted, failed, listError: err instanceof Error ? err.message : String(err) };
   }
   return { granted, failed };
+}
+
+/**
+ * The non-fatal note a `done` target carries when the permission grant step
+ * did not fully land, or null when it did. Same channel as the
+ * verification warning: the target's `error` field on a `done` status.
+ */
+export function describePermissionGrantNote(result: { failed: string[]; listError?: string }): string | null {
+  if (result.listError !== undefined) {
+    return `Installed, but runtime permissions were not granted: could not read them (${result.listError}).`;
+  }
+  if (result.failed.length > 0) {
+    return `Installed, but ${result.failed.length} runtime permission(s) could not be granted: ${result.failed.join(', ')}.`;
+  }
+  return null;
 }
 
 /**
@@ -499,18 +518,21 @@ export async function runInstall(
     // that left nothing to attribute has nothing here to grant permissions
     // to either. Never fails the install: see grantRuntimePermissions's own
     // doc comment.
+    let grantNote: string | null = null;
     if (pending.grantPermissions && installedPackage) {
       await hub.reportInstallProgress(installRunId, deviceUdid, { status: 'granting-permissions', progress: 100 });
-      await grantRuntimePermissions(adbPath, deviceUdid, installedPackage);
+      grantNote = describePermissionGrantNote(await grantRuntimePermissions(adbPath, deviceUdid, installedPackage));
     }
+    const note = [verifyWarning, grantNote].filter((n): n is string => n !== null).join(' ');
 
     await hub.reportInstallProgress(installRunId, deviceUdid, {
       status: 'done',
       progress: 100,
       ...(installedPackage ? { packageName: installedPackage } : {}),
       // The target schema has no separate warning field; `error` on a `done`
-      // target carries a non-fatal note (here: verification could not run).
-      ...(verifyWarning ? { error: verifyWarning } : {}),
+      // target carries a non-fatal note (verification could not run, or some
+      // runtime permissions were not granted). Older hubs/UIs simply store it.
+      ...(note ? { error: note } : {}),
     });
   } catch (err) {
     await hub.reportInstallProgress(installRunId, deviceUdid, {

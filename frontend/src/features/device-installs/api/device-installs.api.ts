@@ -60,6 +60,8 @@ export interface InstalledDevice {
   installedAt: string | null;
   /** Null for a run predating this field, or a same-version reinstall the agent couldn't positively attribute — nothing to uninstall from here. */
   packageName: string | null;
+  /** A non-fatal note from the install (unverified, or permissions not granted); null/absent when clean. */
+  note?: string | null;
 }
 
 /**

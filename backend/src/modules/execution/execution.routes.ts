@@ -15,7 +15,7 @@ import {
 import type { IExecutionRun } from './execution-run.model';
 import { subscribeToExecutionEvents } from './execution.events';
 import { resolveInstallCommand, resolveRunCommand } from './automation-commands';
-import { discoverSuites, SuiteDiscoveryError } from './suites/suites.service';
+import { branchRefSchema, discoverSuites, SuiteDiscoveryError } from './suites/suites.service';
 import { discoverBranches, BranchDiscoveryError } from './branches.service';
 import { ExecutionRun } from './execution-run.model';
 import type { JwtPayload } from 'fastify-auth-kit';
@@ -47,6 +47,11 @@ const triggerBody = z.object({
   // Supplying them still wins, for a one-off that differs from the config.
   setup: commandSchema.optional(),
   run: commandSchema.optional(),
+});
+
+const suitesQuery = z.object({
+  refresh: z.unknown().optional(),
+  branch: branchRefSchema.optional(),
 });
 
 export const executionRoutes: FastifyPluginAsync = async (app) => {
@@ -109,17 +114,23 @@ export const executionRoutes: FastifyPluginAsync = async (app) => {
    *
    * Also declared before `/:id`, for the same reason `projects` is.
    * `?refresh=1` bypasses the cache, for when someone just pushed a suite.
+   * `?branch=` reads suites from that branch (the one the run will execute);
+   * omitted, the repo's default branch is used.
    */
   app.get('/projects/:projectId/suites', async (req) => {
     const { projectId } = req.params as { projectId: string };
-    const { refresh } = req.query as { refresh?: string };
+    const query = suitesQuery.safeParse(req.query);
+    if (!query.success) {
+      throw new ValidationError(query.error.issues.map((i) => i.message).join(' '));
+    }
+    const { refresh, branch } = query.data;
     const project = app.config.projects[projectId];
     if (!project) {
       throw new NotFoundError(`No project '${projectId}' is declared in config.`, 'PROJECT_NOT_CONFIGURED');
     }
 
     try {
-      const suites = await discoverSuites(projectId, project.automation, { refresh: Boolean(refresh) });
+      const suites = await discoverSuites(projectId, project.automation, { refresh: Boolean(refresh), branch });
       return { suites };
     } catch (err) {
       if (err instanceof SuiteDiscoveryError) {

@@ -66,6 +66,21 @@
   color: var(--status-failed);
 }
 
+.warning {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+}
+
+.warning > svg {
+  flex: none;
+  margin-top: 2px;
+  color: var(--status-smoke);
+}
+
 .installedCount {
   color: var(--text-tertiary);
 }

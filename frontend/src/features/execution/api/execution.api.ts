@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/services/api';
 import type { ExecutionRun } from '../types';
@@ -113,13 +114,30 @@ export interface DiscoveredSuite {
  * `unavailable` is a normal answer, not an error: a project with no repo, or
  * one whose framework has no discovery adapter, simply can't be enumerated —
  * the form falls back to a text field and says why.
+ *
+ * Read from `branch` — the branch the run will execute — so a suite that only
+ * exists there can be picked. Empty means the repo's default branch. The
+ * branch is debounced because it can be free text, and each new branch costs
+ * the backend a clone.
  */
-export function useSuites(projectId: string | undefined) {
+export const SUITE_BRANCH_DEBOUNCE_MS = 400;
+
+export function useSuites(projectId: string | undefined, branch?: string) {
+  const trimmed = branch?.trim() || undefined;
+  const [debouncedBranch, setDebouncedBranch] = useState(trimmed);
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedBranch(trimmed), SUITE_BRANCH_DEBOUNCE_MS);
+    return () => clearTimeout(timer);
+  }, [trimmed]);
+
   return useQuery({
-    queryKey: ['execution', 'suites', projectId],
+    queryKey: ['execution', 'suites', projectId, debouncedBranch ?? null],
     queryFn: async () =>
-      (await api.get<{ suites: DiscoveredSuite[]; unavailable?: string }>(`/execution/projects/${projectId}/suites`))
-        .data,
+      (
+        await api.get<{ suites: DiscoveredSuite[]; unavailable?: string }>(`/execution/projects/${projectId}/suites`, {
+          params: debouncedBranch ? { branch: debouncedBranch } : undefined,
+        })
+      ).data,
     enabled: Boolean(projectId),
     // Discovery clones or fetches a repo; re-running it because a component
     // remounted would make the form feel broken.

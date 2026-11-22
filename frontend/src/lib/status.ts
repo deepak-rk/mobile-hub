@@ -30,6 +30,7 @@ export type StatusKind =
   | 'installing'
   | 'granting-permissions'
   | 'done'
+  | 'done-warning'
   | 'error'
   // host
   | 'online'
@@ -89,8 +90,22 @@ export const statusMeta: Record<StatusKind, StatusMeta> = {
   // that this install did more than a plain `pm install -r`.
   'granting-permissions': { label: 'Granting permissions', token: '--status-running', icon: icons.running, active: true },
   done: { label: 'Done', token: '--status-passed', icon: icons.passed },
+  // Not an API status: a `done` target that carries a note in `error` (the
+  // install could not be verified, or runtime permissions were not granted).
+  // Use `installTargetBadgeStatus` rather than spelling this out at call sites.
+  'done-warning': { label: 'Done with warning', token: '--status-smoke', icon: icons.warning },
   error: { label: 'Error', token: '--status-failed', icon: icons.failed },
 };
+
+/**
+ * The badge status for an install target. The agent reports a non-fatal note
+ * on a `done` target through its `error` field (there is no separate warning
+ * field on the report contract), so `done` + a note is success-with-warning,
+ * not plain success.
+ */
+export function installTargetBadgeStatus(target: { status: string; error?: string | null }): string {
+  return target.status === 'done' && target.error ? 'done-warning' : target.status;
+}
 
 export function getStatusMeta(status: string): StatusMeta {
   return (

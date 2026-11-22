@@ -1,6 +1,8 @@
 import { useState } from 'react';
 import { Button, Dialog, ProgressBar } from 'react-design-kit';
 import { StatusBadge } from '@/components/ui/StatusBadge';
+import { installTargetBadgeStatus } from '@/lib/status';
+import { icons, iconSize } from '@/lib/icons';
 import { useDevices } from '@/features/devices/api/devices.api';
 import { deviceKey } from '@/features/devices/lib/deviceKey';
 import { isOfflineStatus } from '@/features/devices/lib/deviceCounts';
@@ -112,7 +114,7 @@ export function InstallDialog({ build, onClose }: { build: Build | null; onClose
             <li key={key(t.machineId, t.deviceUdid)} className={styles.targetRow}>
               <div className={styles.targetHead}>
                 <span className={styles.targetName}>{devices?.find((d) => d.udid === t.deviceUdid && d.machineId === t.machineId)?.name ?? t.deviceUdid}</span>
-                <StatusBadge status={t.status} />
+                <StatusBadge status={installTargetBadgeStatus(t)} />
               </div>
               {/* A determinate bar only where bytes are genuinely measured:
                   the HTTP download and the push to the device. `pm install`
@@ -127,6 +129,14 @@ export function InstallDialog({ build, onClose }: { build: Build | null; onClose
               {t.status === 'installing' ? <p className={styles.phase}>Installing on device…</p> : null}
               {t.status === 'granting-permissions' ? <p className={styles.phase}>Granting permissions…</p> : null}
               {t.status === 'error' && t.error ? <p className={styles.error}>{t.error}</p> : null}
+              {t.status === 'done' && t.error ? (
+                <p className={styles.warning}>
+                  <icons.warning size={iconSize.dense} aria-hidden="true" />
+                  <span>
+                    <strong>Warning:</strong> {t.error}
+                  </span>
+                </p>
+              ) : null}
             </li>
           ))}
         </ul>

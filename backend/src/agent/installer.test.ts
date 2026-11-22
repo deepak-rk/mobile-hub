@@ -10,6 +10,7 @@ import {
   ensureCachedBuild,
   parseUngrantedRuntimePermissions,
   grantRuntimePermissions,
+  describePermissionGrantNote,
   verifyPackageInstalled,
 } from './installer';
 import type { HubClient } from './hub-client';
@@ -214,6 +215,7 @@ describe('grantRuntimePermissions', () => {
     await expect(grantRuntimePermissions('adb', 'd1', 'com.wdiodemoapp', runFn)).resolves.toEqual({
       granted: [],
       failed: [],
+      listError: 'device offline',
     });
   });
 
@@ -224,6 +226,27 @@ describe('grantRuntimePermissions', () => {
 
     expect(result).toEqual({ granted: [], failed: [] });
     expect(runFn).toHaveBeenCalledTimes(1); // only the dumpsys query, no grant attempted
+  });
+});
+
+/**
+ * A grant step that did not fully land is reported as a note on the `done`
+ * target (the same `error`-on-`done` channel as an unverified install), so the
+ * UI can show it instead of the install reading as fully provisioned.
+ */
+describe('describePermissionGrantNote', () => {
+  it('is null when every permission was granted', () => {
+    expect(describePermissionGrantNote({ failed: [] })).toBeNull();
+  });
+
+  it('names each permission that failed to grant', () => {
+    const note = describePermissionGrantNote({ failed: ['android.permission.CAMERA', 'android.permission.RECORD_AUDIO'] });
+    expect(note).toContain('2 runtime permission(s)');
+    expect(note).toContain('android.permission.CAMERA, android.permission.RECORD_AUDIO');
+  });
+
+  it('says the grant step was skipped when the permission list could not be read', () => {
+    expect(describePermissionGrantNote({ failed: [], listError: 'device offline' })).toContain('device offline');
   });
 });
 

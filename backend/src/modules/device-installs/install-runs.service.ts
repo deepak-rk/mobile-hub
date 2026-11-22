@@ -297,6 +297,9 @@ export interface InstalledDevice {
    * needs this — a device entry with a null packageName has nothing to
    * offer it. */
   packageName: string | null;
+  /** A non-fatal note from a `done` install (unverified, or runtime
+   * permissions not granted); null when the install was clean. */
+  note: string | null;
 }
 
 /**
@@ -340,6 +343,7 @@ export async function getInstalledDevicesForBuild(buildId: string): Promise<Inst
       installRunId: string;
       installedAt: Date | null;
       packageName: string | null;
+      note: string | null;
     }
   >();
   for (const run of runs) {
@@ -352,6 +356,9 @@ export async function getInstalledDevicesForBuild(buildId: string): Promise<Inst
         installRunId: run.id as string,
         installedAt: target.endedAt,
         packageName: target.packageName,
+        // On a `done` target, `error` is a non-fatal note (unverified install,
+        // runtime permissions not granted) — surfaced so the UI can warn.
+        note: target.error,
       });
     }
   }
@@ -398,6 +405,7 @@ export async function getInstalledDevicesForBuild(buildId: string): Promise<Inst
     installRunId: latest.installRunId,
     installedAt: latest.installedAt,
     packageName: latest.packageName,
+    note: latest.note,
   }));
 }
 

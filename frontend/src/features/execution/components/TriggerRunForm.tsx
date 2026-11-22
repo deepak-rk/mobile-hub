@@ -57,11 +57,18 @@ export function TriggerRunForm() {
   // Above the early returns below, not beside the field it feeds: hooks must
   // run in the same order on every render, and the sign-in and role guards
   // return before that point.
-  const { data: suiteData, isFetching: suitesLoading } = useSuites(configuredProject ? project : undefined);
-  const suites = suiteData?.suites;
+  // Suites are read from the chosen branch, since that is what the run executes.
+  const {
+    data: suiteData,
+    isFetching: suitesLoading,
+    error: suitesError,
+  } = useSuites(configuredProject ? project : undefined, branch);
+  const suites = suitesError ? undefined : suiteData?.suites;
   const suiteHint = suitesLoading
     ? 'Reading suites from the automation repo…'
-    : (suiteData?.unavailable ?? (suites && suites.length === 0 ? 'No suites found in the repo — type one.' : ''));
+    : suitesError
+      ? `${(suitesError as ApiError).message ?? 'Could not read suites'} — type one.`
+      : (suiteData?.unavailable ?? (suites && suites.length === 0 ? 'No suites found in the repo — type one.' : ''));
   const { data: branchData, isFetching: branchesLoading } = useBranches(configuredProject ? project : undefined);
   const branches = branchData?.branches;
   const branchHint = branchesLoading
