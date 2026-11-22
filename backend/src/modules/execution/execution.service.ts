@@ -17,6 +17,7 @@ import { getBuild } from '../builds/builds.service';
 import { assertDriverInstalled, ensureAppiumServer, closeActiveSessions } from './appium.service';
 import { buildRunEnvironment, createRedactor } from './run-environment';
 import { classifySuite } from './automation-commands';
+import { checkoutWorktree, cleanupSharedRepos } from './repo-checkout';
 import {
   summarizeRunResults,
   summarizeAllureResults,
@@ -900,14 +901,9 @@ async function runExecution(
     if (automation.repoUrl && !cancelledRuns.has(runId)) {
       const repoDir = path.join(run.workspacePath, 'repo');
       await setStage(run, 'pulling', 'running');
-      const cloneOutcome = await runCommand(
-        {
-          command: 'git',
-          args: ['clone', '--branch', input.branch, '--single-branch', automation.repoUrl, repoDir],
-        },
-        run.workspacePath,
-        logStream,
-        runId,
+      // A worktree of the shared bare repo, not a fresh clone per run.
+      const cloneOutcome = await checkoutWorktree(automation.repoUrl, input.branch, repoDir, (cmd, cwd) =>
+        runCommand(cmd, cwd, logStream, runId),
       );
       // Cloning is the hub's own plumbing — a failure here says nothing about
       // the app under test.
@@ -1438,5 +1434,17 @@ export async function resyncExecutionRun(id: string): Promise<{ run: IExecutionR
   // Field-level write, not run.save(): only the summary changes.
   await ExecutionRun.updateOne({ _id: run._id }, { $set: { testSummary: summary } });
   return { run, resynced: true };
+}
+
+/**
+ * Boot-time repair of the shared repos (see repo-checkout.ts). Git output goes
+ * nowhere: there is no run to log it to, and a failure here must not stop
+ * the hub from starting.
+ */
+export async function cleanupSharedReposAtBoot(): Promise<number> {
+  return cleanupSharedRepos(async (cmd, cwd) => {
+    const proc = supervisor.run({ command: cmd.command, args: cmd.args, cwd, timeoutMs: 60_000 });
+    return proc.result;
+  });
 }
 

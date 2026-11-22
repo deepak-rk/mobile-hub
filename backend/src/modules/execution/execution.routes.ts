@@ -44,7 +44,9 @@ const triggerBody = z.object({
   deviceUdid: z.string().min(1),
   buildId: z.string().optional(),
   project: z.string().min(1),
-  branch: z.string().min(1),
+  // Embedded in a git refspec when the run checks out, so held to the same
+  // rule as suite discovery's ?branch=.
+  branch: branchRefSchema,
   variant: z.string().min(1).max(64).optional(),
   suite: z.string().min(1),
   // Both optional now: a configured project already declares how it installs

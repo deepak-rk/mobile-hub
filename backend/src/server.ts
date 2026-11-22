@@ -11,6 +11,7 @@ import {
 import {
   recoverOrphanedRuns,
   sweepStaleCacheSnapshots,
+  cleanupSharedReposAtBoot,
   sweepFinishedWorkspaces,
   dispatchQueuedRuns,
   QUEUE_DISPATCH_INTERVAL_MS,
@@ -92,6 +93,10 @@ async function start(): Promise<void> {
   const recovered = await recoverOrphanedRuns(app.config.appium);
   if (recovered > 0) {
     app.log.warn(`Recovered ${recovered} execution run(s) left mid-flight by a previous restart`);
+  }
+  const staleGitLocks = await cleanupSharedReposAtBoot().catch(() => 0);
+  if (staleGitLocks > 0) {
+    app.log.warn(`Removed ${staleGitLocks} stale git lock file(s) left in shared repos by a previous crash`);
   }
   const sweptSnapshots = await sweepStaleCacheSnapshots();
   if (sweptSnapshots > 0) {
