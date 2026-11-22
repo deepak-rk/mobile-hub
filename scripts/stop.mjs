@@ -16,8 +16,8 @@ import { readdir, readFile, rm } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 
-import { ADB_PATH, API_PORT, AVD_DIR, FRONTEND_PORT, PIDFILE, log } from './lib/config.mjs';
-import { findProcessByPort, findProcesses, isWindows, killByName, killTree, tryRun } from './lib/platform.mjs';
+import { ADB_PATH, API_PORT, AVD_DIR, FRONTEND_PORT, PIDFILE, ROOT, log } from './lib/config.mjs';
+import { findProcessByPort, findProcesses, isWindows, killTree, tryRun } from './lib/platform.mjs';
 
 async function readPidfile() {
   if (!existsSync(PIDFILE)) return [];
@@ -51,6 +51,18 @@ async function stopByPort(name, port) {
   );
 }
 
+/** True when a process command line refers to this checkout (any slash style, or URL-encoded spaces). */
+function isThisRepo(command) {
+  if (!command) return false;
+  const norm = (s) => s.replace(/\\/g, '/').replace(/%20/g, ' ').toLowerCase();
+  return norm(command).includes(norm(ROOT));
+}
+
+/** A node process running this checkout's tsx — never a shell that just mentions a path. */
+function isRepoTsxNode(command) {
+  return isThisRepo(command) && /^"?[^"\s]*\bnode(\.exe)?"?\s/i.test(command) && /[\\/]tsx[\\/]/.test(command);
+}
+
 async function stopRecordedProcesses() {
   const entries = await readPidfile();
   const toKill = entries.filter((e) => e.name !== 'emulator');
@@ -64,13 +76,28 @@ async function stopRecordedProcesses() {
     log(ok ? `stopped ${name} (pid ${pid})` : `could not stop ${name} (pid ${pid}) — may already be gone`);
   }
 
+  // `tsx watch` is a parent that respawns the server whenever a file
+  // changes. Killing only whatever holds the port (below) left the watcher
+  // alive: a later edit brought a second backend back up — once with a
+  // different .env database — beside the one start.mjs launched (found live
+  // 2026-11-22: three orphan watchers). Matched on this repo's own path so
+  // another project's `tsx watch src/server.ts` is never touched.
+  // Only node processes running tsx: a shell whose command line merely
+  // mentions the file (e.g. `touch backend/src/server.ts` in this repo) was
+  // matched and killed by a looser text match — found live twice.
+  const watchers = (await findProcesses('src/server.ts')).filter((p) => isRepoTsxNode(p.command));
+  for (const p of watchers) await killTree(p.pid);
+  if (watchers.length > 0) log(`stopped ${watchers.length} backend watcher process(es) found by command line`);
+
   await stopByPort('backend', API_PORT);
   await stopByPort('frontend', FRONTEND_PORT);
 
   // The agent doesn't hold a port, so it has no port-based backstop — fall
   // back to the same kill-by-command-line-substring approach stopEmulator()
   // already uses for a native binary with no listening port either.
-  const agentKilled = await killByName('agent/main.ts');
+  const agents = (await findProcesses('agent/main.ts')).filter((p) => isRepoTsxNode(p.command));
+  for (const p of agents) await killTree(p.pid);
+  const agentKilled = agents.length;
   if (agentKilled > 0) {
     log(`stopped ${agentKilled} agent process(es) found by command line — a recorded PID may have gone stale`);
   }

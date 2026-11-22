@@ -148,14 +148,6 @@ export async function findProcessByPort(port) {
   }
 }
 
-/** Kills every process whose name matches `imageName` exactly (e.g. "emulator.exe"). */
-export async function killByName(imageName) {
-  const procs = await findProcesses(imageName);
-  const matching = procs.filter((p) => p.command && p.command.includes(imageName));
-  for (const p of matching) await killTree(p.pid);
-  return matching.length;
-}
-
 /** The Android SDK root, derived from the environment rather than hardcoded to one machine's username. */
 export function resolveAndroidHome() {
   const explicit = process.env.ANDROID_HOME || process.env.ANDROID_SDK_ROOT;
