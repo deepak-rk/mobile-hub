@@ -12,6 +12,7 @@ import {
   grantRuntimePermissions,
   describePermissionGrantNote,
   verifyPackageInstalled,
+  runInstall,
 } from './installer';
 import type { HubClient } from './hub-client';
 
@@ -433,5 +434,93 @@ describe('build cache (cachedBuildPath / isCacheValid / ensureCachedBuild)', () 
 
     expect(directCalls).toEqual([]);
     expect(viaHubCalls).toEqual(['b1']);
+  });
+});
+
+/**
+ * The whole install as the agent runs it, with adb faked at the runner seam.
+ * The pieces above are tested on their own; this checks what reaches the hub,
+ * which is what the UI's "Done with warning" badge is built from.
+ */
+describe('runInstall note reaching the hub', () => {
+  let cacheDir: string;
+
+  afterEach(() => {
+    fs.rmSync(cacheDir, { recursive: true, force: true });
+  });
+
+  const PKG = 'com.example.app';
+
+  function fakeAdb(opts: { dumpsys: 'ok' | 'fails' }) {
+    let listCalls = 0;
+    return vi.fn(async (_cmd: string, args: string[]) => {
+      const shell = args.slice(2).join(' ');
+      if (shell.startsWith('shell pm list packages')) {
+        listCalls += 1;
+        const after = listCalls > 1 ? `\npackage:${PKG} versionCode:5` : '';
+        return { stdout: `package:com.other versionCode:1${after}`, stderr: '' };
+      }
+      if (shell.startsWith('shell pm install')) return { stdout: 'Success\n', stderr: '' };
+      if (shell.startsWith('shell pm path')) return { stdout: 'package:/data/app/base.apk\n', stderr: '' };
+      if (shell.startsWith('shell dumpsys')) {
+        if (opts.dumpsys === 'fails') throw new Error('device offline');
+        return {
+          stdout: [
+            '    runtime permissions:',
+            '      android.permission.CAMERA: granted=false',
+            '      android.permission.ACCESS_FINE_LOCATION: granted=false',
+          ].join('\n'),
+          stderr: '',
+        };
+      }
+      if (shell.includes('pm grant') && shell.endsWith('ACCESS_FINE_LOCATION')) throw new Error('not changeable');
+      return { stdout: '', stderr: '' };
+    });
+  }
+
+  async function install(adb: ReturnType<typeof fakeAdb>, grantPermissions: boolean) {
+    cacheDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mh-agent-install-'));
+    const bytes = Buffer.from('apk-bytes');
+    const reports: { status: string; error?: string; packageName?: string }[] = [];
+    const hub = {
+      downloadArtifact: async (_id: string, dest: string) => fs.writeFileSync(dest, bytes),
+      reportInstallProgress: async (_run: string, _udid: string, body: { status: string }) => {
+        reports.push(body);
+      },
+    } as unknown as HubClient;
+    await runInstall(
+      hub,
+      {
+        installRunId: 'r1',
+        deviceUdid: 'emulator-5554',
+        buildId: 'b1',
+        platform: 'android',
+        sizeBytes: bytes.length,
+        artifactUrl: null,
+        grantPermissions,
+      },
+      'adb',
+      { runFn: adb, cacheDir },
+    );
+    return reports[reports.length - 1];
+  }
+
+  it('reports done with the failed permission as the note', async () => {
+    const final = await install(fakeAdb({ dumpsys: 'ok' }), true);
+    expect(final.status).toBe('done');
+    expect(final.packageName).toBe(PKG);
+    expect(final.error).toBe(describePermissionGrantNote({ failed: ['android.permission.ACCESS_FINE_LOCATION'] }));
+  });
+
+  it('reports done with a note when the permission list cannot be read', async () => {
+    const final = await install(fakeAdb({ dumpsys: 'fails' }), true);
+    expect(final.status).toBe('done');
+    expect(final.error).toMatch(/could not read them \(device offline\)/);
+  });
+
+  it('reports a clean done, with no note, when nothing went wrong', async () => {
+    const final = await install(fakeAdb({ dumpsys: 'ok' }), false);
+    expect(final).toMatchObject({ status: 'done', packageName: PKG });
+    expect(final.error).toBeUndefined();
   });
 });

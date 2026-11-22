@@ -72,8 +72,9 @@ async function pushToDevice(
   remotePath: string,
   totalBytes: number,
   onProgress: (done: number, total: number) => void,
+  runFn: Runner = run,
 ): Promise<void> {
-  const push = run(adbPath, ['-s', deviceUdid, 'push', localPath, remotePath], { timeout: ADB_PUSH_TIMEOUT_MS });
+  const push = runFn(adbPath, ['-s', deviceUdid, 'push', localPath, remotePath], { timeout: ADB_PUSH_TIMEOUT_MS });
 
   let polling = true;
   const poll = (async () => {
@@ -81,7 +82,7 @@ async function pushToDevice(
       await new Promise((r) => setTimeout(r, PROGRESS_REPORT_INTERVAL_MS));
       if (!polling) break;
       try {
-        const { stdout } = await run(adbPath, ['-s', deviceUdid, 'shell', 'stat', '-c', '%s', remotePath], {
+        const { stdout } = await runFn(adbPath, ['-s', deviceUdid, 'shell', 'stat', '-c', '%s', remotePath], {
           timeout: ADB_SHORT_TIMEOUT_MS,
         });
         const landed = Number(stdout.trim());
@@ -161,9 +162,13 @@ export function identifyInstalledPackage(
   return changed.length === 1 ? changed[0] : null;
 }
 
-async function listInstalledPackages(adbPath: string, deviceUdid: string): Promise<Map<string, string | null>> {
+async function listInstalledPackages(
+  adbPath: string,
+  deviceUdid: string,
+  runFn: Runner = run,
+): Promise<Map<string, string | null>> {
   try {
-    const { stdout } = await run(
+    const { stdout } = await runFn(
       adbPath,
       ['-s', deviceUdid, 'shell', 'pm', 'list', 'packages', '--show-versioncode'],
       { timeout: ADB_SHORT_TIMEOUT_MS },
@@ -173,7 +178,7 @@ async function listInstalledPackages(adbPath: string, deviceUdid: string): Promi
     // `--show-versioncode` is API 28+; fall back to names only rather than
     // losing the new-package signal entirely on an older device.
     try {
-      const { stdout } = await run(adbPath, ['-s', deviceUdid, 'shell', 'pm', 'list', 'packages'], {
+      const { stdout } = await runFn(adbPath, ['-s', deviceUdid, 'shell', 'pm', 'list', 'packages'], {
         timeout: ADB_SHORT_TIMEOUT_MS,
       });
       return parsePackageList(stdout);
@@ -450,7 +455,10 @@ export async function runInstall(
   hub: HubClient,
   pending: PendingInstall,
   adbPath = process.env.ADB_PATH ?? 'adb',
+  // Seams for tests only: the agent always uses real adb and the real cache.
+  deps: { runFn?: Runner; cacheDir?: string } = {},
 ): Promise<void> {
+  const runFn = deps.runFn ?? run;
   const { installRunId, deviceUdid, buildId, platform, sizeBytes, artifactUrl } = pending;
 
   if (platform === 'ios') {
@@ -474,25 +482,25 @@ export async function runInstall(
       buildId,
       sizeBytes,
       (done, total) => onDownload(done, total ?? sizeBytes),
-      undefined,
+      deps.cacheDir,
       artifactUrl,
     );
 
     const localSize = fs.statSync(destPath).size;
     await hub.reportInstallProgress(installRunId, deviceUdid, { status: 'transferring', progress: 0 });
     const onPush = throttledReporter(hub, installRunId, deviceUdid, 'transferring');
-    await pushToDevice(adbPath, deviceUdid, destPath, remotePath, localSize, onPush);
+    await pushToDevice(adbPath, deviceUdid, destPath, remotePath, localSize, onPush, runFn);
 
     // Snapshotted before the install so the diff afterwards can name the
     // package that changed — the APK itself cannot be asked without aapt.
-    const packagesBefore = await listInstalledPackages(adbPath, deviceUdid);
+    const packagesBefore = await listInstalledPackages(adbPath, deviceUdid, runFn);
 
     // dexopt has no byte ratio, so progress deliberately stops moving here and
     // the phase label carries the meaning instead. Inventing a rising number
     // through this phase would be the same class of lie the byte counting
     // above exists to remove.
     await hub.reportInstallProgress(installRunId, deviceUdid, { status: 'installing', progress: 100 });
-    const { stdout } = await run(adbPath, ['-s', deviceUdid, 'shell', 'pm', 'install', '-r', remotePath], {
+    const { stdout } = await runFn(adbPath, ['-s', deviceUdid, 'shell', 'pm', 'install', '-r', remotePath], {
       timeout: ADB_INSTALL_TIMEOUT_MS,
     });
     // `pm install` reports failure on stdout with a zero exit code, so the
@@ -509,9 +517,11 @@ export async function runInstall(
     // silently no-ops is worse than no check: it reads as a guarantee.
     const installedPackage = identifyInstalledPackage(
       packagesBefore,
-      await listInstalledPackages(adbPath, deviceUdid),
+      await listInstalledPackages(adbPath, deviceUdid, runFn),
     );
-    const verifyWarning = installedPackage ? await verifyPackageInstalled(adbPath, deviceUdid, installedPackage) : null;
+    const verifyWarning = installedPackage
+      ? await verifyPackageInstalled(adbPath, deviceUdid, installedPackage, runFn)
+      : null;
 
     // Org opt-in (off by default) and Android-only, and only meaningful once
     // a package has been positively identified — a same-version reinstall
@@ -521,7 +531,9 @@ export async function runInstall(
     let grantNote: string | null = null;
     if (pending.grantPermissions && installedPackage) {
       await hub.reportInstallProgress(installRunId, deviceUdid, { status: 'granting-permissions', progress: 100 });
-      grantNote = describePermissionGrantNote(await grantRuntimePermissions(adbPath, deviceUdid, installedPackage));
+      grantNote = describePermissionGrantNote(
+        await grantRuntimePermissions(adbPath, deviceUdid, installedPackage, runFn),
+      );
     }
     const note = [verifyWarning, grantNote].filter((n): n is string => n !== null).join(' ');
 
@@ -544,7 +556,7 @@ export async function runInstall(
     // persistent per-build cache now (`ensureCachedBuild`), kept across
     // installs on purpose. Only the device-side staged copy is this run's own
     // mess to clean up; leaving one per install would fill /data/local/tmp.
-    void run(adbPath, ['-s', deviceUdid, 'shell', 'rm', '-f', remotePath], {
+    void runFn(adbPath, ['-s', deviceUdid, 'shell', 'rm', '-f', remotePath], {
       timeout: ADB_SHORT_TIMEOUT_MS,
     }).catch(() => {});
   }
