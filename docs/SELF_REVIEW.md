@@ -36,5 +36,7 @@ If something drifted, fix it now or flag it to the user — don't let it quietly
 ## 5. Checklist sync
 
 - Update `TODO.md` so it reflects reality before you stop — this is the last step, not a separate task to remember later.
+- **Update every other tracker the change touches, in the same commit:** `docs/accountability-2026-11.html` (row status + evidence; check the page script still parses), `docs/reconciliation-plan-2026-11.md` §9, `docs/SOURCE_FEATURE_TRACEABILITY.md`. (Added 2026-11-22 — these fell a full batch behind while only `TODO.md` was kept current; see `LESSONS.md`.)
+- **Prove the fix is what made the check pass:** rerun the test or live check with the fix stashed and watch it fail. (Added 2026-11-22.)
 - **Then search `TODO.md` for older statements about the same capability and reconcile them in the same change.** Adding a new true row while an older, now-false row survives is worse than either alone: a future session reads both and cannot tell which is current. Useful searches: the feature's own name, plus `planned`, `no code written`, `not built`, `deliberately not`, `deferred`. (Added 2026-08-29 — an external review found exactly this contradiction pattern surviving the previous round's cleanup.)
 - A tracker describes **current truth**. Keep superseded history only where it is explicitly labelled as superseded.

@@ -24,7 +24,7 @@ input{font:inherit;padding:6px 10px;border:1px solid var(--line);border-radius:6
 </style>
 <main>
 <h1>Farm-learnings accountability</h1>
-<p class="mute">Every item on the six reference pages, checked against mobile-hub's code on 2026-11-21. Architecture and lessons only; no organisation, host, product or people names. Each row has exactly one status. Click a tile to filter.</p>
+<p class="mute">Every item on the six reference pages, checked against mobile-hub's code on 2026-11-21, updated 2026-11-22. Architecture and lessons only; no organisation, host, product or people names. Each row has exactly one status. Click a tile to filter.</p>
 
 <div class="tiles" id="tiles"></div>
 <input id="q" type="search" placeholder="Filter rows (e.g. lesson 56, install, Appium)">
@@ -33,7 +33,7 @@ input{font:inherit;padding:6px 10px;border:1px solid var(--line);border-radius:6
 <ul>
 <li><b>Read everything?</b> Yes, on the second pass: 54 native-resolution tiles, transcribed word for word, all six pages. The first pass was a skim and missed most of the detail (plan rev 2 §0).</li>
 <li><b>Acted on everything?</b> No. The tiles above give the split. <b>Fixed</b> = a bug that existed here, fixed with a regression test. <b>Planned</b> = in the reconciliation plan with a phase, not built. <b>Gap</b> = applies here, but was in neither the plan nor the code until this page; now recorded in plan §9. <b>Unverified</b> = not yet checked against the code.</li>
-<li><b>Live-verified?</b> Some, against a running hub + Mongo: production refuses the placeholder secret; malformed ids give 404; an unknown build gives 404; a udid shared by two hosts gives 409 for install and stream, and an explicit host queues on exactly that host; the live sweep failed a stranded queued install and left a healthy host and newer work alone. Everything needing a real device (claim, zero-test, cache, adb blip, Appium sessions) is unit-tested only: the emulator would not start.</li>
+<li><b>Live-verified?</b> Some, against a running hub + Mongo: production refuses the placeholder secret; malformed ids give 404; an unknown build gives 404; a udid shared by two hosts gives 409 for install and stream, and an explicit host queues on exactly that host; the live sweep failed a stranded queued install and left a healthy host and newer work alone. On 2026-11-22 the emulator was made stable (headless, software GPU, stale-lock cleanup, 16a7aed) and the device-level paths were run for real: emulator boot and screencap, a real test run, the device lock surviving an adb restart, orphan Appium session cleanup, cancel during cache restore, and the sandboxed report in production mode.</li>
 <li><b>Not covered:</b> Lessons 1–27. The pages name them but do not print them.</li>
 </ul>
 
@@ -47,7 +47,7 @@ const R=[
 [1,'Frontend','Routes: devices, fleet, builds, execution, run detail, analytics, device health','P','devices, builds, execution, run detail, analytics exist. Fleet page → Phase 5; device-health page → Gap'],
 [1,'Frontend','Transports: polling, SSE run logs, WS stream, MJPEG, H.264','P','execution.routes.ts /:id/logs SSE; streaming WS with mjpeg|h264 protocol'],
 [1,'Edge','Reverse proxy must not buffer SSE (buffered SSE showed "0 lines")','G','No deployment note or X-Accel-Buffering header; recorded in plan §9'],
-[1,'Hub','Hub supervised and restarted on crash','P','docker-compose restart: unless-stopped for all services; no healthcheck, so a hung (not exited) backend is not restarted; remote agents unsupervised'],
+[1,'Hub','Hub supervised and restarted on crash','P','docker-compose restart: unless-stopped; 361e234 adds a backend HEALTHCHECK that gates the frontend start (compose verified). Docker still does not restart a container that is merely unhealthy; remote agents unsupervised'],
 [1,'Frontend','Prod serves a built bundle, not the dev server (Lesson 30)','P','frontend/Dockerfile builds then serves dist via nginx'],
 [1,'Hub','Hub is also a device host (local adb + Appium)','P','Hub-local Appium spawn path in appium.service.ts'],
 [1,'Agent','Agent ships with zero npm dependencies','N','Our agent is TypeScript inside the backend package by design'],
@@ -75,7 +75,7 @@ const R=[
 [1,'Data','Run appPreflight stage','L','Phase 2'],
 [1,'Data','triggeredBy on runs','P','execution-run.model.ts:66'],
 [1,'Locks','Device lock with TTL','P','devices.lockTtlMinutes (default 45) + releaseExpiredLocks sweep'],
-[1,'Execution','Execution presets','G','Not built; recorded in plan §9'],
+[1,'Execution','Execution presets','P','Partly: saved presets in the trigger form, per browser (localStorage), host-scoped since a0e7afc. Shared server-side presets: still a gap (plan §9)'],
 [1,'Execution','Runner status tree models','L','Phase 3'],
 [1,'Fleet','Agent model with blocked tombstone','P','Partly: per-agent credential revocation (revokedAt). Host-record tombstone → Phase 5'],
 [1,'Fleet','Agent deploy records','G','No agent deploy; recorded in plan §9'],
@@ -126,7 +126,7 @@ const R=[
 [2,'Discovery','Partial list from one failed probe; debounce; boot_completed, sticky (Lesson 56)','F','e2d4507: adb-discovery.ts + 4 multi-poll tests'],
 [2,'Auth','Agent token compared with timingSafeEqual; fails closed in production','P','agent-auth.ts:2,32'],
 [2,'Device config','Allow-listed keys, Idempotency-Key, refuse production','L','Phase 4'],
-[2,'Security','Security headers silently not applied','G','helmet is registered, but contentSecurityPolicy:false (app.ts:77); recorded in plan §9'],
+[2,'Security','Security headers silently not applied','F','50a2bd7: CSP enabled with per-route policies; 33841d9: the sandboxed report (origin null) can fetch its own data in production'],
 [2,'Auth','No end-user authentication','P','Ahead: JWT + RBAC'],
 [2,'Heartbeat','Compatibility shim for older agents','P','diagnostics optional for older agents (hosts.service.test.ts)'],
 [2,'Logs','~98 % of the log was access logs','F','e2d4507: agent routes at warn'],
@@ -190,7 +190,7 @@ const R=[
 [3,'Guards','Pending-snapshot map so cleanup cannot delete a tree being cached','F','Unneeded: snapshot copies to its own temp dir (e2d4507)'],
 [3,'Guards','Scheduler tick + nextRunAt claim','L','Phase 5'],
 [3,'Guards','Setup queue claim-once','L','Phase 4'],
-[3,'Branches','List branches + suites from the remote, cached','P','ls-remote with 20 s timeout + 5 min cache; suites cached. Gap: suites always from the default branch'],
+[3,'Branches','List branches + suites from the remote, cached','F','f137197: suites read from the chosen branch (validated ?branch=, per-branch checkout, live-checked); 8e5d68d: concurrent lookups share one clone, unused checkouts pruned after 14 days; b69330d: the form starts on the remote default branch (ls-remote --symref)'],
 [3,'Impact','Test impact from git diff','G','Recorded in plan §9'],
 [3,'Boot','Recover orphaned runs; prune crashed workspaces, keep logs/results','P','recoverOrphanedRuns; artifacts live outside the workspace'],
 [3,'Boot','Restart recovery repairs from saved results instead of blanket fail','L','Phase 2 resync'],
@@ -241,7 +241,7 @@ const R=[
 [4,'Installs','Uninstall left the device listed','F','8908df9: installed-on list refetches when the install/uninstall run settles'],
 [4,'Agent cache','Pre-stage a build on an agent; reuse for preflight','G','Recorded in plan §9'],
 [4,'Setup','Post-install permissions with read-back (Lesson 36)','P','grantRuntimePermissions reads dumpsys package (agent/installer.ts:264)'],
-[4,'Setup','Ungrantable permissions → skipped, not failed (Lesson 39)','G','Grant failures never fail the install, but the granted/failed result is discarded, so nothing records what was skipped'],
+[4,'Setup','Ungrantable permissions → skipped, not failed (Lesson 39)','F','f137197: failed grants and an unreadable permission list reach the hub as the done-target note, shown as "Done with warning"; 495e794 tests it end to end'],
 [4,'Setup','App env flags via debug screen / prefs CLI','N','App-specific'],
 [4,'Setup','iOS notification grant needs SpringBoard reload (64)','L','Phase 4'],
 [4,'Device config','Durable jobs, dryRun, Idempotency-Key, refuse prod, busy lock','L','Phase 4'],
@@ -264,7 +264,7 @@ const R=[
 [4,'Frontend','Badge contrast in both themes (65, 66)','F','9437379: light mode was ~2.1–3.8:1; every status now >= 4.5:1 in all three theme blocks, with a contrast test'],
 [4,'Frontend','Sticky/overlay hit-testing (49, 50)','N','No such panels'],
 [4,'Frontend','Curl the endpoint before trusting a field (34)','F','8908df9: activeInstall keyed by udid flagged the same serial on every host; GET /devices/:udid lacked it'],
-[4,'Frontend','Verify the served bundle, screenshot the real page','F','9437379: the image baked http://localhost:3000 and production CORS is off, so a deployed UI had no API. Image not rebuilt yet (disk)'],
+[4,'Frontend','Verify the served bundle, screenshot the real page','F','9437379: the image baked http://localhost:3000 and production CORS is off, so a deployed UI had no API. Rebuilt and verified 2026-11-22: compose over the LAN IP serves the page, deep links, /api, auth and WebSocket; the bundle has no localhost:3000'],
 [4,'Frontend','List endpoints return partial objects','P','Execution list returns full documents, same shape as detail'],
 [4,'Frontend','Status labels from one function','P','frontend/src/lib/status.ts'],
 [4,'Frontend','Shared toasts; no window.prompt','P','One ToastProvider; no alert/confirm/prompt in frontend/src'],
@@ -278,7 +278,7 @@ const R=[
 [5,'Decision','Per-run worktree + cloned node_modules','L','Phase 2'],
 [5,'Decision','Allure results are the source of truth','P','collectTestSummary'],
 [5,'Decision','Polling hooks; stop on terminal','P','React Query refetchInterval'],
-[5,'Decision','Feature switches at both layers; timers need server flags','F','4359c4f (server side). Frontend nav does not hide disabled modules yet'],
+[5,'Decision','Feature switches at both layers; timers need server flags','F','4359c4f (server side); 98b48b3 hides switched-off modules in the frontend'],
 [5,'Hygiene','Auto-commits with no message content','N','Our commits carry real messages'],
 [5,'Retired','skipInstall, symlink cache, prefer-offline, local-execution mode','N','Never adopted'],
 // page 6 — ledger
@@ -293,7 +293,7 @@ const R=[
 [6,'Critical 9','Duplicate hubs/agents at different commits','L','Phase 5'],
 [6,'Critical 10','In-memory job store lost results','P','Mongo'],
 [6,'Critical 11','Fallback deleted another machine\'s device','P','No delete fallback'],
-[6,'Critical 12','Failed verify read as "nothing installed"','G','Never read as none installed; but an unverified install reports done exactly like a verified one'],
+[6,'Critical 12','Failed verify read as "nothing installed"','F','Never read as none installed; f137197: an unverified install now shows "Done with warning" with the reason instead of a plain done'],
 [6,'Critical 13','Restart marked every interrupted run failed','L','Phase 2 resync'],
 [6,'Critical 14','Duplicate worker overwrote a pass; scheduler re-fired','F','e2d4507 (scheduler part → Phase 5)'],
 [6,'Critical 15','HTTP agent override broke TLS fleet-wide','N','No override'],
@@ -307,7 +307,7 @@ const R=[
 [6,'Other','ts-node served stale JS (24)','N','tsx/tsc'],
 // lessons index 28–76 not already covered above
 [6,'Lesson 28','Route param decorator without a segment = undefined','N','zod-validated routes'],
-[6,'Lesson 32','Middlewares never loaded → headers absent','G','helmet loads, CSP disabled (see page 2 row)'],
+[6,'Lesson 32','Middlewares never loaded → headers absent','F','50a2bd7 (see page 2 row)'],
 [6,'Lesson 33','Runs stamped with the agent id','P','see Critical 7'],
 [6,'Lesson 37','Env setup read the next node','N','App-specific'],
 [6,'Lesson 38','Hub/agent shared code is one-way','N','Agent lives in the backend package'],
@@ -325,7 +325,7 @@ const R=[
 [6,'Lesson 74','Pin tool versions behind a mirror','N','No MCP tooling in the product'],
 [6,'Lesson 75','Duplicate worker overwrote a pass','F','e2d4507'],
 [6,'Lesson 76','Cleanup poisoned the npm cache','F','e2d4507 + b11f95a'],
-[6,'Open','No CI in repo','G','No .github/workflows; recorded in plan §9'],
+[6,'Open','No CI in repo','F','88f19e9: GitHub Actions, backend on ubuntu + windows, frontend; 3f90f0c keeps the CI runner ANDROID_HOME out of tests; green on 8d7c332'],
 [6,'Open','No test for the atomic snapshot','F','Tests added in e2d4507'],
 [6,'Open','Root cause of the partial tree not reproduced','N','Their incident'],
 [6,'Rule','Atomic $set, never findOne + save()','F','Status writes since e2d4507; other save() calls remain (run fields at cleanup)'],
@@ -339,9 +339,18 @@ const R=[
 [0,'Verification','Analytics per-device stats merged the same serial across two hosts','F','52526db'],
 [0,'Verification','Multi-device view and device links keyed by udid; device cache shared across hosts','F','8908df9'],
 [0,'Verification','Literal NUL byte committed in InstallDialog.tsx (made by an earlier edit of mine)','F','8908df9'],
-[0,'Verification','Suites listed from the default branch, not the selected one','G','Recorded in plan §9'],
-[0,'Verification','Trigger form device picker and saved presets keyed by udid','G','Needs a preset format change'],
-[0,'Verification','Install verify warnings and skipped permissions not shown in the UI','G','Data reaches the API, not the dialog'],
+[0,'Verification','Suites listed from the default branch, not the selected one','F','f137197 (see page 3 Branches row)'],
+[0,'Verification','Trigger form device picker and saved presets keyed by udid','F','a0e7afc: picker and presets keyed by host + udid; legacy udid-only presets load only when that udid is unique; run list filters by machineId'],
+[0,'Verification','Install verify warnings and skipped permissions not shown in the UI','F','f137197: "Done with warning" badge with the note; 495e794 end-to-end test'],
+// found during the 2026-11-22 device-level pass
+[0,'Live check','Emulator crashed on start (hybrid-GPU driver, stale AVD lock directory)','F','16a7aed: headless + swiftshader_indirect by default, locks cleared only when no emulator runs, emulator env allow-listed (its crash reporter dumps the env)'],
+[0,'Live check','Sandboxed report could not fetch its own data in production (origin null, CORS off)','F','33841d9: report route sends Access-Control-Allow-Origin: null, no credentials'],
+[0,'Live check','Cancel during restoring_cache took ~35 s','F','ecc6324: per-entry copy checks for cancel; settles in ~3 s'],
+[0,'Live check','stop.mjs left tsx watch parents, which respawned a second backend on another database','F','acd8c4a: watchers killed; only real node processes of this repo matched'],
+[0,'Live check','Analytics links opened the Current tab and ignored the suite','F','dae25e2: links open History and carry suite; run list honours ?suite='],
+[0,'Live check','Durations rendered as "1m 60s"','F','dae25e2 (analytics formatter); 300354d picks up the same fix in the shared format library'],
+[0,'Live check','CI tests read the CI runner ANDROID_HOME instead of their own','F','3f90f0c'],
+[0,'Live check','Demo test repo opened no app when a run had no build, so every scenario timed out on the home screen','F','Fixed in the demo repo (launch the installed app by package); verified 3/3 specs on the emulator; push pending'],
 ];
 const counts={};R.forEach(r=>counts[r[3]]=(counts[r[3]]||0)+1);
 let active=null;const tiles=document.getElementById('tiles');

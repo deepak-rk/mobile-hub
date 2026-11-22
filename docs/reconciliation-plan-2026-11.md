@@ -160,14 +160,14 @@ Items that apply here but were in neither this plan nor the code. Ordered by ris
 
 **Correctness / safety**
 1. Installs skip the device lock, so an install can land on a device mid-run (farm Lesson 41, "never install over a busy device"). **Recorded earlier as a deliberate decision** (`install-run.model.ts:86`); the farm's data argues for revisiting it. Awaiting a decision.
-2. ~~Feature switches do not stop server timers~~ **Done `4359c4f`.** The toggles were never read at all; routes and timers now honour them. Frontend nav still shows disabled modules.
+2. ~~Feature switches do not stop server timers~~ **Done `4359c4f`.** The toggles were never read at all; routes and timers now honour them; `98b48b3` hides switched-off modules in the frontend too.
 3. ~~`AGENT_APPIUM_HOST` loopback default~~ **Done `4359c4f`:** a loopback report from a remote request uses its source address.
-4. CSP is disabled (`contentSecurityPolicy: false`).
-5. No CI workflow.
+4. ~~CSP is disabled~~ **Done `50a2bd7`** (per-route policies); `33841d9` lets the sandboxed report fetch its own data in production.
+5. ~~No CI workflow~~ **Done `88f19e9`** (backend on ubuntu + windows, frontend); green on every push since `3f90f0c`.
 
 **Execution**
 6. npm install: one ETARGET retry, fetch timeouts; load check that invalidates a bad cache entry; seed from the nearest complete entry on a miss.
-7. Execution presets; test impact from git diff; CSV export; artifacts zip; KPI gauges.
+7. Shared (server-side) execution presets — per-browser presets exist; test impact from git diff; CSV export; artifacts zip; KPI gauges.
 
 **Devices / fleet**
 8. Stream concurrency cap and staggered capture starts.
@@ -182,4 +182,6 @@ Items that apply here but were in neither this plan nor the code. Ordered by ris
 15. Add "review by feature, by artefact, by user journey" to `docs/SELF_REVIEW.md` (Lesson 73).
 16. Frontend: lazy routes; runtime override for client feature flags (Lesson 59).
 
-The page also lists every item still marked **Unverified**. Each needs a code check before it can be called present or a bug.
+**Found by the 2026-11-22 verification and device-level pass — all done:** suites follow the chosen branch (`f137197`), the form starts on the remote default branch (`b69330d`), branch checkouts are de-duplicated and pruned (`8e5d68d`); trigger picker and presets keyed by host (`a0e7afc`); install notes shown as "Done with warning" (`f137197`, tested `495e794`); cancel during cache restore (`ecc6324`); `stop.mjs` orphan watchers (`acd8c4a`); backend healthcheck (`361e234`); emulator stability (`16a7aed`).
+
+The Unverified rows were all resolved by a code check (`3466d8c`).
