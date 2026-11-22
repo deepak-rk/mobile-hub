@@ -29,6 +29,28 @@ export type RunStatus = 'queued' | 'preparing' | 'running' | 'passed' | 'failed'
  */
 export type FailureKind = 'test' | 'infra' | 'precondition';
 
+/**
+ * Why a run ended without passing, finer than FailureKind (which stays the
+ * attributable/non-attributable split analytics uses). One value per place a
+ * run can fail, so the class is a fact about where it stopped, not a guess
+ * from log text.
+ */
+export const ERROR_CLASSES = [
+  'device_offline',
+  'checkout_failed',
+  'dependency_install_failed',
+  'network_timeout',
+  'appium_session',
+  'build_missing',
+  'test_assertion',
+  'no_tests_matched',
+  'run_timeout',
+  'hub_restarted',
+  'cancelled',
+  'unknown',
+] as const;
+export type ErrorClass = (typeof ERROR_CLASSES)[number];
+
 export interface IStage {
   name: StageName;
   status: StageStatus;
@@ -69,6 +91,8 @@ export interface IExecutionRun extends Document {
   status: RunStatus;
   /** Set only when `status === 'failed'`. See FailureKind. */
   failureKind: FailureKind | null;
+  /** Set when the run failed or was cancelled; null on a pass and on runs predating it. */
+  errorClass: ErrorClass | null;
   stages: IStage[];
   /** Ephemeral working directory — deleted when the run ends. */
   workspacePath: string;
@@ -219,6 +243,7 @@ const executionRunSchema = new Schema<IExecutionRun>(
       index: true,
     },
     failureKind: { type: String, enum: ['test', 'infra', 'precondition'], default: null },
+    errorClass: { type: String, enum: [...ERROR_CLASSES, null], default: null },
     stages: { type: [stageSchema], default: [] },
     workspacePath: { type: String, required: true },
     cacheKey: { type: String, default: null },

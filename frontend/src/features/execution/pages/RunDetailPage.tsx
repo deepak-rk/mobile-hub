@@ -295,6 +295,7 @@ export function RunDetailPage() {
                       : []),
                     { term: 'Branch', value: <Mono>{run.branch}</Mono> },
                     ...(run.variant ? [{ term: 'Variant', value: <Mono>{run.variant}</Mono> }] : []),
+                    ...(run.errorClass ? [{ term: 'Stopped by', value: <Mono>{run.errorClass}</Mono> }] : []),
                     { term: 'Suite', value: <Mono>{run.suite}</Mono> },
                     {
                       term: 'Device',

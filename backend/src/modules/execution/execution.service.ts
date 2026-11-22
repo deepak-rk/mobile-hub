@@ -27,6 +27,7 @@ import {
   RunStatus,
   StageName,
   FailureKind,
+  ErrorClass,
 } from './execution-run.model';
 import { publishExecutionEvent } from './execution.events';
 import { ConflictError, ValidationError } from '../../common/errors/app-error';
@@ -315,8 +316,8 @@ export async function dispatchQueuedRuns(config: EffectiveConfig): Promise<numbe
  * exactly as hard as a genuine test failure. See analytics.service.ts, which
  * now computes pass rate over test-attributable runs only.
  */
-async function failRun(run: IExecutionRun, kind: FailureKind): Promise<void> {
-  await setStatus(run, 'failed', { failureKind: kind });
+async function failRun(run: IExecutionRun, kind: FailureKind, errorClass: ErrorClass): Promise<void> {
+  await setStatus(run, 'failed', { failureKind: kind, errorClass });
 }
 
 /** A run in one of these has a recorded outcome that nothing may overwrite. */
@@ -343,8 +344,10 @@ const TERMINAL_STATUSES: RunStatus[] = ['passed', 'failed', 'cancelled'];
 export async function setStatus(
   run: IExecutionRun,
   status: RunStatus,
-  extra: { failureKind?: FailureKind } = {},
+  extra: { failureKind?: FailureKind; errorClass?: ErrorClass } = {},
 ): Promise<boolean> {
+  // A cancel is always classed as one, whichever path wrote it.
+  if (status === 'cancelled' && extra.errorClass === undefined) extra = { ...extra, errorClass: 'cancelled' };
   const result = await ExecutionRun.updateOne(
     { _id: run._id, status: { $nin: TERMINAL_STATUSES } },
     { $set: { status, ...extra } },
@@ -355,6 +358,10 @@ export async function setStatus(
   if (extra.failureKind !== undefined) {
     run.failureKind = extra.failureKind;
     run.unmarkModified('failureKind');
+  }
+  if (extra.errorClass !== undefined) {
+    run.errorClass = extra.errorClass;
+    run.unmarkModified('errorClass');
   }
   publishExecutionEvent(run.id as string, { type: 'status', status });
   return true;
@@ -410,7 +417,7 @@ async function failForOfflineDevice(run: IExecutionRun): Promise<void> {
   }
   run.endedAt = new Date();
   await run.save();
-  await setStatus(run, 'failed', { failureKind: 'precondition' });
+  await setStatus(run, 'failed', { failureKind: 'precondition', errorClass: 'device_offline' });
 }
 
 async function setStage(
@@ -854,6 +861,7 @@ async function runExecution(
       stage: StageName,
       outcome: RunOutcome,
       kindOnFailure: FailureKind,
+      classOnFailure: ErrorClass,
     ): Promise<boolean> => {
       if (isSuccess(outcome)) {
         await setStage(run, stage, 'done');
@@ -869,8 +877,18 @@ async function runExecution(
       // against a suite's pass rate.
       const kind =
         outcome.kind === 'spawn-failed' || outcome.kind === 'timeout' ? 'infra' : kindOnFailure;
+      // A timeout in the test command is the run-length cap; earlier stages
+      // time out on the network (clone, package fetch).
+      const errorClass: ErrorClass =
+        outcome.kind === 'timeout'
+          ? stage === 'execute'
+            ? 'run_timeout'
+            : 'network_timeout'
+          : outcome.kind === 'spawn-failed'
+            ? 'unknown'
+            : classOnFailure;
       await setStage(run, stage, 'error', describeOutcome(outcome));
-      await failRun(run, kind);
+      await failRun(run, kind, errorClass);
       return false;
     };
 
@@ -888,7 +906,7 @@ async function runExecution(
       );
       // Cloning is the hub's own plumbing — a failure here says nothing about
       // the app under test.
-      if (!(await settleStage('pulling', cloneOutcome, 'infra'))) return;
+      if (!(await settleStage('pulling', cloneOutcome, 'infra', 'checkout_failed'))) return;
       cwd = repoDir;
       await recordCommit(run, repoDir);
 
@@ -924,7 +942,7 @@ async function runExecution(
           redact,
         });
         // Dependency install failing is an environment problem, not a test result.
-        if (!(await settleStage('installing', setupOutcome, 'infra'))) return;
+        if (!(await settleStage('installing', setupOutcome, 'infra', 'dependency_install_failed'))) return;
       } finally {
         releasePrepSlot();
       }
@@ -944,6 +962,8 @@ async function runExecution(
     // the suite itself, and a run that fails while cloning should not have
     // spun one up. Failing to get one is infrastructure, never a test result.
     if (appiumConfig?.enabled) {
+      // Narrowed below when the failure is the build rather than Appium.
+      let setupClass: ErrorClass = 'appium_session';
       try {
         const device = await getDevice(input.deviceUdid, input.machineId);
         if (device) {
@@ -962,6 +982,7 @@ async function runExecution(
           // pipeline still failed with NoSuchElementError.
           const build = run.buildId ? await getBuild(run.buildId.toString()) : null;
           if (run.buildId && !build?.artifactPath) {
+            setupClass = 'build_missing';
             throw new Error(
               `Build ${run.buildId.toString()} has no local artifact to run against — re-fetch it before running.`,
             );
@@ -983,7 +1004,7 @@ async function runExecution(
         }
       } catch (err) {
         await setStage(run, 'execute', 'error', err instanceof Error ? err.message : String(err));
-        await failRun(run, 'infra');
+        await failRun(run, 'infra', setupClass);
         return;
       }
     }
@@ -1006,7 +1027,7 @@ async function runExecution(
     });
 
     // The only stage whose nonzero exit is a genuine *test* result.
-    if (!(await settleStage('execute', runOutcome, 'test'))) return;
+    if (!(await settleStage('execute', runOutcome, 'test', 'test_assertion'))) return;
 
     // Exit 0 is not a pass if nothing ran. A tag or suite filter that matches
     // no tests makes the runner exit cleanly, and reporting that as green is
@@ -1019,7 +1040,7 @@ async function runExecution(
         'error',
         'The runner exited cleanly but executed no tests — the suite/tag filter matched nothing.',
       );
-      await failRun(run, 'precondition');
+      await failRun(run, 'precondition', 'no_tests_matched');
       return;
     }
     await setStatus(run, 'passed');
@@ -1029,7 +1050,7 @@ async function runExecution(
       line: `orchestration error: ${err instanceof Error ? err.message : String(err)}`,
     });
     // An exception in the orchestrator itself is infrastructure by definition.
-    await failRun(run, 'infra');
+    await failRun(run, 'infra', 'unknown');
   } finally {
     // First of all, before anything can fail or the workspace is removed:
     // keep the runner's raw results. They are the only source a result can be
@@ -1242,6 +1263,7 @@ export async function recoverOrphanedRuns(
     run.status = 'failed';
     // A backend restart is infrastructure, not a test result.
     run.failureKind = 'infra';
+    run.errorClass = 'hub_restarted';
     run.endedAt = new Date();
     await run.save();
     await releaseLock(run.deviceUdid, run.triggeredBy, true, run.machineId);

@@ -343,6 +343,32 @@ describe('triggerExecutionRun', () => {
     expect(doc.endedAt).toBeInstanceOf(Date);
   });
 
+  it('classes a failed dependency install, and a runner that cannot start', async () => {
+    for (const [input, expected] of [
+      [
+        { setup: { command: 'node', args: ['-e', 'process.exit(3)'] }, run: { command: 'node', args: ['-e', '0'] } },
+        'dependency_install_failed',
+      ],
+      [{ run: { command: 'mh-no-such-binary-xyz', args: [] } }, 'unknown'],
+    ] as const) {
+      const doc = fakeRunDoc();
+      vi.spyOn(ExecutionRun, 'create').mockResolvedValue(doc as never);
+      vi.spyOn(devicesService, 'acquireLock').mockResolvedValue({} as never);
+      const released = waitForReleaseLock();
+      await triggerExecutionRun({ ...baseInput, ...input });
+      await released;
+      expect(doc.status).toBe('failed');
+      expect(doc.errorClass).toBe(expected);
+    }
+  });
+
+  it('classes any cancel as cancelled', async () => {
+    const doc = fakeRunDoc();
+    fakeDocs.set(doc._id, doc as never);
+    expect(await setStatus(doc as never, 'cancelled')).toBe(true);
+    expect(doc.errorClass).toBe('cancelled');
+  });
+
   it('releases the lock after a failing run (nonzero exit)', async () => {
     const doc = fakeRunDoc();
     vi.spyOn(ExecutionRun, 'create').mockResolvedValue(doc as never);
@@ -353,6 +379,7 @@ describe('triggerExecutionRun', () => {
     await released;
 
     expect(doc.status).toBe('failed');
+    expect(doc.errorClass).toBe('test_assertion');
     const execStage = (doc.stages as { name: string; status: string; error?: string }[]).find(
       (s) => s.name === 'execute',
     );
@@ -399,6 +426,7 @@ describe('recoverOrphanedRuns', () => {
 
     expect(count).toBe(1);
     expect(orphan.status).toBe('failed');
+    expect(orphan.errorClass).toBe('hub_restarted');
     const execStage = (orphan.stages as { name: string; status: string; error?: string }[]).find(
       (s) => s.name === 'execute',
     );
@@ -866,6 +894,7 @@ describe('zero-test detection', () => {
 
     expect(doc.status).toBe('failed');
     expect(doc.failureKind).toBe('precondition');
+    expect(doc.errorClass).toBe('no_tests_matched');
   });
 
   it('ignores results left in the workspace before the run — only what this run writes counts', async () => {
@@ -945,6 +974,7 @@ describe('offline device fail-fast', () => {
 
     expect(doc.status).toBe('failed');
     expect(doc.failureKind).toBe('precondition');
+    expect(doc.errorClass).toBe('device_offline');
     expect(acquire).not.toHaveBeenCalled();
   });
 

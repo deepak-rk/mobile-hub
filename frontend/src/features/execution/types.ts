@@ -16,6 +16,11 @@ export interface ExecutionRun {
   branch: string;
   /** Null when the project declares no variants (and on runs predating them). */
   variant?: string | null;
+  /**
+   * Where a failed or cancelled run stopped (backend ERROR_CLASSES, e.g.
+   * test_assertion, dependency_install_failed). Null on a pass and on older runs.
+   */
+  errorClass?: string | null;
   suite: string;
   triggeredBy: string;
   status: RunStatus;
