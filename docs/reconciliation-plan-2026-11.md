@@ -76,10 +76,10 @@ Not live-verified: Docker/Mongo was down this session. First thing once it is ba
 - **Repair from saved results** (`resync`): rebuild a run's outcome from its persisted raw results; restart recovery uses it instead of a blanket "failed" when results exist. Repair only — never fails anything for absence.
 - **errorClass** taxonomy: `device_offline · install_failed · test_assertion · network_timeout · appium_session · build_missing · cancelled · unknown` (keep `failureKind` as the attributable/non-attributable projection).
 - **App preflight** stage: is the bundle on the device? else wait for any in-flight install on that device → download + install → re-verify. Fail-fast `install_failed`/`build_missing`. Resolve the device by host + udid.
-- **Prep semaphore**: bound concurrent dependency installs per hub (farm: 3; parallel npm installs peak 1.5–3 GB RSS each).
+- **Prep semaphore**: bound concurrent dependency installs per hub (farm: 3; parallel npm installs peak 1.5–3 GB RSS each). **Done 2026-11-22** (`EXECUTION_PREP_CONCURRENCY`, default 3; waiting is logged and cancellable).
 - **Bare repo + worktree per run** with a fetch mutex and stale `.git/*.lock` cleanup; boot prune of orphaned worktrees keeps logs and results.
 - **Stage model**: add the result-collection/release stage already recorded as REIMPLEMENT.
-- **Executor field** on every run (`{ kind: 'hub' | 'agent', machineId }`) for the scale path.
+- **Executor field** on every run (`{ kind: 'hub' | 'agent', machineId }`) for the scale path. **Done 2026-11-22** (`executor: {kind: hub, machineId: HUB_MACHINE_ID}`, default hostname).
 
 ### Phase 3 — execution visibility
 - **Runner status tree**: execution group (platform × variant, shared group id) → suite → feature → scenario/outline row; each node `status, runId stamp, updatedAt, rerunHistory`. Writers and rules exactly as the farm learned them:

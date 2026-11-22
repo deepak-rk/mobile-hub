@@ -138,6 +138,7 @@ export async function triggerExecutionRun(
     variant: input.variant ?? null,
     suite: input.suite,
     triggeredBy: input.triggeredBy,
+    executor: { kind: 'hub', machineId: env.HUB_MACHINE_ID },
     status: 'queued',
     stages: [
       pullsRealRepo
@@ -905,12 +906,28 @@ async function runExecution(
 
     if (input.setup && !cancelledRuns.has(runId)) {
       await setStage(run, 'installing', 'running');
-      const setupOutcome = await runCommand(input.setup, cwd, logStream, runId, {
-        env: runEnv,
-        redact,
-      });
-      // Dependency install failing is an environment problem, not a test result.
-      if (!(await settleStage('installing', setupOutcome, 'infra'))) return;
+      const gotSlot = await acquirePrepSlot(
+        () => cancelledRuns.has(runId),
+        (line) => {
+          logStream.write(line);
+          publishExecutionEvent(runId, { type: 'log', line });
+        },
+      );
+      if (!gotSlot) {
+        await setStage(run, 'installing', 'error', 'cancelled');
+        await setStatus(run, 'cancelled');
+        return;
+      }
+      try {
+        const setupOutcome = await runCommand(input.setup, cwd, logStream, runId, {
+          env: runEnv,
+          redact,
+        });
+        // Dependency install failing is an environment problem, not a test result.
+        if (!(await settleStage('installing', setupOutcome, 'infra'))) return;
+      } finally {
+        releasePrepSlot();
+      }
       await saveCacheIfMissing(cwd, cacheDir);
     }
 
@@ -1304,3 +1321,36 @@ export function assertVariantAllowed(
     );
   }
 }
+
+/**
+ * Bounds concurrent dependency installs on this hub (EXECUTION_PREP_CONCURRENCY).
+ * Not FIFO: a waiter re-checks on a short interval, which keeps a cancel
+ * responsive without a waiter queue to clean up. Exported for tests.
+ */
+let prepActive = 0;
+const PREP_POLL_MS = 500;
+
+export async function acquirePrepSlot(isCancelled: () => boolean, log?: (line: string) => void): Promise<boolean> {
+  let announced = false;
+  while (prepActive >= env.EXECUTION_PREP_CONCURRENCY) {
+    if (isCancelled()) return false;
+    if (!announced) {
+      log?.(`Waiting for a dependency-install slot (${prepActive} of ${env.EXECUTION_PREP_CONCURRENCY} in use)\n`);
+      announced = true;
+    }
+    await new Promise((r) => setTimeout(r, PREP_POLL_MS));
+  }
+  if (isCancelled()) return false;
+  prepActive += 1;
+  return true;
+}
+
+export function releasePrepSlot(): void {
+  prepActive = Math.max(0, prepActive - 1);
+}
+
+/** Test-only view of the counter. */
+export function prepSlotsInUse(): number {
+  return prepActive;
+}
+

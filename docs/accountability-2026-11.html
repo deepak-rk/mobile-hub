@@ -166,7 +166,7 @@ const R=[
 [3,'Pick','Oldest queued per device; skip devices already starting','P','Dispatcher + DB lock'],
 [3,'Liveness','Agent device unseen 2 min → device_offline','F','e2d4507'],
 [3,'Locks','Lock retry up to max duration; zombie-lock sweep','P','TTL sweep every minute (devices.service.ts:144)'],
-[3,'Prep','Prep semaphore: bound parallel npm installs (1.5–3 GB each)','L','Phase 2'],
+[3,'Prep','Prep semaphore: bound parallel npm installs (1.5–3 GB each)','F','2026-11-22: EXECUTION_PREP_CONCURRENCY (default 3) bounds the installing stage per hub; a waiter logs why and stays cancellable'],
 [3,'Claim','Atomic queued → working claim; loser touches nothing','F','e2d4507: claimQueuedRun'],
 [3,'Git','Fetch mutex, bare repo, worktree, stale lock cleanup','L','Phase 2'],
 [3,'Cache','Key from package.json hash','P','cacheKey in restoreCache'],

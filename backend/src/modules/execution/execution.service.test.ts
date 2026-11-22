@@ -26,6 +26,9 @@ import {
   sweepStaleCacheSnapshots,
   copyDirCancellable,
   OFFLINE_FAIL_FAST_MS,
+  acquirePrepSlot,
+  releasePrepSlot,
+  prepSlotsInUse,
 } from './execution.service';
 
 /**
@@ -175,6 +178,45 @@ const baseInput = {
   triggeredBy: 'user-1',
 };
 
+describe('dependency-install slots (EXECUTION_PREP_CONCURRENCY)', () => {
+  let origLimit: number;
+  beforeEach(() => {
+    origLimit = env.EXECUTION_PREP_CONCURRENCY;
+    env.EXECUTION_PREP_CONCURRENCY = 2;
+  });
+  afterEach(() => {
+    while (prepSlotsInUse() > 0) releasePrepSlot();
+    env.EXECUTION_PREP_CONCURRENCY = origLimit;
+  });
+
+  it('lets the limit through, holds the next until a slot frees, and says why', async () => {
+    expect(await acquirePrepSlot(() => false)).toBe(true);
+    expect(await acquirePrepSlot(() => false)).toBe(true);
+
+    const lines: string[] = [];
+    let third = false;
+    const waiting = acquirePrepSlot(() => false, (l) => lines.push(l)).then((ok) => (third = ok));
+    await new Promise((r) => setTimeout(r, 50));
+    expect(third).toBe(false);
+    expect(lines.join('')).toMatch(/2 of 2 in use/);
+
+    releasePrepSlot();
+    await waiting;
+    expect(third).toBe(true);
+    expect(prepSlotsInUse()).toBe(2);
+  });
+
+  it('gives up without taking a slot when the run is cancelled while waiting', async () => {
+    await acquirePrepSlot(() => false);
+    await acquirePrepSlot(() => false);
+    let cancelled = false;
+    const waiting = acquirePrepSlot(() => cancelled);
+    cancelled = true;
+    expect(await waiting).toBe(false);
+    expect(prepSlotsInUse()).toBe(2);
+  });
+});
+
 describe('triggerExecutionRun: project platforms and variants', () => {
   const projects = resolveProjects(
     {
@@ -210,6 +252,16 @@ describe('triggerExecutionRun: project platforms and variants', () => {
     const create = vi.spyOn(ExecutionRun, 'create');
     await expect(trigger(project, variant)).rejects.toMatchObject({ code, statusCode: 400 });
     expect(create).not.toHaveBeenCalled();
+  });
+
+  it('records the hub as the executor', async () => {
+    const create = vi.spyOn(ExecutionRun, 'create').mockResolvedValue(fakeRunDoc() as never);
+    vi.spyOn(devicesService, 'acquireLock').mockResolvedValue(null);
+    await trigger('plain');
+    expect((create.mock.calls[0][0] as { executor: unknown }).executor).toEqual({
+      kind: 'hub',
+      machineId: env.HUB_MACHINE_ID,
+    });
   });
 
   it('stores a declared variant on the run', async () => {

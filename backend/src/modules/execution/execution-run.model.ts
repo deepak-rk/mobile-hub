@@ -103,6 +103,12 @@ export interface IExecutionRun extends Document {
    */
   snapshot: IRunSnapshot | null;
   /**
+   * Who executed the run. Always the hub today; recorded from the first run
+   * so moving execution to agents (plan §6.3) does not need a migration.
+   * Null on runs that predate the field.
+   */
+  executor: { kind: 'hub' | 'agent'; machineId: string } | null;
+  /**
    * The setup/run commands this trigger actually resolved to. See
    * `IRunCommands`'s own doc comment. Null only for a run created before this
    * field existed — such a run is already terminal, never queued, so
@@ -225,6 +231,13 @@ const executionRunSchema = new Schema<IExecutionRun>(
     // run ends, read with the run, and never queried on its own.
     testSummary: { type: testSummarySchema, default: null },
     snapshot: { type: runSnapshotSchema, default: null },
+    executor: {
+      type: new Schema(
+        { kind: { type: String, enum: ['hub', 'agent'], required: true }, machineId: { type: String, required: true } },
+        { _id: false },
+      ),
+      default: null,
+    },
     commands: { type: runCommandsSchema, default: null },
     startedAt: { type: Date, default: null },
     endedAt: { type: Date, default: null },

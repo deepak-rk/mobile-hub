@@ -51,6 +51,14 @@ const envSchema = z.object({
   // run never ended. 120 matches what a production farm in this domain
   // settled on; a long nightly regression may need it raised.
   EXECUTION_MAX_RUN_MINUTES: z.coerce.number().int().positive().default(120),
+  // How many runs may install dependencies at once on this hub. Each npm
+  // install peaks at 1.5-3 GB RSS; a reference farm ran out of memory with
+  // several in parallel and settled on 3. Runs past the limit wait in the
+  // installing stage (cancellable) rather than failing.
+  EXECUTION_PREP_CONCURRENCY: z.coerce.number().int().positive().default(3),
+  // Who executes runs on this hub, recorded on every run as executor.machineId.
+  // Defaults to the hostname, the same default an agent uses for itself.
+  HUB_MACHINE_ID: z.string().min(1).default(os.hostname()),
   ORG_CONFIG_PATH: z.string().default(path.join(process.cwd(), '..', 'mobilehub.org.yaml')),
   PROJECT_CONFIG_PATH: z.string().default(path.join(process.cwd(), '..', 'mobilehub.project.yaml')),
 });
