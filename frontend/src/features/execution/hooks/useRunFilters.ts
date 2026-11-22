@@ -27,6 +27,9 @@ export function useRunFilters() {
   // host's `emulator-5554` into one device's history.
   const [deviceUdid, setDeviceUdid] = useSearchParamsState('deviceUdid', '');
   const [machineId, setMachineId] = useSearchParamsState('machineId', '');
+  // Also link-set (analytics suite rows). Read but never typed: the backend
+  // supported it and the page ignored it, so those links filtered by project only.
+  const [suite, setSuite] = useSearchParamsState('suite', '');
 
   useEffect(() => {
     const timer = setTimeout(() => setUrlProject(project), PROJECT_DEBOUNCE_MS);
@@ -39,6 +42,8 @@ export function useRunFilters() {
     setProject: setProjectInput,
     deviceUdid,
     machineId,
+    suite,
+    clearSuite: () => setSuite(''),
     clearDevice: () => {
       setDeviceUdid('');
       setMachineId('');

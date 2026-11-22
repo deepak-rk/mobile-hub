@@ -14,6 +14,8 @@ export interface RunFilters {
   deviceUdid?: string;
   /** Host-scopes `deviceUdid` — udids like `emulator-5554` repeat across hosts. */
   machineId?: string;
+  /** Exact suite, set by analytics links so a breakdown row opens its own runs. */
+  suite?: string;
 }
 
 /**

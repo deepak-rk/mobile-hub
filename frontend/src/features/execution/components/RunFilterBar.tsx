@@ -13,11 +13,15 @@ export function RunFilterBar({
   onProjectChange,
   device,
   onClearDevice,
+  suite,
+  onClearSuite,
 }: {
   project: string;
   onProjectChange: (v: string) => void;
   device: { udid: string; machineId: string } | null;
   onClearDevice: () => void;
+  suite: string;
+  onClearSuite: () => void;
 }) {
   return (
     <div className={styles.bar}>
@@ -36,6 +40,15 @@ export function RunFilterBar({
           {device.machineId ? <> · {device.machineId}</> : null}
           <button type="button" className={styles.clear} onClick={onClearDevice}>
             Clear device
+          </button>
+        </span>
+      ) : null}
+
+      {suite !== '' ? (
+        <span className={styles.device}>
+          Suite <Mono>{suite}</Mono>
+          <button type="button" className={styles.clear} onClick={onClearSuite}>
+            Clear suite
           </button>
         </span>
       ) : null}

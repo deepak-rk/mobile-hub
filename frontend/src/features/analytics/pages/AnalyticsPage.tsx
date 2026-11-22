@@ -43,9 +43,11 @@ function passRateTone(rate: number): string {
 function formatAvgDuration(ms: number): string {
   if (!ms) return '—';
   if (ms < 1000) return `${Math.round(ms)} ms`;
-  const s = ms / 1000;
-  if (s < 60) return `${s.toFixed(1)}s`;
-  return `${Math.floor(s / 60)}m ${Math.round(s % 60)}s`;
+  const shown = (ms / 1000).toFixed(1);
+  if (Number(shown) < 60) return `${shown}s`;
+  // Round first, then split: rounding the remainder rendered 119.6 s as "1m 60s".
+  const total = Math.round(ms / 1000);
+  return `${Math.floor(total / 60)}m ${total % 60}s`;
 }
 
 function Kpi({
@@ -170,7 +172,7 @@ function makeSuiteColumns(project: string) {
       // straight to those runs rather than making the reader re-filter by hand.
       cell: (info) => (
         <span className={styles.suiteCell}>
-          <Link className={styles.rowLink} to={`/execution?project=${encodeURIComponent(project)}&suite=${encodeURIComponent(info.getValue())}`}>
+          <Link className={styles.rowLink} to={`/execution?tab=history&project=${encodeURIComponent(project)}&suite=${encodeURIComponent(info.getValue())}`}>
             {info.getValue()}
           </Link>
           {/* Two rows can share a name — a Cucumber tag and a feature path
@@ -235,13 +237,15 @@ function SuiteBreakdownTable({ rows, project }: { rows: SuiteBreakdown[]; projec
 }
 
 /**
- * The run list filtered to one device. Carries the host: a udid alone would
+ * The run list filtered to one device, on the History tab: analytics counts
+ * finished runs, and the default Current tab shows only in-flight ones.
+ * Carries the host: a udid alone would
  * also match every other host's device with the same serial (`emulator-5554`).
  * Rows aggregated before analytics recorded a host have none, and link by
  * udid only rather than not at all.
  */
 function deviceRunsHref(udid: string, machineId: string | undefined): string {
-  const params = new URLSearchParams({ deviceUdid: udid });
+  const params = new URLSearchParams({ tab: 'history', deviceUdid: udid });
   if (machineId) params.set('machineId', machineId);
   return `/execution?${params.toString()}`;
 }
@@ -361,7 +365,7 @@ function AggregateSection({ group }: { group: AggregateGroup }) {
   const { latest } = group;
   // Scoped to exactly what this section summarises, so the link lands on the
   // same population the numbers above it were computed from.
-  const runsHref = `/execution?project=${encodeURIComponent(group.project)}`;
+  const runsHref = `/execution?tab=history&project=${encodeURIComponent(group.project)}`;
 
   return (
     <section className={styles.section}>
