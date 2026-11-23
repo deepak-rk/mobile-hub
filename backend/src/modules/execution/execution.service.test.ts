@@ -127,6 +127,10 @@ beforeEach(() => {
   env.EXECUTIONS_DIR = tmpDir;
   env.EXECUTION_ARTIFACTS_DIR = artifactsDir;
 
+  // triggerExecutionRun looks for an identical in-flight run first; none by
+  // default. Same never-settling-query reason as the device stub below.
+  vi.spyOn(ExecutionRun, 'findOne').mockReturnValue({ select: () => Promise.resolve(null) } as never);
+
   // triggerExecutionRun reads the device to snapshot its platform/model onto
   // the run. Stubbed for every test, not just the ones that care: an unmocked
   // Mongoose query against no database never settles, so leaving it real turns
@@ -275,6 +279,52 @@ describe('triggerExecutionRun: project platforms and variants', () => {
 });
 
 describe('triggerExecutionRun', () => {
+  it('refuses an identical run already in flight, naming it, unless allowDuplicate', async () => {
+    const findOne = vi
+      .spyOn(ExecutionRun, 'findOne')
+      .mockReturnValue({ select: () => Promise.resolve({ _id: 'existing-run' }) } as never);
+    const create = vi.spyOn(ExecutionRun, 'create').mockResolvedValue(fakeRunDoc() as never);
+    vi.spyOn(devicesService, 'acquireLock').mockResolvedValue(null);
+    const input = {
+      machineId: 'm1',
+      deviceUdid: 'd1',
+      project: 'p',
+      branch: 'main',
+      suite: '@smoke',
+      triggeredBy: 'u1',
+      run: { command: 'echo', args: [] },
+    };
+
+    await expect(triggerExecutionRun(input)).rejects.toMatchObject({ code: 'DUPLICATE_RUN', statusCode: 409 });
+    await expect(triggerExecutionRun(input)).rejects.toThrow(/existing-run/);
+    expect(create).not.toHaveBeenCalled();
+    const query = findOne.mock.calls[0][0] as Record<string, unknown>;
+    expect(query).toMatchObject({ deviceUdid: 'd1', suite: '@smoke', branch: 'main', 'rerun.scope': { $ne: 'failed' } });
+
+    await triggerExecutionRun({ ...input, allowDuplicate: true });
+    expect(create).toHaveBeenCalledTimes(1);
+  });
+
+  it('treats a failed-only rerun of other tests as a different run', async () => {
+    const findOne = vi.spyOn(ExecutionRun, 'findOne').mockReturnValue({ select: () => Promise.resolve(null) } as never);
+    vi.spyOn(ExecutionRun, 'create').mockResolvedValue(fakeRunDoc() as never);
+    vi.spyOn(devicesService, 'acquireLock').mockResolvedValue(null);
+    await triggerExecutionRun({
+      machineId: 'm1',
+      deviceUdid: 'd1',
+      project: 'p',
+      branch: 'main',
+      suite: '@smoke',
+      triggeredBy: 'u1',
+      run: { command: 'echo', args: [] },
+      rerun: { of: 'r0', scope: 'failed', tests: ['t1', 't2'], comment: null },
+    });
+    expect(findOne.mock.calls[0][0]).toMatchObject({
+      'rerun.scope': 'failed',
+      'rerun.tests': { $all: ['t1', 't2'], $size: 2 },
+    });
+  });
+
   it('leaves the run queued and never starts orchestration if the lock is unavailable', async () => {
     const doc = fakeRunDoc();
     vi.spyOn(ExecutionRun, 'create').mockResolvedValue(doc as never);

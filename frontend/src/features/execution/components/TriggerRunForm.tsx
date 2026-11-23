@@ -191,6 +191,10 @@ export function TriggerRunForm() {
 
   function onSubmit(e: FormEvent) {
     e.preventDefault();
+    startRun(false);
+  }
+
+  function startRun(allowDuplicate: boolean) {
     setFormError(null);
 
     // No longer required: a configured project declares how it installs and
@@ -218,12 +222,16 @@ export function TriggerRunForm() {
         // Omitted rather than sent empty, so the backend falls back to the
         // project's configured command instead of being handed nothing.
         run: run ?? undefined,
+        ...(allowDuplicate ? { allowDuplicate: true } : {}),
       },
       { onSuccess: (created) => navigate(`/execution/${created._id}`) },
     );
   }
 
   const apiError = trigger.error as ApiError | null;
+  // A double click or a second person starting the same run: say so and
+  // offer the deliberate path, rather than a bare conflict message.
+  const isDuplicate = !formError && apiError?.code === 'DUPLICATE_RUN';
 
   return (
     <Card>
@@ -508,7 +516,14 @@ export function TriggerRunForm() {
             onChange={(e) => setRunCmd(e.target.value)}
           />
 
-          {(formError ?? apiError) ? (
+          {isDuplicate ? (
+            <div className={styles.error} role="alert">
+              An identical run is already queued or running on this device.{' '}
+              <Button type="button" size="sm" variant="secondary" onClick={() => startRun(true)}>
+                Queue another anyway
+              </Button>
+            </div>
+          ) : (formError ?? apiError) ? (
             <div className={styles.error} role="alert">
               {formError ?? apiError?.message ?? 'The run could not be started.'}
             </div>

@@ -57,6 +57,8 @@ const triggerBody = z.object({
   // Supplying them still wins, for a one-off that differs from the config.
   setup: commandSchema.optional(),
   run: commandSchema.optional(),
+  /** Queue even when an identical run is already queued or running (409 DUPLICATE_RUN otherwise). */
+  allowDuplicate: z.boolean().optional(),
 });
 
 const suitesQuery = z.object({
@@ -69,6 +71,7 @@ const suitesQuery = z.object({
 export const rerunBody = z.object({
   failedOnly: z.boolean().optional(),
   comment: z.string().trim().min(1).max(500).optional(),
+  allowDuplicate: z.boolean().optional(),
 });
 
 /** A body that fails its schema is the caller's mistake (400), not a crash (500). */
@@ -289,7 +292,7 @@ export const executionRoutes: FastifyPluginAsync = async (app) => {
 
   /** The rerun route's work, shared with the bulk route. */
   const rerunOne = async (id: string, opts: z.infer<typeof rerunBody>, userId: string) => {
-    const { failedOnly, comment } = opts;
+    const { failedOnly, comment, allowDuplicate } = opts;
     const original = await getExecutionRun(id);
     if (!original) throw new NotFoundError('Execution run not found');
 
@@ -318,6 +321,7 @@ export const executionRoutes: FastifyPluginAsync = async (app) => {
         setup,
         run: runCommand,
         triggeredBy: userId,
+        allowDuplicate,
         rerun: {
           of: String(original._id),
           scope: selection ? 'failed' : 'all',

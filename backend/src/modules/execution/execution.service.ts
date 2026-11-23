@@ -74,6 +74,44 @@ export interface TriggerExecutionInput {
   run: RunCommand;
   /** Set by the rerun route: which run this repeats, and how much of it. */
   rerun?: { of: string; scope: 'all' | 'failed'; tests: string[]; comment: string | null };
+  /** Queue it even when an identical run is already queued or running. */
+  allowDuplicate?: boolean;
+}
+
+export class DuplicateRunError extends ConflictError {
+  constructor(existingId: string) {
+    super(
+      `An identical run (${existingId}) is already queued or running. Pass allowDuplicate to queue another anyway.`,
+      'DUPLICATE_RUN',
+    );
+  }
+}
+
+/**
+ * An in-flight run with the same inputs: same device, project, branch,
+ * suite, variant and build, and the same selection of tests. A double
+ * click, a retried request or two people pressing Rerun on one failure
+ * would otherwise queue the same work twice and hold the device for it.
+ */
+async function findDuplicateRun(input: TriggerExecutionInput): Promise<string | null> {
+  const query: Record<string, unknown> = {
+    status: { $in: ['queued', 'preparing', 'running'] },
+    machineId: input.machineId,
+    deviceUdid: input.deviceUdid,
+    project: input.project,
+    branch: input.branch,
+    suite: input.suite,
+    variant: input.variant ?? null,
+    buildId: input.buildId ? new Types.ObjectId(input.buildId) : null,
+  };
+  if (input.rerun?.scope === 'failed') {
+    query['rerun.scope'] = 'failed';
+    query['rerun.tests'] = { $all: input.rerun.tests, $size: input.rerun.tests.length };
+  } else {
+    query['rerun.scope'] = { $ne: 'failed' };
+  }
+  const existing = await ExecutionRun.findOne(query).select('_id');
+  return existing ? String(existing._id) : null;
 }
 
 // Keyed by run id — lets cancel() find the live process, and lets a run's
@@ -120,6 +158,10 @@ export async function triggerExecutionRun(
   project?: ProjectConfig,
 ): Promise<IExecutionRun> {
   assertVariantAllowed(project, input.variant);
+  if (!input.allowDuplicate) {
+    const duplicate = await findDuplicateRun(input);
+    if (duplicate) throw new DuplicateRunError(duplicate);
+  }
   const runId = new Types.ObjectId();
   const workspacePath = path.join(env.EXECUTIONS_DIR, runId.toString());
   // The log lives outside the workspace so cleaning the workspace up doesn't

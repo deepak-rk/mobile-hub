@@ -178,6 +178,8 @@ export function useBranches(projectId: string | undefined) {
 }
 
 export interface TriggerRunInput {
+  /** Queue even when an identical run is already in flight (otherwise 409 DUPLICATE_RUN). */
+  allowDuplicate?: boolean;
   machineId: string;
   deviceUdid: string;
   project: string;
