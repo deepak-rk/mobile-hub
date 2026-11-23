@@ -2,7 +2,8 @@ import { useState } from 'react';
 import { Button, EmptyState, Page, PageHeader, QueryBoundary } from 'react-design-kit';
 import { useAuth } from '@/features/auth/useAuth';
 import { icons, iconSize } from '@/lib/icons';
-import { isInFlight, useBulkRunAction, useExecutionRuns, type BulkResult } from '../api/execution.api';
+import { isInFlight, useBulkRunAction, useExecutionRuns, useProjects, type BulkResult } from '../api/execution.api';
+import { StatusBoard } from '../components/StatusBoard';
 import { CurrentRunPanel } from '../components/CurrentRunPanel';
 import { PipelineTabs } from '../components/PipelineTabs';
 import { RunFilterBar } from '../components/RunFilterBar';
@@ -71,6 +72,10 @@ export function RunListPage() {
     : undefined;
   const refused = lastResults?.filter((r) => !r.ok) ?? [];
 
+  // The board shows one project: the filter's, else the first declared one.
+  const { data: projects } = useProjects();
+  const boardProject = project || projects?.find((p) => p.declared)?.id || '';
+
   return (
     <Page>
       <PageHeader
@@ -100,6 +105,16 @@ export function RunListPage() {
             <CurrentRunPanel latestCurrentRun={currentRuns[0] ?? null} recentHistory={historyRuns.slice(0, 5)} />
           </QueryBoundary>
         </div>
+      ) : tab === 'board' ? (
+        boardProject ? (
+          <StatusBoard project={boardProject} />
+        ) : (
+          <EmptyState
+            icon={icons.execution}
+            title="No project to show"
+            body="Declare a project in the org config, or trigger a run, and its scenarios appear here."
+          />
+        )
       ) : (
         <>
           <RunFilterBar

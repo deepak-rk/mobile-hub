@@ -21,6 +21,7 @@ import { discoverBranches, BranchDiscoveryError } from './branches.service';
 import { ExecutionRun } from './execution-run.model';
 import { ALLURE_RESULTS_DIRNAME } from './allure-summary';
 import { failedTestSelection, selectionArgs } from './rerun-selection';
+import { clearStuckScenarios, getStatusTree } from './scenario-status/scenario-status.service';
 import type { JwtPayload } from 'fastify-auth-kit';
 import { AppError, ForbiddenError, NotFoundError, ValidationError } from '../../common/errors/app-error';
 import { REPORT_CSP_DIRECTIVES } from '../../common/content-security-policy';
@@ -76,6 +77,8 @@ export function parseBody<O>(schema: z.ZodType<O, z.ZodTypeDef, unknown>, body: 
   if (!parsed.success) throw new ValidationError(parsed.error.message);
   return parsed.data;
 }
+
+const projectQuery = z.object({ project: z.string().min(1).max(200) });
 
 const bulkIdsBody = z.object({ ids: z.array(z.string().min(1)).min(1).max(50) });
 const bulkRerunBody = rerunBody.extend(bulkIdsBody.shape);
@@ -224,6 +227,23 @@ export const executionRoutes: FastifyPluginAsync = async (app) => {
       }
       throw err;
     }
+  });
+
+  /**
+   * The status board for one project: every scenario's latest state, grouped
+   * platform × variant → feature → scenario, with bubbled-up statuses (see
+   * scenario-status.service.ts). Registered before `/:id` only for clarity;
+   * the router prefers static segments anyway.
+   */
+  app.get('/status-tree', async (req) => {
+    const { project } = parseBody(projectQuery, req.query);
+    return getStatusTree(project);
+  });
+
+  /** "Clear stuck": scenarios held by a run that is no longer in flight go back to ready. */
+  app.post('/status-tree/clear-stuck', { preHandler: app.requireRole('operator', 'admin') }, async (req) => {
+    const { project } = parseBody(projectQuery, req.body);
+    return { cleared: await clearStuckScenarios(project) };
   });
 
   app.get('/:id', async (req) => {

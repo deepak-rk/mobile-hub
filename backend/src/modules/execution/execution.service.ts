@@ -19,6 +19,19 @@ import { buildRunEnvironment, createRedactor } from './run-environment';
 import { classifySuite } from './automation-commands';
 import { checkoutWorktree, cleanupSharedRepos } from './repo-checkout';
 import { ensureAppOnDevice } from './app-preflight';
+import { markRunScenarios, settleRunScenarios } from './scenario-status/scenario-status.service';
+
+/**
+ * The status board is a view of runs, never a reason for one to fail: a
+ * write that throws is logged and dropped. The next run, a resync or
+ * "clear stuck" repairs the board.
+ */
+function boardWrite(what: string, work: Promise<unknown>): Promise<void> {
+  return work.then(
+    () => undefined,
+    (err: unknown) => console.error(`status board: ${what} failed:`, err),
+  );
+}
 import {
   summarizeRunResults,
   summarizeAllureResults,
@@ -191,6 +204,7 @@ export async function triggerExecutionRun(
     await failForOfflineDevice(run);
     return run;
   }
+  await boardWrite('schedule', markRunScenarios(run, 'scheduled'));
 
   const locked = await acquireLock(
     input.deviceUdid,
@@ -987,6 +1001,7 @@ async function runExecution(
 
     await setStatus(run, 'running');
     await setStage(run, 'execute', 'running');
+    await boardWrite('execute', markRunScenarios(run, 'executing'));
 
     // Started here rather than at trigger time: the server is only needed for
     // the suite itself, and a run that fails while cloning should not have
@@ -1113,6 +1128,7 @@ async function runExecution(
 
     run.endedAt = new Date();
     await run.save();
+    await boardWrite('settle', settleRunScenarios(run));
     logStream.end();
     runningProcesses.delete(runId);
     cancelledRuns.delete(runId);
@@ -1307,6 +1323,7 @@ export async function recoverOrphanedRuns(
     run.errorClass = failedTests > 0 ? 'test_assertion' : 'hub_restarted';
     run.endedAt = new Date();
     await run.save();
+    await boardWrite('recover', settleRunScenarios(run));
     await releaseLock(run.deviceUdid, run.triggeredBy, true, run.machineId);
     // Same reason as runExecution's own finally block: a backend restart kills
     // this process's runner children, but not a session left open inside a
@@ -1462,6 +1479,8 @@ export async function resyncExecutionRun(id: string): Promise<{ run: IExecutionR
   if (!summary) return { run, resynced: false };
   // Field-level write, not run.save(): only the summary changes.
   await ExecutionRun.updateOne({ _id: run._id }, { $set: { testSummary: summary } });
+  // Repair only: replays the results onto the board without overwriting newer ones.
+  await boardWrite('resync', settleRunScenarios(run));
   return { run, resynced: true };
 }
 

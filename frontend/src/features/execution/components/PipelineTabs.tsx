@@ -42,6 +42,14 @@ export function PipelineTabs({ active, onChange, currentCount, historyCount }: P
       >
         History ({historyCount})
       </button>
+      <button
+        type="button"
+        className={`${styles.tab} ${active === 'board' ? styles.active : ''}`}
+        aria-pressed={active === 'board'}
+        onClick={() => onChange('board')}
+      >
+        Board
+      </button>
     </div>
   );
 }

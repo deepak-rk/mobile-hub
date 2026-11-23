@@ -293,3 +293,46 @@ export function useBulkRunAction() {
   });
 }
 
+export type BoardStatus = 'ready' | 'scheduled' | 'executing' | 'completed' | 'failed' | 'partial';
+
+export interface StatusTree {
+  groups: {
+    platform: string;
+    variant: string | null;
+    status: BoardStatus;
+    features: {
+      spec: string;
+      status: BoardStatus;
+      scenarios: {
+        testId: string;
+        title: string;
+        status: Exclude<BoardStatus, 'partial'>;
+        runId: string;
+        updatedAt: string;
+        history: { runId: string; status: Exclude<BoardStatus, 'partial'>; at: string }[];
+      }[];
+    }[];
+  }[];
+}
+
+/** The status board for one project; refreshed while the page is open. */
+export function useStatusTree(project: string) {
+  return useQuery({
+    queryKey: ['status-tree', project],
+    enabled: project.length > 0,
+    refetchInterval: 10_000,
+    queryFn: async () =>
+      (await api.get<StatusTree>('/execution/status-tree', { params: { project } })).data,
+  });
+}
+
+/** Resets scenarios held by runs that are no longer in flight back to not run. */
+export function useClearStuck(project: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async () =>
+      (await api.post<{ cleared: number }>('/execution/status-tree/clear-stuck', { project })).data,
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ['status-tree', project] }),
+  });
+}
+

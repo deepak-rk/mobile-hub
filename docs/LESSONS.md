@@ -280,3 +280,9 @@ That fix then broke the one existing test that exercised it for real (`config.se
 
 **`POST /:id/rerun` answered a malformed body with a 500.** The rerun-failed change parsed its new body with `rerunBody.parse(...)`, which throws a raw `ZodError`; the central error handler only maps the typed `AppError`s, so the caller got "Something went wrong" instead of a 400 naming the bad field. Found a day later while live-checking the bulk routes, which copied the same call. The trigger route already did it right (`safeParse` then `ValidationError`); the new code did not follow it. **Rule:** route bodies go through `parseBody(schema, body)` in `execution.routes.ts` (a test pins the 400), and a live check of a new route includes one malformed body.
 
+## 2026-11-23 — Mutation checks that passed, and a NUL byte from a heredoc
+
+**Two deliberate breaks of the board's writer rules left every test green.** The resync test ended with a replay of the newer run, which hid the older replay's overwrite; the prep-failure test had no second run holding a node, so a release that ignored the run id looked the same. Both tests now assert the state right after the step that could go wrong, and include the other run. **Rule (already in SELF_REVIEW, applied again):** break the rule under test on purpose and watch a test fail before trusting it.
+
+**An inline Python heredoc wrote a raw NUL byte into a source file**: `\u0000` inside the heredoc reached Python as an escape and was written as the byte itself (`grep` reported the file as binary). Caught by that grep and fixed the same minute. **Rule:** source edits go through script files written with the Write tool (as LESSONS already says); after any scripted edit, `grep -c` the edited line, and a "Binary file matches" means stop and look.
+

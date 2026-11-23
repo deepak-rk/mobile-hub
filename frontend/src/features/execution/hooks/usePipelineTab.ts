@@ -1,8 +1,8 @@
 import { useSearchParamsState } from 'react-design-kit';
 
-export type PipelineTab = 'trigger' | 'current' | 'history';
+export type PipelineTab = 'trigger' | 'current' | 'history' | 'board';
 
-const VALID_TABS: PipelineTab[] = ['trigger', 'current', 'history'];
+const VALID_TABS: PipelineTab[] = ['trigger', 'current', 'history', 'board'];
 
 /**
  * URL-synced tab selection for the unified execution pipeline page, same

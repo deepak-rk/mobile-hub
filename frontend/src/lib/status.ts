@@ -36,7 +36,13 @@ export type StatusKind =
   | 'online'
   // agent credential
   | 'active'
-  | 'revoked';
+  | 'revoked'
+  // status board (scenario states; `failed` is shared with runs)
+  | 'not-run'
+  | 'scheduled'
+  | 'executing'
+  | 'completed'
+  | 'partial';
 
 interface StatusMeta {
   label: string;
@@ -95,6 +101,14 @@ export const statusMeta: Record<StatusKind, StatusMeta> = {
   // Use `installTargetBadgeStatus` rather than spelling this out at call sites.
   'done-warning': { label: 'Done with warning', token: '--status-smoke', icon: icons.warning },
   error: { label: 'Error', token: '--status-failed', icon: icons.failed },
+
+  // Status board. A scenario's `ready` means "not run since it was reset",
+  // which must not read as the green of a ready build, hence its own kind.
+  'not-run': { label: 'Not run', token: '--status-offline', icon: icons.dot },
+  scheduled: { label: 'Scheduled', token: '--status-cancelled', icon: icons.dot },
+  executing: { label: 'Executing', token: '--status-running', icon: icons.running, active: true },
+  completed: { label: 'Completed', token: '--status-passed', icon: icons.passed },
+  partial: { label: 'Partial', token: '--status-smoke', icon: icons.warning },
 };
 
 /**

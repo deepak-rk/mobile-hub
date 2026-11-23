@@ -82,13 +82,13 @@ Not live-verified: Docker/Mongo was down this session. First thing once it is ba
 - **Executor field** on every run (`{ kind: 'hub' | 'agent', machineId }`) for the scale path. **Done 2026-11-22** (`executor: {kind: hub, machineId: HUB_MACHINE_ID}`, default hostname).
 
 ### Phase 3 — execution visibility
-- **Runner status tree**: execution group (platform × variant, shared group id) → suite → feature → scenario/outline row; each node `status, runId stamp, updatedAt, rerunHistory`. Writers and rules exactly as the farm learned them:
+- **Runner status tree**: execution group (platform × variant, shared group id) → suite → feature → scenario/outline row; each node `status, runId stamp, updatedAt, rerunHistory`. Writers and rules exactly as the farm learned them: **Built 2026-11-23** (`scenario-status/`; Board tab). Deviations: no suite level (a scenario is identified by feature + name; a suite is only a selector), node statuses `ready/scheduled/executing/completed/failed`; a run selected by tag or named suite marks nothing until its results arrive, since the live log parser is not built.
   - `markRunScenarios` (schedule / executing / prep failure) — `failed` never overwrites this run's completed/failed.
   - `updateFromResults` (run end) — newest result per name by stop time (retries), passed/skipped → completed, failed/broken → failed, leftover executing → failed.
   - resync — repair only.
   - live log parser — in-flight state from the run log; **never return a capped parse as final** (lesson 60).
   - Bubble-up precedence: running → executing · scheduled/queued → scheduled · all ready → ready · all completed → completed · all failed → failed · else partial.
-- Rerun failed-only, rerun with comment (history), bulk rerun/cancel, "clear stuck" (reset to ready). **Failed-only done 2026-11-23** (`rerun-selection.ts`; selection by feature file + exact scenario name; refused, not widened, when a failure cannot be pinned down; failed-only reruns left out of analytics outcome queries, kept in device utilization). Rerun comment done 2026-11-23 (`rerun.comment`). Bulk rerun/cancel done 2026-11-23 (`/bulk/rerun`, `/bulk/cancel`, a result per id). Clear-stuck still open.
+- Rerun failed-only, rerun with comment (history), bulk rerun/cancel, "clear stuck" (reset to ready). **Failed-only done 2026-11-23** (`rerun-selection.ts`; selection by feature file + exact scenario name; refused, not widened, when a failure cannot be pinned down; failed-only reruns left out of analytics outcome queries, kept in device utilization). Rerun comment done 2026-11-23 (`rerun.comment`). Bulk rerun/cancel done 2026-11-23 (`/bulk/rerun`, `/bulk/cancel`, a result per id). Clear stuck done 2026-11-23 (`POST /status-tree/clear-stuck`).
 - Combined per-execution report: merge + dedupe by history id; failure evidence = screenshot of the **failing step**, not the first image (lesson 61). **Failure evidence done 2026-11-22** (`failureEvidenceOf`, `GET /:id/evidence/:file`, Failed tests list); the combined report is still open.
 - Count summaries always include broken and total (lesson 65). **Done 2026-11-22** (total now visible on the run page).
 
