@@ -1,5 +1,6 @@
+import { useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { Button, Card, CardBody, DescriptionList, Mono, Page, PageHeader, QueryBoundary } from 'react-design-kit';
+import { Button, Card, CardBody, DescriptionList, Field, Mono, Page, PageHeader, QueryBoundary } from 'react-design-kit';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { icons, iconSize } from '@/lib/icons';
 import { formatDurationBetween, formatRelative } from 'ts-format-utils';
@@ -180,6 +181,9 @@ export function RunDetailPage() {
   const hasStoredLog = Boolean(storedLog) || logLines.length > 0;
   const cancel = useCancelRun(runId ?? '');
   const rerun = useRerunExecution(runId ?? '');
+  // Optional; kept on the new run as `rerun.comment`.
+  const [rerunNote, setRerunNote] = useState('');
+  const note = rerunNote.trim() || undefined;
   // The device is only actually doing anything during `preparing`/`running` —
   // a `queued` run hasn't touched it yet, and a terminal run is done with it,
   // so a live view has nothing to show either way (and per the streaming
@@ -243,12 +247,21 @@ export function RunDetailPage() {
               </Button>
             ) : null}
             {showRerun ? (
+              <Field
+                label="Rerun note (optional)"
+                value={rerunNote}
+                maxLength={500}
+                placeholder="Why it is being rerun"
+                onChange={(e) => setRerunNote(e.target.value)}
+              />
+            ) : null}
+            {showRerun ? (
               <Button
                 size="sm"
                 variant="secondary"
                 disabled={rerun.isPending}
                 onClick={() =>
-                  rerun.mutate(undefined, {
+                  rerun.mutate({ comment: note }, {
                     onSuccess: (newRun) => navigate(`/execution/${newRun._id}`),
                   })
                 }
@@ -264,7 +277,7 @@ export function RunDetailPage() {
                 disabled={rerun.isPending}
                 onClick={() =>
                   rerun.mutate(
-                    { failedOnly: true },
+                    { failedOnly: true, comment: note },
                     { onSuccess: (newRun) => navigate(`/execution/${newRun._id}`) },
                   )
                 }
@@ -370,6 +383,7 @@ export function RunDetailPage() {
                                 {run.rerun.scope === 'failed'
                                   ? ` (${run.rerun.tests.length} failed tests only)`
                                   : ''}
+                                {run.rerun.comment ? <div>{run.rerun.comment}</div> : null}
                               </>
                             ),
                           },

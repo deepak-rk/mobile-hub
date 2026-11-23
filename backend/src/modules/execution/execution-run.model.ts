@@ -139,7 +139,7 @@ export interface IExecutionRun extends Document {
    * Failed-only reruns are left out of analytics, whose pass rates compare
    * whole-suite runs.
    */
-  rerun: { of: Types.ObjectId; scope: 'all' | 'failed'; tests: string[] } | null;
+  rerun: { of: Types.ObjectId; scope: 'all' | 'failed'; tests: string[]; comment: string | null } | null;
   /**
    * The setup/run commands this trigger actually resolved to. See
    * `IRunCommands`'s own doc comment. Null only for a run created before this
@@ -284,6 +284,8 @@ const executionRunSchema = new Schema<IExecutionRun>(
           of: { type: Schema.Types.ObjectId, ref: 'ExecutionRun', required: true },
           scope: { type: String, enum: ['all', 'failed'], required: true },
           tests: { type: [String], default: [] },
+          // Why it was rerun, as the operator wrote it.
+          comment: { type: String, default: null },
         },
         { _id: false },
       ),

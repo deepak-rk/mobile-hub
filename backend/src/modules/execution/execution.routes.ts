@@ -63,7 +63,12 @@ const suitesQuery = z.object({
   branch: branchRefSchema.optional(),
 });
 
-const rerunBody = z.object({ failedOnly: z.boolean().optional() });
+// Exported so a test can prove `comment` survives parsing: a reference farm
+// typed its rerun body without it, and every rerun comment was silently dropped.
+export const rerunBody = z.object({
+  failedOnly: z.boolean().optional(),
+  comment: z.string().trim().min(1).max(500).optional(),
+});
 
 export const executionRoutes: FastifyPluginAsync = async (app) => {
   // `serve: false` — this registers nothing of its own; it exists only to
@@ -273,7 +278,7 @@ export const executionRoutes: FastifyPluginAsync = async (app) => {
     },
     async (req, reply) => {
       const { id } = req.params as { id: string };
-      const { failedOnly } = rerunBody.parse(req.body ?? {});
+      const { failedOnly, comment } = rerunBody.parse(req.body ?? {});
       const original = await getExecutionRun(id);
       if (!original) throw new NotFoundError('Execution run not found');
 
@@ -306,6 +311,7 @@ export const executionRoutes: FastifyPluginAsync = async (app) => {
             of: String(original._id),
             scope: selection ? 'failed' : 'all',
             tests: selection?.testIds ?? [],
+            comment: comment ?? null,
           },
         },
         automation,

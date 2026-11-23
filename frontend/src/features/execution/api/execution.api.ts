@@ -227,8 +227,13 @@ export function useRerunExecution(runId: string) {
   return useMutation({
     // `failedOnly` reruns just the failed tests of this run (409 when it has
     // none, or they cannot all be pinned down to a feature and scenario).
-    mutationFn: async (opts?: { failedOnly?: boolean }) =>
-      (await api.post<ExecutionRun>(`/execution/${runId}/rerun`, opts?.failedOnly ? { failedOnly: true } : {})).data,
+    mutationFn: async (opts?: { failedOnly?: boolean; comment?: string }) =>
+      (
+        await api.post<ExecutionRun>(`/execution/${runId}/rerun`, {
+          ...(opts?.failedOnly ? { failedOnly: true } : {}),
+          ...(opts?.comment ? { comment: opts.comment } : {}),
+        })
+      ).data,
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ['runs'] });
       void qc.invalidateQueries({ queryKey: ['devices'] });

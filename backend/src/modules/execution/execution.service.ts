@@ -60,7 +60,7 @@ export interface TriggerExecutionInput {
   setup?: RunCommand;
   run: RunCommand;
   /** Set by the rerun route: which run this repeats, and how much of it. */
-  rerun?: { of: string; scope: 'all' | 'failed'; tests: string[] };
+  rerun?: { of: string; scope: 'all' | 'failed'; tests: string[]; comment: string | null };
 }
 
 // Keyed by run id — lets cancel() find the live process, and lets a run's

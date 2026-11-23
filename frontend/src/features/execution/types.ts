@@ -11,7 +11,7 @@ export interface RunStage {
 export interface ExecutionRun {
   _id: string;
   /** Set when this run repeats another: all of it, or only its failed tests. */
-  rerun?: { of: string; scope: 'all' | 'failed'; tests: string[] } | null;
+  rerun?: { of: string; scope: 'all' | 'failed'; tests: string[]; comment?: string | null } | null;
   machineId: string;
   deviceUdid: string;
   project: string;
