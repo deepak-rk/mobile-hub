@@ -1,6 +1,8 @@
+import { useState } from 'react';
 import { Button, EmptyState, Page, PageHeader, QueryBoundary } from 'react-design-kit';
+import { useAuth } from '@/features/auth/useAuth';
 import { icons, iconSize } from '@/lib/icons';
-import { isInFlight, useExecutionRuns } from '../api/execution.api';
+import { isInFlight, useBulkRunAction, useExecutionRuns, type BulkResult } from '../api/execution.api';
 import { CurrentRunPanel } from '../components/CurrentRunPanel';
 import { PipelineTabs } from '../components/PipelineTabs';
 import { RunFilterBar } from '../components/RunFilterBar';
@@ -30,6 +32,45 @@ export function RunListPage() {
   const currentRuns = allRuns.filter((r) => isInFlight(r.status));
   const historyRuns = allRuns.filter((r) => !isInFlight(r.status));
 
+  // Bulk actions: hidden, not disabled, for callers who cannot perform them.
+  const { can } = useAuth();
+  const canAct = can('operator', 'admin');
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [lastResults, setLastResults] = useState<BulkResult[] | null>(null);
+  const bulk = useBulkRunAction();
+  const visibleRuns = tab === 'current' ? currentRuns : historyRuns;
+  // Only what is on screen counts: a run that moved tabs drops out.
+  const chosen = visibleRuns.filter((r) => selected.has(r._id)).map((r) => r._id);
+  const changeTab = (next: typeof tab) => {
+    setSelected(new Set());
+    setLastResults(null);
+    setTab(next);
+  };
+  const runBulk = (action: 'rerun' | 'cancel', failedOnly?: boolean) =>
+    bulk.mutate(
+      { action, ids: chosen, failedOnly },
+      {
+        onSuccess: (results) => {
+          setLastResults(results);
+          setSelected(new Set());
+        },
+      },
+    );
+  const selection = canAct
+    ? {
+        selected,
+        onToggle: (id: string) =>
+          setSelected((prev) => {
+            const next = new Set(prev);
+            if (next.has(id)) next.delete(id);
+            else next.add(id);
+            return next;
+          }),
+        onToggleAll: (ids: string[], on: boolean) => setSelected(on ? new Set(ids) : new Set()),
+      }
+    : undefined;
+  const refused = lastResults?.filter((r) => !r.ok) ?? [];
+
   return (
     <Page>
       <PageHeader
@@ -37,7 +78,7 @@ export function RunListPage() {
         subtitle="Trigger runs, watch what's in flight, and review history."
         actions={
           tab !== 'trigger' ? (
-            <Button variant="primary" size="sm" onClick={() => setTab('trigger')}>
+            <Button variant="primary" size="sm" onClick={() => changeTab('trigger')}>
               <icons.running size={iconSize.control} aria-hidden="true" />
               Trigger a run
             </Button>
@@ -47,7 +88,7 @@ export function RunListPage() {
 
       <PipelineTabs
         active={tab}
-        onChange={setTab}
+        onChange={changeTab}
         currentCount={currentRuns.length}
         historyCount={historyRuns.length}
       />
@@ -70,10 +111,52 @@ export function RunListPage() {
             onClearSuite={clearSuite}
           />
 
+          {chosen.length > 0 ? (
+            <div className={styles.bulkBar} role="region" aria-label="Bulk actions">
+              <span>{chosen.length} selected</span>
+              {tab === 'current' ? (
+                <Button size="sm" variant="secondary" disabled={bulk.isPending} onClick={() => runBulk('cancel')}>
+                  Cancel {chosen.length}
+                </Button>
+              ) : (
+                <>
+                  <Button size="sm" variant="secondary" disabled={bulk.isPending} onClick={() => runBulk('rerun')}>
+                    Re-run {chosen.length}
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    disabled={bulk.isPending}
+                    onClick={() => runBulk('rerun', true)}
+                  >
+                    Re-run failed tests
+                  </Button>
+                </>
+              )}
+              <Button size="sm" variant="ghost" onClick={() => setSelected(new Set())}>
+                Clear
+              </Button>
+            </div>
+          ) : null}
+          {lastResults ? (
+            <div className={styles.bulkResult} role="status">
+              {lastResults.length - refused.length} of {lastResults.length} done.
+              {refused.length > 0 ? (
+                <ul>
+                  {refused.map((r) => (
+                    <li key={r.id}>
+                      <code>{r.id.slice(-8)}</code>: {r.message}
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
+            </div>
+          ) : null}
+
           <QueryBoundary
             isPending={isPending}
             error={error}
-            isEmpty={(tab === 'current' ? currentRuns : historyRuns).length === 0}
+            isEmpty={visibleRuns.length === 0}
             onRetry={() => void refetch()}
             empty={
               tab === 'current' ? (
@@ -97,7 +180,7 @@ export function RunListPage() {
               )
             }
           >
-            <RunTable runs={tab === 'current' ? currentRuns : historyRuns} />
+            <RunTable runs={visibleRuns} selection={selection} />
           </QueryBoundary>
         </>
       )}

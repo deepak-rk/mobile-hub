@@ -74,13 +74,48 @@ const columns = [
   }),
 ];
 
-/** Shared between the pipeline page's Current and History tabs. */
-export function RunTable({ runs }: { runs: ExecutionRun[] }) {
+export interface RunSelection {
+  selected: ReadonlySet<string>;
+  onToggle: (id: string) => void;
+  onToggleAll: (ids: string[], on: boolean) => void;
+}
+
+/**
+ * Shared between the pipeline page's Current and History tabs. `selection`
+ * adds a checkbox column for bulk actions; left out for callers without one.
+ */
+export function RunTable({ runs, selection }: { runs: ExecutionRun[]; selection?: RunSelection }) {
   const [sorting, setSorting] = useState<SortingState>([{ id: 'createdAt', desc: true }]);
+
+  const allIds = runs.map((r) => r._id);
+  const allOn = selection ? allIds.length > 0 && allIds.every((id) => selection.selected.has(id)) : false;
+  const selectColumn = selection
+    ? [
+        columnHelper.display({
+          id: 'select',
+          header: () => (
+            <input
+              type="checkbox"
+              aria-label="Select all runs"
+              checked={allOn}
+              onChange={() => selection.onToggleAll(allIds, !allOn)}
+            />
+          ),
+          cell: (info) => (
+            <input
+              type="checkbox"
+              aria-label={`Select run ${info.row.original._id}`}
+              checked={selection.selected.has(info.row.original._id)}
+              onChange={() => selection.onToggle(info.row.original._id)}
+            />
+          ),
+        }),
+      ]
+    : [];
 
   const table = useReactTable({
     data: runs,
-    columns,
+    columns: [...selectColumn, ...columns],
     state: { sorting },
     onSortingChange: setSorting,
     getCoreRowModel: getCoreRowModel(),

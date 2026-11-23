@@ -268,3 +268,28 @@ export function useReloadConfig() {
     },
   });
 }
+
+/** One entry per id asked for, in the same order; `ok: false` carries the refusal. */
+export interface BulkResult {
+  id: string;
+  ok: boolean;
+  runId?: string;
+  code?: string;
+  message?: string;
+}
+
+/** Reruns (or cancels) many runs at once; each id succeeds or is refused on its own. */
+export function useBulkRunAction() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: { action: 'rerun' | 'cancel'; ids: string[]; failedOnly?: boolean }) => {
+      const body = input.action === 'rerun' && input.failedOnly ? { ids: input.ids, failedOnly: true } : { ids: input.ids };
+      return (await api.post<{ results: BulkResult[] }>(`/execution/bulk/${input.action}`, body)).data.results;
+    },
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['runs'] });
+      void qc.invalidateQueries({ queryKey: ['devices'] });
+    },
+  });
+}
+

@@ -22,7 +22,7 @@ import { ExecutionRun } from './execution-run.model';
 import { ALLURE_RESULTS_DIRNAME } from './allure-summary';
 import { failedTestSelection, selectionArgs } from './rerun-selection';
 import type { JwtPayload } from 'fastify-auth-kit';
-import { ForbiddenError, NotFoundError, ValidationError } from '../../common/errors/app-error';
+import { AppError, ForbiddenError, NotFoundError, ValidationError } from '../../common/errors/app-error';
 import { REPORT_CSP_DIRECTIVES } from '../../common/content-security-policy';
 
 const commandSchema = z.object({
@@ -69,6 +69,16 @@ export const rerunBody = z.object({
   failedOnly: z.boolean().optional(),
   comment: z.string().trim().min(1).max(500).optional(),
 });
+
+/** A body that fails its schema is the caller's mistake (400), not a crash (500). */
+export function parseBody<O>(schema: z.ZodType<O, z.ZodTypeDef, unknown>, body: unknown): O {
+  const parsed = schema.safeParse(body);
+  if (!parsed.success) throw new ValidationError(parsed.error.message);
+  return parsed.data;
+}
+
+const bulkIdsBody = z.object({ ids: z.array(z.string().min(1)).min(1).max(50) });
+const bulkRerunBody = rerunBody.extend(bulkIdsBody.shape);
 
 export const executionRoutes: FastifyPluginAsync = async (app) => {
   // `serve: false` — this registers nothing of its own; it exists only to
@@ -257,6 +267,50 @@ export const executionRoutes: FastifyPluginAsync = async (app) => {
     },
   );
 
+  /** The rerun route's work, shared with the bulk route. */
+  const rerunOne = async (id: string, opts: z.infer<typeof rerunBody>, userId: string) => {
+    const { failedOnly, comment } = opts;
+    const original = await getExecutionRun(id);
+    if (!original) throw new NotFoundError('Execution run not found');
+
+    const project = app.config.projects[original.project];
+    const automation = project?.automation ?? app.config.automation;
+    const setup = resolveInstallCommand(automation) ?? undefined;
+    // Failed-only: the original's failed tests, selected by feature file
+    // and scenario name. Refused (409) rather than widened to the whole
+    // suite when they cannot all be pinned down.
+    const selection = failedOnly ? failedTestSelection(original.testSummary?.testCases) : null;
+    const runCommand = resolveRunCommand(
+      automation,
+      original.suite,
+      selection ? selectionArgs(automation, selection) : undefined,
+    );
+
+    return triggerExecutionRun(
+      {
+        machineId: original.machineId,
+        deviceUdid: original.deviceUdid,
+        buildId: original.buildId?.toString(),
+        project: original.project,
+        branch: original.branch,
+        variant: original.variant ?? undefined,
+        suite: original.suite,
+        setup,
+        run: runCommand,
+        triggeredBy: userId,
+        rerun: {
+          of: String(original._id),
+          scope: selection ? 'failed' : 'all',
+          tests: selection?.testIds ?? [],
+          comment: comment ?? null,
+        },
+      },
+      automation,
+      app.config.appium,
+      project,
+    );
+  };
+
   /**
    * Re-runs an existing run's immutable inputs (machineId, deviceUdid,
    * buildId, project, branch, suite) as a brand-new trigger.
@@ -278,49 +332,59 @@ export const executionRoutes: FastifyPluginAsync = async (app) => {
     },
     async (req, reply) => {
       const { id } = req.params as { id: string };
-      const { failedOnly, comment } = rerunBody.parse(req.body ?? {});
-      const original = await getExecutionRun(id);
-      if (!original) throw new NotFoundError('Execution run not found');
-
-      const project = app.config.projects[original.project];
-      const automation = project?.automation ?? app.config.automation;
-      const setup = resolveInstallCommand(automation) ?? undefined;
-      // Failed-only: the original's failed tests, selected by feature file
-      // and scenario name. Refused (409) rather than widened to the whole
-      // suite when they cannot all be pinned down.
-      const selection = failedOnly ? failedTestSelection(original.testSummary?.testCases) : null;
-      const runCommand = resolveRunCommand(
-        automation,
-        original.suite,
-        selection ? selectionArgs(automation, selection) : undefined,
-      );
-
-      const run = await triggerExecutionRun(
-        {
-          machineId: original.machineId,
-          deviceUdid: original.deviceUdid,
-          buildId: original.buildId?.toString(),
-          project: original.project,
-          branch: original.branch,
-          variant: original.variant ?? undefined,
-          suite: original.suite,
-          setup,
-          run: runCommand,
-          triggeredBy: req.user.sub,
-          rerun: {
-            of: String(original._id),
-            scope: selection ? 'failed' : 'all',
-            tests: selection?.testIds ?? [],
-            comment: comment ?? null,
-          },
-        },
-        automation,
-        app.config.appium,
-        project,
-      );
+      const run = await rerunOne(id, parseBody(rerunBody, req.body ?? {}), req.user.sub);
       return reply.status(201).send(run);
     },
   );
+
+  /**
+   * Many runs at once. Each id is handled on its own and reported on its own:
+   * one run that cannot be rerun (or cancelled) must not stop the rest, and a
+   * single status code could not say which ones worked.
+   */
+  const outcomeOf = (err: unknown) =>
+    err instanceof AppError
+      ? { ok: false as const, code: err.code, message: err.message }
+      : { ok: false as const, code: 'INTERNAL', message: 'Unexpected error' };
+
+  app.post(
+    '/bulk/rerun',
+    {
+      preHandler: app.requireRole('operator', 'admin'),
+      config: { rateLimit: { max: 10, timeWindow: '1 minute' } },
+    },
+    async (req) => {
+      const { ids, ...opts } = parseBody(bulkRerunBody, req.body);
+      const results = [];
+      // One at a time: each rerun reads config and queues on a device, and
+      // order of the response matches the order asked for.
+      for (const id of ids) {
+        try {
+          const run = await rerunOne(id, opts, req.user.sub);
+          results.push({ id, ok: true as const, runId: String(run._id) });
+        } catch (err) {
+          req.log.warn({ err, id }, 'bulk rerun: one run refused');
+          results.push({ id, ...outcomeOf(err) });
+        }
+      }
+      return { results };
+    },
+  );
+
+  app.post('/bulk/cancel', { preHandler: app.requireRole('operator', 'admin') }, async (req) => {
+    const { ids } = parseBody(bulkIdsBody, req.body);
+    const results = [];
+    for (const id of ids) {
+      try {
+        const run = await cancelExecutionRun(id);
+        if (!run) throw new NotFoundError('Execution run not found');
+        results.push({ id, ok: true as const });
+      } catch (err) {
+        results.push({ id, ...outcomeOf(err) });
+      }
+    }
+    return { results };
+  });
 
   /**
    * The run's log as stored on disk.

@@ -207,7 +207,7 @@ const R=[
 [3,'Env','VARIANT, RUN_SUITE, RUN_TAG; tags derived from variant','P','Partly: project variants + per-run VARIANT env (validated at trigger, stored on the run, copied by rerun; live-checked 2026-11-22). RUN_SUITE/RUN_TAG and variant-derived tags not built'],
 [3,'Env','RUN_ID, AUTOMATION_NAME, APPIUM_HOST/PORT/PATH, UDID, PLATFORM','F','e2d4507'],
 [3,'Reruns','Single rerun','P','/:id/rerun'],
-[3,'Reruns','Bulk rerun / cancel / artifacts zip','L','Phase 3 (zip → Gap)'],
+[3,'Reruns','Bulk rerun / cancel / artifacts zip','P','Bulk rerun + cancel done 2026-11-23: POST /bulk/rerun and /bulk/cancel (operator, max 50 ids, a result per id); checkboxes + action bar on the run list; live: one rerun started and one unknown id refused in the same call. Artifacts zip → Gap'],
 [3,'Docs','Log line → cause triage table','G','Recorded in plan §9'],
 [3,'Scheduler','Server-side flag, re-entrancy, nextRunAt claim, self-contained targets, pre-warm, conflict guard, outcomes, timezone, allow-list','L','Phase 5'],
 [3,'Scheduler','Edited schedule keeps stale targets (their open item)','L','Phase 5: re-derive on edit'],
