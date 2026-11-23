@@ -338,3 +338,25 @@ export function useClearStuck(project: string) {
   });
 }
 
+/** One result per test across a run and all its reruns, newest result winning. */
+export interface CombinedResults {
+  rootId: string;
+  runIds: string[];
+  total: number;
+  passed: number;
+  failed: number;
+  broken: number;
+  skipped: number;
+  unknown: number;
+  passRate: number | null;
+  testCases: { id: string; name: string; title?: string; status: string; runId: string }[];
+}
+
+export function useCombinedResults(runId: string, enabled: boolean) {
+  return useQuery({
+    queryKey: ['runs', runId, 'combined'],
+    enabled: enabled && runId.length > 0,
+    queryFn: async () => (await api.get<CombinedResults>(`/execution/${runId}/combined`)).data,
+  });
+}
+

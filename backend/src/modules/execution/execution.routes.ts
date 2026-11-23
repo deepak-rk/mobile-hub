@@ -22,6 +22,7 @@ import { ExecutionRun } from './execution-run.model';
 import { ALLURE_RESULTS_DIRNAME } from './allure-summary';
 import { failedTestSelection, selectionArgs } from './rerun-selection';
 import { clearStuckScenarios, getStatusTree } from './scenario-status/scenario-status.service';
+import { getCombinedResults } from './combined-results';
 import type { JwtPayload } from 'fastify-auth-kit';
 import { AppError, ForbiddenError, NotFoundError, ValidationError } from '../../common/errors/app-error';
 import { REPORT_CSP_DIRECTIVES } from '../../common/content-security-policy';
@@ -241,6 +242,12 @@ export const executionRoutes: FastifyPluginAsync = async (app) => {
   app.get('/status-tree', async (req) => {
     const { project } = parseBody(projectQuery, req.query);
     return getStatusTree(project);
+  });
+
+  /** One result per test across a run and all its reruns (see combined-results.ts). */
+  app.get('/:id/combined', async (req) => {
+    const { id } = req.params as { id: string };
+    return getCombinedResults(id);
   });
 
   /** "Clear stuck": scenarios held by a run that is no longer in flight go back to ready. */

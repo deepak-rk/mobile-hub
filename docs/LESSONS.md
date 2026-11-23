@@ -286,3 +286,7 @@ That fix then broke the one existing test that exercised it for real (`config.se
 
 **An inline Python heredoc wrote a raw NUL byte into a source file**: `\u0000` inside the heredoc reached Python as an escape and was written as the byte itself (`grep` reported the file as binary). Caught by that grep and fixed the same minute. **Rule:** source edits go through script files written with the Write tool (as LESSONS already says); after any scripted edit, `grep -c` the edited line, and a "Binary file matches" means stop and look.
 
+## 2026-11-23 — A stub that returns plain objects hides the Mongoose shape
+
+**`GET /:id/combined` returned every test with no status and no title, while its unit test passed.** The code spread each test case (`{ ...tc, runId }`); on a Mongoose subdocument that copies internal properties, not the fields. The test stubbed `findById`/`find` to resolve plain objects, which spread fine. Found by the live check against real runs. **Fix:** the queries use `.lean()`, and the stubs return `{ lean: () => ... }`, the same call shape as the code, so dropping `.lean()` breaks the test. **Rule:** a stub mirrors the real call chain and return type; data read for reshaping (spread, JSON) is read with `.lean()`.
+

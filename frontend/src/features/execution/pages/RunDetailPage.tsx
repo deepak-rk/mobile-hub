@@ -4,7 +4,15 @@ import { Button, Card, CardBody, DescriptionList, Field, Mono, Page, PageHeader,
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { icons, iconSize } from '@/lib/icons';
 import { formatDurationBetween, formatRelative } from 'ts-format-utils';
-import { isInFlight, useCancelRun, useExecutionRun, useRerunExecution, useRunLog } from '../api/execution.api';
+import {
+  isInFlight,
+  useCancelRun,
+  useCombinedResults,
+  useExecutionRun,
+  useRerunExecution,
+  useRunLog,
+  type CombinedResults,
+} from '../api/execution.api';
 import { useRunStream } from '../api/useRunStream';
 import type { ExecutionRun } from '../types';
 import { LogViewer } from '../components/LogViewer';
@@ -158,6 +166,43 @@ export function TestSummaryPanel({
   );
 }
 
+/**
+ * Where the whole rerun chain stands: each test's newest result across the
+ * run and its reruns. Only shown when there is more than one run to combine.
+ */
+export function CombinedPanel({ combined }: { combined: CombinedResults }) {
+  const stillFailing = combined.testCases.filter((t) => t.status === 'failed' || t.status === 'broken');
+  return (
+    <Card>
+      <CardBody>
+        <div className={styles.panelHead}>
+          <span className={styles.panelTitle}>After {combined.runIds.length} runs</span>
+          <span className={styles.testRate}>
+            {combined.passed} of {combined.total} passed
+          </span>
+        </div>
+        {stillFailing.length > 0 ? (
+          <div className={styles.failures}>
+            <div className={styles.failuresTitle}>Still failing</div>
+            <ul className={styles.failureList}>
+              {stillFailing.map((t) => (
+                <li key={t.id} className={styles.failedTest}>
+                  <span className={styles.failureMessage}>{t.title ?? t.name}</span>
+                  <Link to={`/execution/${t.runId}`}>
+                    <Mono>{t.runId.slice(-8)}</Mono>
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : (
+          <p className={styles.failureMessage}>Every test passed in its latest run.</p>
+        )}
+      </CardBody>
+    </Card>
+  );
+}
+
 export function RunDetailPage() {
   const { runId } = useParams<{ runId: string }>();
   const navigate = useNavigate();
@@ -181,6 +226,7 @@ export function RunDetailPage() {
   const hasStoredLog = Boolean(storedLog) || logLines.length > 0;
   const cancel = useCancelRun(runId ?? '');
   const rerun = useRerunExecution(runId ?? '');
+  const { data: combined } = useCombinedResults(runId ?? '', Boolean(run && !isInFlight(run.status)));
   // Optional; kept on the new run as `rerun.comment`.
   const [rerunNote, setRerunNote] = useState('');
   const note = rerunNote.trim() || undefined;
@@ -353,6 +399,7 @@ export function RunDetailPage() {
               ) : null}
 
               {run.testSummary ? <TestSummaryPanel runId={run._id} summary={run.testSummary} /> : null}
+              {combined && combined.runIds.length > 1 ? <CombinedPanel combined={combined} /> : null}
 
               <Card>
               <CardBody>

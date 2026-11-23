@@ -211,7 +211,7 @@ const R=[
 [3,'Docs','Log line → cause triage table','G','Recorded in plan §9'],
 [3,'Scheduler','Server-side flag, re-entrancy, nextRunAt claim, self-contained targets, pre-warm, conflict guard, outcomes, timezone, allow-list','L','Phase 5'],
 [3,'Scheduler','Edited schedule keeps stale targets (their open item)','L','Phase 5: re-derive on edit'],
-[3,'Reports','Combined report per execution, deduped','L','Phase 3'],
+[3,'Reports','Combined report per execution, deduped','P','2026-11-23: GET /:id/combined merges a run and all its reruns, one result per test (Allure id), newest run end wins; "After N runs" panel on the run page; live-checked on a real rerun chain. A merged Allure HTML report is not built'],
 [3,'Reports','Artifacts zip, log download','P','Log + report download present; zip → Gap'],
 [3,'Reports','Failure evidence = failing step\'s screenshot (Lesson 61)','F','2026-11-22: failureEvidenceOf picks the last image of the deepest failing step, else the last test-level image; never an image from a step that passed. Stored per failed test, served by GET /:id/evidence/:file (only names the summary lists), shown under Failed tests on the run page. Tested; the demo suite takes no screenshots, so no live image yet'],
 [3,'Run page','Tabbed run workspace','P','RunDetailPage'],
