@@ -63,6 +63,8 @@ export interface TestCaseOutcome {
   id: string;
   name: string;
   status: 'passed' | 'failed' | 'broken' | 'skipped' | 'unknown';
+  /** Allure's `name`: the scenario alone, without the feature path (`name` above is the full name). */
+  title?: string;
   /**
    * For a failed or broken test: the file name, inside the run's kept Allure
    * results, of the screenshot taken at the failing step (`failureEvidenceOf`).
@@ -259,6 +261,7 @@ export function summarizeAllureResults(dir: string): TestSummary | null {
       id: key,
       name: result.fullName ?? result.name ?? key,
       status: normalizeStatus(result.status),
+      ...(result.name ? { title: result.name } : {}),
       ...(evidence ? { evidence } : {}),
     });
     switch (result.status) {

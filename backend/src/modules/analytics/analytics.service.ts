@@ -238,6 +238,15 @@ async function computeFlakinessBySuite(
 }
 
 /**
+ * A failed-only rerun runs a handful of a suite's tests, so counting it
+ * would pull that suite's pass rate toward whatever those few did, and count
+ * the same failures twice. Spread into every outcome query (pass rates,
+ * failure reasons, flakiness); not into device utilization, since a rerun
+ * really does occupy the device.
+ */
+const WHOLE_SUITE_RUNS = { 'rerun.scope': { $ne: 'failed' } };
+
+/**
  * Rolls terminal ExecutionRun docs (passed/failed/cancelled, bucketed by
  * endedAt within [rangeStart, rangeEnd)) into AnalyticsAggregate docs keyed
  * by (window, bucketDate, project, platform), upserting on that unique
@@ -260,6 +269,7 @@ async function computeAggregates(
   rangeEnd: Date,
 ): Promise<IAnalyticsAggregate[]> {
   const runs = await ExecutionRun.find({
+    ...WHOLE_SUITE_RUNS,
     status: { $in: ['passed', 'failed', 'cancelled'] },
     endedAt: { $gte: rangeStart, $lt: rangeEnd },
   });
@@ -447,6 +457,7 @@ export async function computeFailureReasons(filters: {
   const since = new Date(Date.now() - (filters.days ?? FAILURE_REASONS_WINDOW_DAYS) * 24 * 60 * 60 * 1000);
 
   const query: Record<string, unknown> = {
+    ...WHOLE_SUITE_RUNS,
     createdAt: { $gte: since },
     'testSummary.failures.0': { $exists: true },
   };
@@ -598,6 +609,7 @@ export async function computeFlakinessByConfigTuple(filters: {
   const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
 
   const query: Record<string, unknown> = {
+    ...WHOLE_SUITE_RUNS,
     status: { $in: ['passed', 'failed', 'cancelled'] },
     endedAt: { $gte: since },
   };
@@ -706,6 +718,7 @@ export async function computeTestCaseFlakiness(filters: {
   const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
 
   const query: Record<string, unknown> = {
+    ...WHOLE_SUITE_RUNS,
     endedAt: { $gte: since },
     'testSummary.testCases.0': { $exists: true },
   };

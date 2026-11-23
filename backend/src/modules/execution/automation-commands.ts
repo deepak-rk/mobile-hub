@@ -58,7 +58,11 @@ export function resolveInstallCommand(automation: AutomationConfig): RunCommand 
  * a shell string — commands are spawned directly, never through a shell, so a
  * suite name containing spaces or quotes is just an argument.
  */
-export function resolveRunCommand(automation: AutomationConfig, suite?: string): RunCommand {
+/**
+ * `selection` (from `selectionArgs`) replaces the suite selector: a
+ * failed-only rerun names its feature files and scenarios directly.
+ */
+export function resolveRunCommand(automation: AutomationConfig, suite?: string, selection?: string[]): RunCommand {
   if (automation.run) return automation.run;
 
   if (!isKnownRunner(automation.runner)) {
@@ -66,7 +70,8 @@ export function resolveRunCommand(automation: AutomationConfig, suite?: string):
   }
 
   const args = ['wdio', 'run', automation.configPath];
-  if (suite) args.push(...selectorArgsFor(suite));
+  if (selection) args.push(...selection);
+  else if (suite) args.push(...selectorArgsFor(suite));
   return { command: 'npx', args };
 }
 

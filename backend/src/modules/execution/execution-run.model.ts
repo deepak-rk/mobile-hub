@@ -134,6 +134,13 @@ export interface IExecutionRun extends Document {
    */
   executor: { kind: 'hub' | 'agent'; machineId: string } | null;
   /**
+   * Set when this run is a rerun: which run it repeats, and whether it reran
+   * everything or only that run's failed tests (`tests` lists their ids).
+   * Failed-only reruns are left out of analytics, whose pass rates compare
+   * whole-suite runs.
+   */
+  rerun: { of: Types.ObjectId; scope: 'all' | 'failed'; tests: string[] } | null;
+  /**
    * The setup/run commands this trigger actually resolved to. See
    * `IRunCommands`'s own doc comment. Null only for a run created before this
    * field existed — such a run is already terminal, never queued, so
@@ -200,6 +207,7 @@ const testSummarySchema = new Schema<ITestSummary>(
             id: String,
             name: String,
             status: { type: String, enum: ['passed', 'failed', 'broken', 'skipped', 'unknown'] },
+            title: { type: String, default: undefined },
             // File name of the failing step's screenshot in the kept Allure results.
             evidence: { type: String, default: undefined },
           },
@@ -266,6 +274,17 @@ const executionRunSchema = new Schema<IExecutionRun>(
     executor: {
       type: new Schema(
         { kind: { type: String, enum: ['hub', 'agent'], required: true }, machineId: { type: String, required: true } },
+        { _id: false },
+      ),
+      default: null,
+    },
+    rerun: {
+      type: new Schema(
+        {
+          of: { type: Schema.Types.ObjectId, ref: 'ExecutionRun', required: true },
+          scope: { type: String, enum: ['all', 'failed'], required: true },
+          tests: { type: [String], default: [] },
+        },
         { _id: false },
       ),
       default: null,

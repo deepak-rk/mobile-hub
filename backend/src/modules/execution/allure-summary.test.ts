@@ -64,11 +64,11 @@ describe('summarizeAllureResults', () => {
       passRate: 2 / 5,
       failures: [],
       testCases: [
-        { id: 'h1', name: 'a test', status: 'passed' },
-        { id: 'h2', name: 'a test', status: 'passed' },
-        { id: 'h3', name: 'a test', status: 'failed' },
-        { id: 'h4', name: 'a test', status: 'broken' },
-        { id: 'h5', name: 'a test', status: 'skipped' },
+        { id: 'h1', name: 'a test', title: 'a test', status: 'passed' },
+        { id: 'h2', name: 'a test', title: 'a test', status: 'passed' },
+        { id: 'h3', name: 'a test', title: 'a test', status: 'failed' },
+        { id: 'h4', name: 'a test', title: 'a test', status: 'broken' },
+        { id: 'h5', name: 'a test', title: 'a test', status: 'skipped' },
       ],
     });
   });

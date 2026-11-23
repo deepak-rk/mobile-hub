@@ -225,7 +225,10 @@ export function useCancelRun(runId: string) {
 export function useRerunExecution(runId: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async () => (await api.post<ExecutionRun>(`/execution/${runId}/rerun`)).data,
+    // `failedOnly` reruns just the failed tests of this run (409 when it has
+    // none, or they cannot all be pinned down to a feature and scenario).
+    mutationFn: async (opts?: { failedOnly?: boolean }) =>
+      (await api.post<ExecutionRun>(`/execution/${runId}/rerun`, opts?.failedOnly ? { failedOnly: true } : {})).data,
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ['runs'] });
       void qc.invalidateQueries({ queryKey: ['devices'] });

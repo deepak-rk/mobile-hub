@@ -105,6 +105,7 @@ describe('computeDailyAggregates', () => {
     await computeDailyAggregates(new Date('2026-03-15T18:30:00Z'));
 
     expect(findSpy).toHaveBeenCalledWith({
+      'rerun.scope': { $ne: 'failed' },
       status: { $in: ['passed', 'failed', 'cancelled'] },
       endedAt: { $gte: new Date('2026-03-15T00:00:00.000Z'), $lt: new Date('2026-03-16T00:00:00.000Z') },
     });
@@ -356,6 +357,7 @@ describe('computeWeeklyAggregates', () => {
     await computeWeeklyAggregates(new Date('2026-01-04T23:00:00Z'));
 
     expect(findSpy).toHaveBeenCalledWith({
+      'rerun.scope': { $ne: 'failed' },
       status: { $in: ['passed', 'failed', 'cancelled'] },
       endedAt: { $gte: new Date('2025-12-29T00:00:00.000Z'), $lt: new Date('2026-01-05T00:00:00.000Z') },
     });

@@ -10,6 +10,8 @@ export interface RunStage {
 
 export interface ExecutionRun {
   _id: string;
+  /** Set when this run repeats another: all of it, or only its failed tests. */
+  rerun?: { of: string; scope: 'all' | 'failed'; tests: string[] } | null;
   machineId: string;
   deviceUdid: string;
   project: string;
@@ -64,6 +66,8 @@ export interface ExecutionRun {
       id: string;
       name: string;
       status: 'passed' | 'failed' | 'broken' | 'skipped' | 'unknown';
+      /** The scenario name alone; needed to rerun just this test. */
+      title?: string;
       evidence?: string;
     }[];
   } | null;

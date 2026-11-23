@@ -196,6 +196,12 @@ export function RunDetailPage() {
   // device is free again (or someone else's problem), and re-running makes
   // real sense.
   const showRerun = run ? !isInFlight(run.status) && can('operator', 'admin') : false;
+  // Only offered when every failed test can be selected again by name; the
+  // backend refuses a partial selection rather than rerunning some of them.
+  const failedTests = (run?.testSummary?.testCases ?? []).filter(
+    (t) => t.status === 'failed' || t.status === 'broken',
+  );
+  const showRerunFailed = showRerun && failedTests.length > 0 && failedTests.every((t) => t.title);
 
   return (
     <Page>
@@ -249,6 +255,22 @@ export function RunDetailPage() {
               >
                 <icons.retry size={iconSize.control} aria-hidden="true" />
                 {rerun.isPending ? 'Starting…' : 'Re-run'}
+              </Button>
+            ) : null}
+            {showRerunFailed ? (
+              <Button
+                size="sm"
+                variant="secondary"
+                disabled={rerun.isPending}
+                onClick={() =>
+                  rerun.mutate(
+                    { failedOnly: true },
+                    { onSuccess: (newRun) => navigate(`/execution/${newRun._id}`) },
+                  )
+                }
+              >
+                <icons.retry size={iconSize.control} aria-hidden="true" />
+                {`Re-run ${failedTests.length} failed`}
               </Button>
             ) : null}
             <Link to="/execution">
@@ -336,6 +358,23 @@ export function RunDetailPage() {
                     { term: 'Branch', value: <Mono>{run.branch}</Mono> },
                     ...(run.variant ? [{ term: 'Variant', value: <Mono>{run.variant}</Mono> }] : []),
                     ...(run.errorClass ? [{ term: 'Stopped by', value: <Mono>{run.errorClass}</Mono> }] : []),
+                    ...(run.rerun
+                      ? [
+                          {
+                            term: 'Rerun of',
+                            value: (
+                              <>
+                                <Link to={`/execution/${run.rerun.of}`}>
+                                  <Mono>{run.rerun.of.slice(-8)}</Mono>
+                                </Link>
+                                {run.rerun.scope === 'failed'
+                                  ? ` (${run.rerun.tests.length} failed tests only)`
+                                  : ''}
+                              </>
+                            ),
+                          },
+                        ]
+                      : []),
                     { term: 'Suite', value: <Mono>{run.suite}</Mono> },
                     {
                       term: 'Device',

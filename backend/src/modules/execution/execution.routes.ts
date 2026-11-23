@@ -20,6 +20,7 @@ import { branchRefSchema, discoverSuites, SuiteDiscoveryError } from './suites/s
 import { discoverBranches, BranchDiscoveryError } from './branches.service';
 import { ExecutionRun } from './execution-run.model';
 import { ALLURE_RESULTS_DIRNAME } from './allure-summary';
+import { failedTestSelection, selectionArgs } from './rerun-selection';
 import type { JwtPayload } from 'fastify-auth-kit';
 import { ForbiddenError, NotFoundError, ValidationError } from '../../common/errors/app-error';
 import { REPORT_CSP_DIRECTIVES } from '../../common/content-security-policy';
@@ -61,6 +62,8 @@ const suitesQuery = z.object({
   refresh: z.unknown().optional(),
   branch: branchRefSchema.optional(),
 });
+
+const rerunBody = z.object({ failedOnly: z.boolean().optional() });
 
 export const executionRoutes: FastifyPluginAsync = async (app) => {
   // `serve: false` — this registers nothing of its own; it exists only to
@@ -270,13 +273,22 @@ export const executionRoutes: FastifyPluginAsync = async (app) => {
     },
     async (req, reply) => {
       const { id } = req.params as { id: string };
+      const { failedOnly } = rerunBody.parse(req.body ?? {});
       const original = await getExecutionRun(id);
       if (!original) throw new NotFoundError('Execution run not found');
 
       const project = app.config.projects[original.project];
       const automation = project?.automation ?? app.config.automation;
       const setup = resolveInstallCommand(automation) ?? undefined;
-      const runCommand = resolveRunCommand(automation, original.suite);
+      // Failed-only: the original's failed tests, selected by feature file
+      // and scenario name. Refused (409) rather than widened to the whole
+      // suite when they cannot all be pinned down.
+      const selection = failedOnly ? failedTestSelection(original.testSummary?.testCases) : null;
+      const runCommand = resolveRunCommand(
+        automation,
+        original.suite,
+        selection ? selectionArgs(automation, selection) : undefined,
+      );
 
       const run = await triggerExecutionRun(
         {
@@ -290,6 +302,11 @@ export const executionRoutes: FastifyPluginAsync = async (app) => {
           setup,
           run: runCommand,
           triggeredBy: req.user.sub,
+          rerun: {
+            of: String(original._id),
+            scope: selection ? 'failed' : 'all',
+            tests: selection?.testIds ?? [],
+          },
         },
         automation,
         app.config.appium,

@@ -59,6 +59,8 @@ export interface TriggerExecutionInput {
   /** Runs before the test command (e.g. dependency install). Skipped if omitted. */
   setup?: RunCommand;
   run: RunCommand;
+  /** Set by the rerun route: which run this repeats, and how much of it. */
+  rerun?: { of: string; scope: 'all' | 'failed'; tests: string[] };
 }
 
 // Keyed by run id — lets cancel() find the live process, and lets a run's
@@ -143,6 +145,7 @@ export async function triggerExecutionRun(
     suite: input.suite,
     triggeredBy: input.triggeredBy,
     executor: { kind: 'hub', machineId: env.HUB_MACHINE_ID },
+    rerun: input.rerun ?? null,
     status: 'queued',
     stages: [
       pullsRealRepo
