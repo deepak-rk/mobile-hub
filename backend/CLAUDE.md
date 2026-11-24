@@ -48,8 +48,8 @@ npm run agent        # the host-side device agent (see below); AGENT_DISCOVERY=s
 npm run build         # tsc
 npm run lint           # eslint src --ext .ts
 npm run typecheck      # tsc --noEmit
-npm test                # vitest run — 565 tests (2026-11-24), no database required
-MONGO_TEST_URI=mongodb://localhost:27017/mobilehub_test npm test   # also runs the tests that need real MongoDB (status board writers); uses and drops that database
+npm test                # vitest run — 574 tests + 15 that need MongoDB (2026-11-24), no database required
+MONGO_TEST_URI=mongodb://localhost:27017/mobilehub_test npm test   # also runs the tests that need real MongoDB (status board, device jobs); each file uses and drops its own mobilehub_test_<suffix> database. CI runs this in its MongoDB job
 ```
 
 `dev` requires `MONGODB_URI` reachable and `JWT_SECRET` (32+ chars) in `backend/.env` — see `backend/.env.example`. `typecheck`/`lint`/`build`/`test` need neither Mongo nor a device: the tests stub the database and use the synthetic capture/discovery sources. For `dev`, a plain `docker run -d -p 27017:27017 mongo:7` is enough.

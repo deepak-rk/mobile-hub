@@ -298,3 +298,11 @@ That fix then broke the one existing test that exercised it for real (`config.se
 
 **A mutation check read a source file with `Get-Content -Raw` and wrote it back; every em dash came back as mojibake.** Windows PowerShell 5.1 reads a BOM-less file as the ANSI code page. Caught by the diff stat (77 lines changed for a 2-line edit) before commit; the file was restored from git and the edit reapplied. **Rule:** mutation and restore go through a Python script that reads and writes UTF-8 explicitly; check `git diff --stat` after every restore.
 
+## 2026-11-24 — Two agents were running on one host
+
+**Restarting the dev stack found two agent processes for the same machine id.** `scripts/start.mjs` always starts an agent (unlike the backend and frontend, which it skips when already up), so an earlier start over a running stack added a second one. Both heartbeat and both would claim installs and device jobs. Nothing in the agent refuses to start beside another instance, which is exactly lesson 40. **Fix for now:** restart with `stop.mjs` then `start.mjs`. **Rule (Phase 5):** a single-instance guard keyed on the machine identity, and `start.mjs` must not start a second agent.
+
+## 2026-11-24 — Test setup through Mongoose can quietly not happen
+
+**Two device-job tests failed because their setup never ran**: backdating `createdAt` through `Model.updateOne` is silently dropped, since timestamps make `createdAt` immutable. The tests failed rather than passed, so nothing false shipped, but the cause looked like a bug in the code under test. Also caught before pushing: the new CI MongoDB job pointed every test file at one database, and Vitest runs files in parallel while each drops its database when done. **Fix:** backdate through the raw driver (`Model.collection.updateOne`); each test file gets its own database (`testMongoUri(suffix)`). **Rule:** state a test arranges through Mongoose is read back before it is relied on; tests sharing an external resource assume they run in parallel.
+

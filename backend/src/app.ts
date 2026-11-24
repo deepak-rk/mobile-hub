@@ -20,6 +20,7 @@ import { createUserStore } from './modules/auth/auth.service';
 import dynamicImport from './common/dynamic-import';
 import { createAuthRateLimiter } from './common/auth-rate-limit';
 import { hostsRoutes } from './modules/hosts/hosts.routes';
+import { deviceJobsRoutes } from './modules/device-jobs/device-jobs.routes';
 import { devicesRoutes } from './modules/devices/devices.routes';
 import { agentCredentialsRoutes } from './modules/agent-credentials/agent-credentials.routes';
 import { configRoutes } from './modules/config/config.routes';
@@ -207,6 +208,7 @@ export async function buildApp(config: EffectiveConfig): Promise<FastifyInstance
   // Streaming hangs off the device resource it belongs to.
   void app.register(gated(app, 'streaming', streamingRoutes), { prefix: '/api/devices' });
   void app.register(gated(app, 'analytics', analyticsRoutes), { prefix: '/api/analytics' });
+  void app.register(deviceJobsRoutes, { prefix: '/api/device-jobs' });
 
   return app;
 }

@@ -93,9 +93,9 @@ Not live-verified: Docker/Mongo was down this session. First thing once it is ba
 - Count summaries always include broken and total (lesson 65). **Done 2026-11-22** (total now visible on the run page).
 
 ### Phase 4 — device interaction & device config
-- Remote control (tap/swipe/type, home/back/rotate), screenshot, reboot, reconnect, wipe/reset — agent-pulled jobs.
-- **Device-config jobs**: durable Mongo record (queued → running → succeeded | failed | timed-out | interrupted, 24 h TTL), late results accepted, result route keyed on the durable id (lessons 42–44); `dryRun`, Idempotency-Key, refuse production environments.
-- **One busy-lock key for one phone** across app-setup, device-config, install and execution — derived from the resolved owner (lesson 41: two guards keyed differently never saw each other).
+- Remote control (tap/swipe/type, home/back/rotate), screenshot, reboot, reconnect, wipe/reset — agent-pulled jobs. **Remote control done 2026-11-24** (Android: keys, tap/swipe in screen fractions mapped by the agent from the current display size, typing, rotate confirmed from the display, reboot; agent long-poll, ~0.5 s per action). Screenshot, reconnect, wipe/reset not built.
+- **Device-config jobs**: durable Mongo record (queued → running → succeeded | failed | timed-out | interrupted, 24 h TTL), late results accepted, result route keyed on the durable id (lessons 42–44); `dryRun`, Idempotency-Key, refuse production environments. **Job record built 2026-11-24** (`DeviceJob`, used by remote control: states, TTL, late results, id-keyed result route, dryRun, Idempotency-Key). Refuse-production waits for the config jobs it applies to.
+- **One busy-lock key for one phone** across app-setup, device-config, install and execution — derived from the resolved owner (lesson 41: two guards keyed differently never saw each other). Partly 2026-11-24: device actions require the requester to hold the phone's lock (the same lock a run takes) and refuse during an install; installs themselves still take no lock.
 - Post-install setup: permissions and env flags. Device tooling quirks to design in from the start:
   - `pm grant` of an undeclared permission exits 0 and does nothing → **read state back** (`dumpsys package`) (lesson 36).
   - Some permission classes cannot be granted → `skipped`, not `failed` (lesson 39).

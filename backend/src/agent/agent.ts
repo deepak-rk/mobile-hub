@@ -5,6 +5,12 @@ import { runUninstall } from './uninstaller';
 import { collectDiagnostics } from './diagnostics';
 import { ensureLocalAppiumServer, assertDriverInstalled, shutdownLocalAppiumServers } from './appium-runner';
 import { StreamRelay } from './stream-runner';
+import { runDeviceAction } from './device-actions';
+
+/** How long one long-poll for device jobs waits on the hub. */
+const DEVICE_JOB_WAIT_MS = 20_000;
+/** Pause after a failed long-poll, so a hub outage is not a tight loop. */
+const DEVICE_JOB_RETRY_MS = 5_000;
 
 export interface AgentOptions {
   machineId: string;
@@ -57,6 +63,9 @@ export class DeviceAgent {
   // comment for why streaming's start/stop shape differs from a one-shot
   // request.
   private readonly streamRelay = new StreamRelay(undefined, (level, msg) => this.log(level, msg));
+  // Device actions run one at a time per phone, in the order they were sent
+  // (a tap then a swipe must not race), but never hold up another phone.
+  private readonly deviceQueues = new Map<string, Promise<void>>();
 
   constructor(private readonly opts: AgentOptions) {}
 
@@ -165,6 +174,41 @@ export class DeviceAgent {
     this.running = true;
     this.log('info', `agent started: machineId=${this.opts.machineId} discovery=${this.opts.discovery.name}`);
     void this.loop();
+    void this.deviceJobLoop();
+  }
+
+  /** Long-polls the hub for device actions and runs each as it arrives. */
+  private async deviceJobLoop(): Promise<void> {
+    let failures = 0;
+    while (this.running) {
+      try {
+        const job = await this.opts.hub.nextDeviceJob(this.opts.machineId, DEVICE_JOB_WAIT_MS);
+        failures = 0;
+        if (job) this.enqueueDeviceJob(job.deviceUdid, job._id, job.action);
+      } catch (err) {
+        failures += 1;
+        if (failures === 1 || failures % 10 === 0) {
+          this.log('warn', `device job poll failed (${failures} in a row): ${err instanceof Error ? err.message : String(err)}`);
+        }
+        await new Promise((resolve) => setTimeout(resolve, DEVICE_JOB_RETRY_MS));
+      }
+    }
+  }
+
+  private enqueueDeviceJob(udid: string, jobId: string, action: Parameters<typeof runDeviceAction>[1]): void {
+    const prev = this.deviceQueues.get(udid) ?? Promise.resolve();
+    const next = prev
+      .then(async () => {
+        const outcome = await runDeviceAction(udid, action);
+        await this.opts.hub.reportDeviceJob(jobId, outcome);
+      })
+      .catch((err: unknown) => {
+        this.log('error', `device job ${jobId} on ${udid}: ${err instanceof Error ? err.message : String(err)}`);
+      });
+    this.deviceQueues.set(udid, next);
+    void next.finally(() => {
+      if (this.deviceQueues.get(udid) === next) this.deviceQueues.delete(udid);
+    });
   }
 
   private async loop(): Promise<void> {

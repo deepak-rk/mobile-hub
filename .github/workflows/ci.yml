@@ -42,6 +42,31 @@ jobs:
       - if: matrix.os == 'ubuntu-latest'
         run: npm run build --workspace=backend
 
+  # The tests that need a real MongoDB (status board writers, device jobs:
+  # upserts, array filters, atomic claims) skip without MONGO_TEST_URI. This
+  # job provides one, so they run on every push, not only on a dev machine.
+  backend-mongo:
+    name: Backend with MongoDB
+    runs-on: ubuntu-latest
+    services:
+      mongo:
+        image: mongo:7
+        ports:
+          - 27017:27017
+    env:
+      MONGO_TEST_URI: mongodb://localhost:27017/mobilehub_test
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - name: Fetch git dependencies over HTTPS
+        run: git config --global url."https://github.com/".insteadOf "ssh://git@github.com/"
+      - run: npm ci
+      - run: npm run test --workspace=backend
+
   frontend:
     name: Frontend
     runs-on: ubuntu-latest

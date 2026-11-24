@@ -1,3 +1,4 @@
+import { expireDeviceJobs } from './modules/device-jobs/device-jobs.service';
 import { buildApp } from './app';
 import { connectDB } from './db/connection';
 import mongoose from 'mongoose';
@@ -171,6 +172,13 @@ async function start(): Promise<void> {
       })
       .catch((err: unknown) => {
         app.log.error(err, 'Failed to mark stale hosts offline');
+      });
+    expireDeviceJobs()
+      .then(({ timedOut, interrupted }) => {
+        if (timedOut + interrupted > 0) app.log.warn(`Device jobs: ${timedOut} timed out, ${interrupted} interrupted`);
+      })
+      .catch((err: unknown) => {
+        app.log.error(err, 'Device job expiry sweep failed');
       });
     failWorkStrandedOnOfflineHosts()
       .then((failed) => {

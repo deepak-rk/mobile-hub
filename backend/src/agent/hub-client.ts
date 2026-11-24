@@ -1,4 +1,5 @@
 import * as fs from 'fs';
+import type { DeviceAction } from '../common/device-actions';
 import { pipeline } from 'stream/promises';
 import { Readable, Transform } from 'stream';
 import { DiscoveredDevice } from './device-discovery';
@@ -73,6 +74,13 @@ export class HubError extends Error {
 }
 
 const REQUEST_TIMEOUT_MS = 10_000;
+
+/** A device action the hub queued for this host (`GET /api/device-jobs/next`). */
+export interface PendingDeviceJob {
+  _id: string;
+  deviceUdid: string;
+  action: DeviceAction;
+}
 // Build artifacts run to hundreds of MB — the plain request timeout above
 // would kill a real download partway through.
 const ARTIFACT_DOWNLOAD_TIMEOUT_MS = 5 * 60_000;
@@ -303,6 +311,26 @@ export class HubClient {
     update: { status: UninstallTargetStatus; error?: string },
   ): Promise<void> {
     await this.post(`/api/device-installs/uninstalls/${uninstallRunId}/targets/${deviceUdid}/report${this.hostQuery()}`, update);
+  }
+
+  /**
+   * Long-polls for the next device action for this host: returns as soon as
+   * one is queued, or null after `waitMs`. Separate from the 10 s heartbeat,
+   * which is far too slow for a person pressing buttons on a phone.
+   */
+  async nextDeviceJob(machineId: string, waitMs: number): Promise<PendingDeviceJob | null> {
+    const path = `/api/device-jobs/next?machineId=${encodeURIComponent(machineId)}&waitMs=${waitMs}`;
+    const res = await fetch(`${this.baseUrl}${path}`, {
+      headers: this.agentToken ? { Authorization: `Bearer ${this.agentToken}` } : {},
+      signal: AbortSignal.timeout(waitMs + REQUEST_TIMEOUT_MS),
+    });
+    if (res.status === 204) return null;
+    if (!res.ok) throw new HubError(res.status, path, (await res.text().catch(() => '')) || res.statusText);
+    return (await res.json()) as PendingDeviceJob;
+  }
+
+  async reportDeviceJob(jobId: string, outcome: { status: 'succeeded' | 'failed'; output?: string; error?: string }): Promise<void> {
+    await this.post(`/api/device-jobs/${jobId}/report${this.hostQuery()}`, outcome);
   }
 
   private async post<T>(path: string, body: unknown): Promise<T> {

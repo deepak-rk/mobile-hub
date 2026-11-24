@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
+import { testMongoUri } from '../../../common/test-mongo';
 import mongoose, { Types } from 'mongoose';
 import type { IExecutionRun } from '../execution-run.model';
 import { ExecutionRun } from '../execution-run.model';
@@ -32,7 +33,7 @@ describe('bubbleUp', () => {
  * (a throwaway database, dropped afterwards). Skipped otherwise; the rest of
  * the suite needs no database.
  */
-const uri = process.env.MONGO_TEST_URI;
+const uri = testMongoUri('board');
 
 describe.runIf(Boolean(uri))('status board writers (MongoDB)', () => {
   beforeAll(async () => {

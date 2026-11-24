@@ -88,3 +88,45 @@ export function useStopDeviceStream(udid: string, machineId?: string) {
     },
   });
 }
+
+/** What a person can ask a phone to do (the hub's `common/device-actions.ts`). */
+export type DeviceAction =
+  | { kind: 'key'; key: 'home' | 'back' | 'app_switch' | 'power' | 'volume_up' | 'volume_down' | 'enter' }
+  | { kind: 'tap'; x: number; y: number }
+  | { kind: 'swipe'; x1: number; y1: number; x2: number; y2: number; durationMs?: number }
+  | { kind: 'text'; text: string }
+  | { kind: 'rotate'; rotation: 0 | 1 | 2 | 3 }
+  | { kind: 'reboot' };
+
+export interface DeviceJob {
+  _id: string;
+  status: 'queued' | 'running' | 'succeeded' | 'failed' | 'timed_out' | 'interrupted';
+  action: { kind: DeviceAction['kind'] } & Record<string, unknown>;
+  output: string | null;
+  error: string | null;
+  late: boolean;
+}
+
+const JOB_POLL_MS = 250;
+/** A little past the hub's claim + run timeouts, so the hub's verdict always arrives first. */
+const JOB_WAIT_LIMIT_MS = 130_000;
+
+/**
+ * Sends one action and resolves with the finished job: the hub's record of
+ * what the phone did, not merely that the request was accepted.
+ */
+export function useDeviceAction(udid: string, machineId?: string) {
+  return useMutation({
+    mutationFn: async (action: DeviceAction): Promise<DeviceJob> => {
+      const created = (await api.post<DeviceJob>('/device-jobs', { deviceUdid: udid, machineId, action })).data;
+      const deadline = Date.now() + JOB_WAIT_LIMIT_MS;
+      let job = created;
+      while ((job.status === 'queued' || job.status === 'running') && Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, JOB_POLL_MS));
+        job = (await api.get<DeviceJob>(`/device-jobs/${created._id}`)).data;
+      }
+      return job;
+    },
+  });
+}
+

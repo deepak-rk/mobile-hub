@@ -7,6 +7,7 @@ import { useDeviceStream, type StreamProtocol, type StreamState } from '../api/u
 import { useStopDeviceStream } from '../api/devices.api';
 import { useFeatureDisabled } from '@/features/config/api/features.api';
 import type { Device } from '../types';
+import { pointToScreenFraction, TAP_SLOP } from '../lib/remoteControl';
 import styles from './DeviceStream.module.css';
 
 const BANNER: Record<StreamState, { text: string; tone: string }> = {
@@ -28,16 +29,59 @@ const BANNER: Record<StreamState, { text: string; tone: string }> = {
  * explicit `load()` + `play()`, done here via a ref rather than in the hook,
  * since it's a DOM operation, not stream state.
  */
+/** A press on the stream turned into a tap or a swipe, in screen fractions. */
+export type StreamGesture =
+  | { kind: 'tap'; x: number; y: number }
+  | { kind: 'swipe'; x1: number; y1: number; x2: number; y2: number; durationMs: number };
+
+function naturalSize(el: HTMLImageElement | HTMLVideoElement): [number, number] {
+  return el instanceof HTMLVideoElement ? [el.videoWidth, el.videoHeight] : [el.naturalWidth, el.naturalHeight];
+}
+
+/** Pointer handlers that turn a press on the picture into a tap or swipe. */
+function useGestureHandlers(onGesture?: (g: StreamGesture) => void) {
+  const start = useRef<{ x: number; y: number; at: number } | null>(null);
+  if (!onGesture) return {};
+  const at = (e: React.PointerEvent<HTMLImageElement | HTMLVideoElement>) => {
+    const el = e.currentTarget;
+    const [w, h] = naturalSize(el);
+    return pointToScreenFraction(e.clientX, e.clientY, el.getBoundingClientRect(), w, h);
+  };
+  return {
+    onPointerDown: (e: React.PointerEvent<HTMLImageElement | HTMLVideoElement>) => {
+      const p = at(e);
+      start.current = p ? { ...p, at: Date.now() } : null;
+    },
+    onPointerUp: (e: React.PointerEvent<HTMLImageElement | HTMLVideoElement>) => {
+      const from = start.current;
+      start.current = null;
+      const to = at(e);
+      if (!from || !to) return;
+      if (Math.hypot(to.x - from.x, to.y - from.y) < TAP_SLOP) {
+        onGesture({ kind: 'tap', x: to.x, y: to.y });
+      } else {
+        const durationMs = Math.min(5000, Math.max(50, Date.now() - from.at));
+        onGesture({ kind: 'swipe', x1: from.x, y1: from.y, x2: to.x, y2: to.y, durationMs });
+      }
+    },
+    draggable: false,
+    style: { cursor: 'pointer', touchAction: 'none' as const },
+  };
+}
+
 function StreamFrame({
   protocol,
   frameUrl,
   deviceName,
+  onGesture,
 }: {
   protocol: StreamProtocol;
   frameUrl: string;
   deviceName: string;
+  onGesture?: (g: StreamGesture) => void;
 }) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  const gestures = useGestureHandlers(onGesture);
 
   useEffect(() => {
     if (protocol !== 'h264') return;
@@ -60,11 +104,12 @@ function StreamFrame({
         muted
         playsInline
         aria-label={`${deviceName} screen`}
+        {...gestures}
       />
     );
   }
 
-  return <img className={styles.frame} src={frameUrl} alt={`${deviceName} screen`} />;
+  return <img className={styles.frame} src={frameUrl} alt={`${deviceName} screen`} {...gestures} />;
 }
 
 /**
@@ -80,7 +125,7 @@ function StreamFrame({
  * See backend/src/modules/streaming/sources/adb-h264.source.ts for the full
  * reasoning — this is a real, working alternative, not a strictly better one.
  */
-export function DeviceStream({ device }: { device: Device }) {
+export function DeviceStream({ device, onGesture }: { device: Device; onGesture?: (g: StreamGesture) => void }) {
   const { user } = useAuth();
   const location = useLocation();
   const [protocol, setProtocol] = useState<StreamProtocol>('mjpeg');
@@ -200,7 +245,7 @@ export function DeviceStream({ device }: { device: Device }) {
 
       <div className={styles.stage}>
         {frameUrl ? (
-          <StreamFrame protocol={protocol} frameUrl={frameUrl} deviceName={device.name} />
+          <StreamFrame protocol={protocol} frameUrl={frameUrl} deviceName={device.name} onGesture={onGesture} />
         ) : (
           <div className={styles.placeholder}>
             <icons.stream size={32} aria-hidden="true" />

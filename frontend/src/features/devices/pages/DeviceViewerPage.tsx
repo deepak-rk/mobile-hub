@@ -12,7 +12,9 @@ import {
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { icons, iconSize } from '@/lib/icons';
 import { formatRelative, shortId } from 'ts-format-utils';
-import { useDevice } from '../api/devices.api';
+import { useDevice, useDeviceAction } from '../api/devices.api';
+import { RemoteControls } from '../components/RemoteControls';
+import { canControl } from '../lib/remoteControl';
 import { LockControls } from '../components/LockControls';
 import { DeviceStream, StreamStopButton } from '../components/DeviceStream';
 import { AppiumCapabilities } from '../components/AppiumCapabilities';
@@ -28,6 +30,8 @@ export function DeviceViewerPage() {
   const { data: device, isPending, error, refetch } = useDevice(udid, searchParams.get('machineId') || undefined);
   const { user } = useAuth();
   const model = device ? modelDetail(device) : null;
+  const send = useDeviceAction(udid ?? '', device?.machineId);
+  const controllable = device ? canControl(device, user?.id) : false;
 
   return (
     <Page>
@@ -52,9 +56,20 @@ export function DeviceViewerPage() {
             <div className={styles.mainColumn}>
               <Card>
                 <CardBody>
-                  <DeviceStream device={device} />
+                  <DeviceStream device={device} onGesture={controllable ? (g) => send.mutate(g) : undefined} />
                 </CardBody>
               </Card>
+
+              {controllable ? (
+                <Card>
+                  <CardBody>
+                    <div className={styles.panelHead}>
+                      <span className={styles.panelTitle}>Control</span>
+                    </div>
+                    <RemoteControls device={device} send={send} />
+                  </CardBody>
+                </Card>
+              ) : null}
 
               <AppiumCapabilities device={device} />
             </div>
