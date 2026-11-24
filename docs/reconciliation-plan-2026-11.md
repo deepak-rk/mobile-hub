@@ -107,7 +107,7 @@ Not live-verified: Docker/Mongo was down this session. First thing once it is ba
 ### Phase 5 — fleet & ops
 - Agent registry with `blocked` tombstone; deregistration survives the next heartbeat.
 - **Machine identity**: `MACHINE_ID` env → OS machine id → persisted file → hostname hash, same algorithm on hub and agent.
-- **Single-instance guard keyed on identity, never on a port** (lesson 40: a port fallback defeated it and two agents at different commits fought).
+- **Single-instance guard keyed on identity, never on a port** (lesson 40: a port fallback defeated it and two agents at different commits fought). **Agent done 2026-11-24** (`agent/instance-lock.ts`, a lock file per MACHINE_ID holding the pid). Not covered: the hub, and two hosts given the same id.
 - Heartbeat payload with `protocolVersion`, system metrics (sample CPU twice — a single sample is a since-boot average), capabilities, and a pushed device-health snapshot (served from the snapshot, not live probes through proxies).
 - Fleet view: per-agent version vs hub, RAM/CPU/disk bars, the hub shown as a host not an agent.
 - Scheduler: 60 s tick behind a **server** flag (a client flag leaves the timer firing — lesson 57); each fire claimed by atomically advancing `nextRunAt`; self-contained targets re-derived on edit (lesson 68); conflict guard (same device within 30 min → 409); update allow-list (never `$set` a raw body); pre-warm the app 30 min ahead, skip busy devices.

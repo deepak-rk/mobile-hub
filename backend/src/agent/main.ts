@@ -4,6 +4,7 @@ import * as dotenv from 'dotenv';
 import { DeviceAgent } from './agent';
 import { HubClient } from './hub-client';
 import { getDeviceDiscovery } from './sources/get-discovery';
+import { acquireInstanceLock, type InstanceLock } from './instance-lock';
 
 dotenv.config();
 
@@ -56,6 +57,17 @@ function hostOs(): 'darwin' | 'linux' | 'win32' {
 }
 
 async function main(): Promise<void> {
+  // Before anything reaches the hub: a second agent with this identity must
+  // not heartbeat or claim work even once.
+  let lock: InstanceLock;
+  try {
+    lock = acquireInstanceLock(env.MACHINE_ID);
+  } catch (err) {
+    console.error(`❌ ${err instanceof Error ? err.message : String(err)}`);
+    process.exit(1);
+  }
+  process.on('exit', () => lock.release());
+
   const discovery = getDeviceDiscovery(env.AGENT_DISCOVERY);
 
   const agent = new DeviceAgent({

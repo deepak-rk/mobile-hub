@@ -122,7 +122,10 @@ describe('AdbMjpegCaptureSource', () => {
 
     const garbage = Buffer.from('this is not a png');
     emitPng(garbage);
-    await new Promise((r) => setTimeout(r, 50)); // let the rejected compress promise settle
+    // Waits for the outcome rather than a fixed 50 ms: the rejection comes
+    // from sharp's thread pool, which took longer than that when the full
+    // suite ran in CI alongside the MongoDB tests.
+    await vi.waitFor(() => expect(frames.length + errors.length).toBeGreaterThan(0), { timeout: 5_000 });
     handle.stop();
 
     // A single bad frame must not tear down the capture — see the source's
