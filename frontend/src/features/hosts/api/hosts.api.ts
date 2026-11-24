@@ -1,4 +1,4 @@
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/services/api';
 import type { Host, HostAgentCredential } from '../types';
 
@@ -24,3 +24,22 @@ export function useHostCredentials(enabled: boolean) {
     enabled,
   });
 }
+
+/** Admin: remove a host from the lab (or let it back in). Its devices and work are released hub-side. */
+export function useSetHostBlocked(machineId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: { blocked: boolean; reason?: string }) =>
+      (
+        await api.post<Host>(
+          `/hosts/${encodeURIComponent(machineId)}/${input.blocked ? 'block' : 'unblock'}`,
+          input.blocked ? { reason: input.reason } : {},
+        )
+      ).data,
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['hosts'] });
+      void qc.invalidateQueries({ queryKey: ['devices'] });
+    },
+  });
+}
+

@@ -37,6 +37,8 @@ export type StatusKind =
   // agent credential
   | 'active'
   | 'revoked'
+  // hosts: removed from the lab by an admin
+  | 'blocked'
   // status board (scenario states; `failed` is shared with runs)
   | 'not-run'
   | 'scheduled'
@@ -85,6 +87,7 @@ export const statusMeta: Record<StatusKind, StatusMeta> = {
   // Agent credentials
   active: { label: 'Active', token: '--status-passed', icon: icons.credential },
   revoked: { label: 'Revoked', token: '--status-cancelled', icon: icons.offline },
+  blocked: { label: 'Removed', token: '--status-cancelled', icon: icons.offline },
 
   // Device install targets
   // Copying the artifact onto the device — measured in real bytes, unlike

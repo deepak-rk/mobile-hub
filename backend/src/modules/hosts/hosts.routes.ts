@@ -1,6 +1,14 @@
 import { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
-import { listHosts, getHost, upsertHeartbeat, reachableAgentHost } from './hosts.service';
+import {
+  assertHostNotBlocked,
+  blockHost,
+  listHosts,
+  getHost,
+  unblockHost,
+  upsertHeartbeat,
+  reachableAgentHost,
+} from './hosts.service';
 import { requireAgentToken, AGENT_TRAFFIC_LOG_LEVEL } from '../agent-auth/agent-auth';
 import { getPendingInstallsForMachine, getActiveInstallCountForMachine } from '../device-installs/install-runs.service';
 import { getPendingUninstallsForMachine, getActiveUninstallCountForMachine } from '../device-installs/uninstall-runs.service';
@@ -83,6 +91,7 @@ export const hostsRoutes: FastifyPluginAsync = async (app) => {
     if (req.agentMachineId && req.agentMachineId !== body.data.machineId) {
       throw new ForbiddenError('This credential is scoped to a different machineId.', 'AGENT_MACHINE_MISMATCH');
     }
+    await assertHostNotBlocked(body.data.machineId);
     const host = await upsertHeartbeat(body.data);
     // Piggybacks on the existing 10s poll cycle rather than opening a second
     // one — the agent-polls-for-pending-installs decision this session
@@ -172,6 +181,20 @@ export const hostsRoutes: FastifyPluginAsync = async (app) => {
     }
     streamingService.ingestRemoteError(machineId, body.data.deviceUdid, body.data.protocol, body.data.message);
     return reply.code(204).send();
+  });
+
+  // Admin: remove a host from the lab, and keep it out (see blockHost).
+  app.post('/:machineId/block', { preHandler: app.requireRole('admin') }, async (req) => {
+    const { machineId } = req.params as { machineId: string };
+    const body = z.object({ reason: z.string().trim().max(500).optional() }).safeParse(req.body ?? {});
+    if (!body.success) throw new ValidationError(body.error.message);
+    const result = await blockHost(machineId, req.user.sub, body.data.reason || undefined);
+    return { ...(result.host.toObject() as Record<string, unknown>), released: { devices: result.devices, work: result.work } };
+  });
+
+  app.post('/:machineId/unblock', { preHandler: app.requireRole('admin') }, async (req) => {
+    const { machineId } = req.params as { machineId: string };
+    return unblockHost(machineId);
   });
 
   app.get('/:machineId', async (req) => {

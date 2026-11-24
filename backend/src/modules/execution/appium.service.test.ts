@@ -334,7 +334,10 @@ describe('assertDriverInstalled', () => {
     const path = process.env.PATH;
     try {
       // Windows spawns the `.cmd` through cmd.exe, which must stay findable.
-      process.env.PATH = process.platform === 'win32' ? `${bin};${process.env.SystemRoot}\\System32` : bin;
+      // Its folder is taken from the existing PATH: `SystemRoot` is absent in
+      // a Vitest worker started from Git Bash (the copied env is case-sensitive).
+      const cmdDir = (path ?? '').split(';').find((d) => d && fs.existsSync(join(d, 'cmd.exe')));
+      process.env.PATH = process.platform === 'win32' ? `${bin};${cmdDir}` : bin;
       await assertDriverInstalled('android');
       process.env.PATH = ''; // a second listing would now fail
       await expect(assertDriverInstalled('android')).resolves.toBeUndefined();

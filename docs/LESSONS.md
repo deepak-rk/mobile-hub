@@ -309,3 +309,7 @@ That fix then broke the one existing test that exercised it for real (`config.se
 
 **The new CI MongoDB job failed on an old test, `adb-mjpeg.source.test.ts`.** It slept a fixed 50 ms for sharp to reject a bad frame; with more test files running in parallel, sharp's thread pool took longer, and the test read its result too early. The regular CI jobs never hit it. The CI log needed authentication not available here, so the job was reproduced in a Linux `node:22` container against the local MongoDB, which showed the failure, and confirmed the fix twice. **Fix:** wait for the outcome (`vi.waitFor`), not a duration. **Rule:** a test waiting on real work (a thread pool, a process, I/O) waits for the event; fixed sleeps are only for timers the test itself controls.
 
+## 2026-11-24 — A test that read `SystemRoot` passed in one shell only
+
+**The Appium driver-cache test passed when the suite ran from PowerShell and failed from Git Bash** ("spawn cmd.exe ENOENT"). It built a PATH from `process.env.SystemRoot`; inside a Vitest worker started from Git Bash, that variable (and `comspec`) read as undefined, because the worker's environment is a case-sensitive copy and Git Bash spells them differently. Plain Node in either shell saw both. Found by running the full suite from the other shell. **Fix:** the test finds `cmd.exe`'s folder in the existing PATH. **Rule:** tests do not read Windows environment variables by their exact case; and a suite run from only one shell has not been run on Windows.
+

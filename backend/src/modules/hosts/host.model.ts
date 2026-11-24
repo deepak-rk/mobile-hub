@@ -25,6 +25,13 @@ export interface IHost extends Document {
    * measured fact.
    */
   diagnostics: IHostDiagnostics | null;
+  /**
+   * Set when an admin removed this host from the lab. A tombstone rather than
+   * a delete: a deleted host re-registered itself on its next heartbeat, so
+   * removal never stuck. Its heartbeats, syncs and job polls are refused
+   * until an admin unblocks it.
+   */
+  blocked: { at: Date; by: string; reason: string | null } | null;
   lastHeartbeatAt: Date;
   createdAt: Date;
   updatedAt: Date;
@@ -41,6 +48,10 @@ const hostSchema = new Schema<IHost>(
       maxDevices: { type: Number, default: 0 },
       androidSupport: { type: Boolean, default: false },
       iosSupport: { type: Boolean, default: false },
+    },
+    blocked: {
+      type: new Schema({ at: Date, by: String, reason: { type: String, default: null } }, { _id: false }),
+      default: null,
     },
     diagnostics: {
       type: {

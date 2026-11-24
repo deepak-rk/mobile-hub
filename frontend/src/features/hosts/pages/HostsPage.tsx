@@ -18,6 +18,7 @@ import { useAuth } from '@/features/auth/useAuth';
 import { formatBytes, formatRelative } from 'ts-format-utils';
 import { useHosts, useHostCredentials } from '../api/hosts.api';
 import { credentialFor } from '../lib/credentialFor';
+import { HostBlockControl } from '../components/HostBlockControl';
 import type { Host, HostAgentCredential } from '../types';
 import styles from './HostsPage.module.css';
 
@@ -139,7 +140,7 @@ export function HostsPage() {
                     <icons.host size={iconSize.control} aria-hidden="true" />
                   </span>
                   <span className={styles.name}>{host.hostname}</span>
-                  <StatusBadge status={host.status} />
+                  <StatusBadge status={host.blocked ? 'blocked' : host.status} />
                 </div>
 
                 <Meta>
@@ -159,6 +160,7 @@ export function HostsPage() {
                 <DiagnosticsPanel diagnostics={host.diagnostics} />
 
                 {isAdmin ? <CredentialHealth credentials={credentials} machineId={host.machineId} /> : null}
+                {isAdmin ? <HostBlockControl host={host} /> : null}
 
                 <div className={styles.footer}>
                   <Mono>{host.machineId}</Mono>

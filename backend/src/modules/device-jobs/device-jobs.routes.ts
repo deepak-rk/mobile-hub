@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { deviceActionSchema } from '../../common/device-actions';
 import { ForbiddenError, ValidationError } from '../../common/errors/app-error';
 import { requireAgentToken } from '../agent-auth/agent-auth';
+import { assertHostNotBlocked } from '../hosts/hosts.service';
 import type { IDeviceJob } from './device-job.model';
 import {
   createDeviceJob,
@@ -72,6 +73,7 @@ export const deviceJobsRoutes: FastifyPluginAsync = async (app) => {
   app.get('/next', { preHandler: requireAgentToken }, async (req, reply) => {
     const q = parse(nextQuery, req.query);
     assertSameHost(req.agentMachineId, q.machineId);
+    await assertHostNotBlocked(q.machineId);
     const job = await waitForJob(q.machineId, q.waitMs);
     if (!job) return reply.code(204).send();
     return { _id: job._id, deviceUdid: job.deviceUdid, action: job.action };
