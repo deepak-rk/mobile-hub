@@ -139,9 +139,17 @@ async function ensurePort(device: IDevice, config: EffectiveConfig): Promise<num
  */
 const REQUIRED_DRIVER: Record<string, string> = { android: 'uiautomator2', ios: 'xcuitest' };
 
+/**
+ * Drivers already seen installed by this process. The listing is slow (20 s
+ * on an idle lab host, and past 30 s while a run's `npm install` competed for
+ * it, which failed a run that had the driver all along), so a driver seen once
+ * is not listed again. One removed later still fails, plainly, at session start.
+ */
+const confirmedDrivers = new Set<string>();
+
 export async function assertDriverInstalled(platform: string): Promise<void> {
   const driver = REQUIRED_DRIVER[platform];
-  if (!driver) return;
+  if (!driver || confirmedDrivers.has(driver)) return;
 
   let output = '';
   const collect = (chunk: Buffer): void => {
@@ -153,7 +161,7 @@ export async function assertDriverInstalled(platform: string): Promise<void> {
     args: ['driver', 'list', '--installed'],
     cwd: process.cwd(),
     env: { PATH: process.env.PATH, APPDATA: process.env.APPDATA, USERPROFILE: process.env.USERPROFILE },
-    timeoutMs: 30_000,
+    timeoutMs: 90_000,
     onStdout: collect,
     onStderr: collect,
   });
@@ -174,6 +182,7 @@ export async function assertDriverInstalled(platform: string): Promise<void> {
         `Note the driver's major must match the Appium server's — a current driver requires Appium 3.x.`,
     );
   }
+  confirmedDrivers.add(driver);
 }
 
 /**

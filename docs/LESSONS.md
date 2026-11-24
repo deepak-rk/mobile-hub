@@ -290,3 +290,11 @@ That fix then broke the one existing test that exercised it for real (`config.se
 
 **`GET /:id/combined` returned every test with no status and no title, while its unit test passed.** The code spread each test case (`{ ...tc, runId }`); on a Mongoose subdocument that copies internal properties, not the fields. The test stubbed `findById`/`find` to resolve plain objects, which spread fine. Found by the live check against real runs. **Fix:** the queries use `.lean()`, and the stubs return `{ lean: () => ... }`, the same call shape as the code, so dropping `.lean()` breaks the test. **Rule:** a stub mirrors the real call chain and return type; data read for reshaping (spread, JSON) is read with `.lean()`.
 
+## 2026-11-24 — A fixed timeout tuned on an idle machine
+
+**A live run failed with "Could not check Appium's installed drivers (timed out)" on a host where the driver was installed.** `appium driver list --installed` takes 20 s on an idle host; during a run it competed with the run's own `npm install` and passed the 30 s limit. The earlier fix (a check that cannot run must not report a verdict) did its job and named the real cause, which is how it was found. **Fix:** 90 s, and a driver seen installed is not listed again for the life of the process. **Rule:** a timeout on a slow local tool is measured under the load it runs under, not on an idle machine; a check whose answer rarely changes is cached on success.
+
+## 2026-11-24 — Restoring a file from PowerShell garbled its em dashes
+
+**A mutation check read a source file with `Get-Content -Raw` and wrote it back; every em dash came back as mojibake.** Windows PowerShell 5.1 reads a BOM-less file as the ANSI code page. Caught by the diff stat (77 lines changed for a 2-line edit) before commit; the file was restored from git and the edit reapplied. **Rule:** mutation and restore go through a Python script that reads and writes UTF-8 explicitly; check `git diff --stat` after every restore.
+

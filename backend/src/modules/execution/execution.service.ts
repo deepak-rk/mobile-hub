@@ -19,13 +19,17 @@ import { buildRunEnvironment, createRedactor } from './run-environment';
 import { classifySuite } from './automation-commands';
 import { checkoutWorktree, cleanupSharedRepos } from './repo-checkout';
 import { ensureAppOnDevice } from './app-preflight';
-import { markRunScenarios, settleRunScenarios } from './scenario-status/scenario-status.service';
+import { applyLiveResults, markRunScenarios, settleRunScenarios } from './scenario-status/scenario-status.service';
+import { createLiveResultsReader } from './scenario-status/live-results';
 
 /**
  * The status board is a view of runs, never a reason for one to fail: a
  * write that throws is logged and dropped. The next run, a resync or
  * "clear stuck" repairs the board.
  */
+/** How often a running run's results folder is read for the status board. */
+const LIVE_RESULTS_POLL_MS = 5_000;
+
 function boardWrite(what: string, work: Promise<unknown>): Promise<void> {
   return work.then(
     () => undefined,
@@ -1107,11 +1111,27 @@ async function runExecution(
       fs.rmSync(dir, { recursive: true, force: true });
     }
 
-    const runOutcome = await runCommand(input.run, cwd, logStream, runId, {
-      env: runEnv,
-      redact,
-      timeoutMs: env.EXECUTION_MAX_RUN_MINUTES * 60_000,
-    });
+    // Each scenario onto the board as the runner reports it. One write at a
+    // time: a slow database skips a tick rather than stacking writes.
+    const live = createLiveResultsReader(resultsDirCandidates(run.workspacePath));
+    let liveBusy = false;
+    const liveTimer = setInterval(() => {
+      if (liveBusy) return;
+      const cases = live.poll();
+      if (cases.length === 0) return;
+      liveBusy = true;
+      void boardWrite('live', applyLiveResults(run, cases)).finally(() => (liveBusy = false));
+    }, LIVE_RESULTS_POLL_MS);
+    let runOutcome: Awaited<ReturnType<typeof runCommand>>;
+    try {
+      runOutcome = await runCommand(input.run, cwd, logStream, runId, {
+        env: runEnv,
+        redact,
+        timeoutMs: env.EXECUTION_MAX_RUN_MINUTES * 60_000,
+      });
+    } finally {
+      clearInterval(liveTimer);
+    }
 
     // The only stage whose nonzero exit is a genuine *test* result.
     if (!(await settleStage('execute', runOutcome, 'test', 'test_assertion'))) return;

@@ -1,4 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
+import * as fs from 'fs';
+import * as os from 'os';
+import { join } from 'path';
 import {
   assertDriverInstalled,
   closeActiveSessions,
@@ -320,6 +323,24 @@ describe('assertDriverInstalled', () => {
       await expect(assertDriverInstalled('android')).rejects.toThrow(/Could not check Appium's installed drivers/);
     } finally {
       process.env.PATH = path;
+    }
+  });
+
+  it('lists once: a driver seen installed is not listed again', async () => {
+    // A fake `appium` that lists uiautomator2, then no `appium` at all.
+    const bin = fs.mkdtempSync(join(os.tmpdir(), 'fake-appium-'));
+    fs.writeFileSync(join(bin, 'appium.cmd'), '@echo uiautomator2@4.0.0 [installed (npm)]\r\n');
+    fs.writeFileSync(join(bin, 'appium'), '#!/bin/sh\necho "uiautomator2@4.0.0 [installed (npm)]"\n', { mode: 0o755 });
+    const path = process.env.PATH;
+    try {
+      // Windows spawns the `.cmd` through cmd.exe, which must stay findable.
+      process.env.PATH = process.platform === 'win32' ? `${bin};${process.env.SystemRoot}\\System32` : bin;
+      await assertDriverInstalled('android');
+      process.env.PATH = ''; // a second listing would now fail
+      await expect(assertDriverInstalled('android')).resolves.toBeUndefined();
+    } finally {
+      process.env.PATH = path;
+      fs.rmSync(bin, { recursive: true, force: true });
     }
   });
 });

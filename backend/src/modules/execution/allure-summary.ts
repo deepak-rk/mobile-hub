@@ -38,6 +38,12 @@ export interface TestSummary {
   failures: FailureGroup[];
   /** One entry per distinct test (retries already collapsed) — see `TestCaseOutcome`. */
   testCases: TestCaseOutcome[];
+  /**
+   * True when the directory held more result files than were read
+   * (`MAX_RESULT_FILES`): the counts and `testCases` are then a part of the
+   * run, and nothing may treat a test missing from them as "did not run".
+   */
+  truncated?: boolean;
 }
 
 export interface FailureGroup {
@@ -124,7 +130,7 @@ interface AllureStep {
   attachments?: AllureAttachment[];
 }
 
-interface AllureResult extends AllureStep {
+export interface AllureResult extends AllureStep {
   statusDetails?: { message?: string; trace?: string };
   historyId?: string;
   testCaseId?: string;
@@ -191,11 +197,11 @@ export function failureEvidenceOf(result: AllureResult): string | null {
  * first run against the sibling repo's checked-in results: 18 files, three
  * runs, 6 tests.
  */
-function keyOf(result: AllureResult, fallback: string): string {
+export function keyOf(result: AllureResult, fallback: string): string {
   return result.historyId ?? result.testCaseId ?? result.fullName ?? result.name ?? fallback;
 }
 
-function attemptOrder(result: AllureResult): number {
+export function attemptOrder(result: AllureResult): number {
   return result.stop ?? result.start ?? 0;
 }
 
@@ -208,6 +214,20 @@ function attemptOrder(result: AllureResult): number {
  * showing as 0/0. A project not using Allure at all must not start reporting
  * an empty test count as though its suite were empty.
  */
+const KNOWN_STATUSES = new Set(['passed', 'failed', 'broken', 'skipped']);
+
+/** One collapsed Allure result as the outcome stored on the run. */
+export function outcomeOf(key: string, result: AllureResult): TestCaseOutcome {
+  const evidence = FAILING.has(result.status ?? '') ? failureEvidenceOf(result) : null;
+  return {
+    id: key,
+    name: result.fullName ?? result.name ?? key,
+    status: (KNOWN_STATUSES.has(result.status ?? '') ? result.status : 'unknown') as TestCaseOutcome['status'],
+    ...(result.name ? { title: result.name } : {}),
+    ...(evidence ? { evidence } : {}),
+  };
+}
+
 export function summarizeAllureResults(dir: string): TestSummary | null {
   let entries: string[];
   try {
@@ -219,7 +239,8 @@ export function summarizeAllureResults(dir: string): TestSummary | null {
   // `-result.json` only. The same directory holds `-attachment.*` files and
   // `-container.json` fixtures, which are not tests — in a real run here they
   // outnumbered the results 65 to 1.
-  const files = entries.filter((f) => f.endsWith('-result.json')).slice(0, MAX_RESULT_FILES);
+  const allFiles = entries.filter((f) => f.endsWith('-result.json'));
+  const files = allFiles.slice(0, MAX_RESULT_FILES);
   if (files.length === 0) return null;
 
   const latest = new Map<string, AllureResult>();
@@ -249,21 +270,12 @@ export function summarizeAllureResults(dir: string): TestSummary | null {
     testCases: [],
   };
 
-  const failureCounts = new Map<string, number>();
-  const KNOWN_STATUSES = new Set(['passed', 'failed', 'broken', 'skipped']);
-  const normalizeStatus = (status?: string): TestCaseOutcome['status'] =>
-    (KNOWN_STATUSES.has(status ?? '') ? status : 'unknown') as TestCaseOutcome['status'];
+  if (allFiles.length > files.length) summary.truncated = true;
 
+  const failureCounts = new Map<string, number>();
   for (const [key, result] of latest.entries()) {
     summary.total += 1;
-    const evidence = FAILING.has(result.status ?? '') ? failureEvidenceOf(result) : null;
-    summary.testCases.push({
-      id: key,
-      name: result.fullName ?? result.name ?? key,
-      status: normalizeStatus(result.status),
-      ...(result.name ? { title: result.name } : {}),
-      ...(evidence ? { evidence } : {}),
-    });
+    summary.testCases.push(outcomeOf(key, result));
     switch (result.status) {
       case 'passed':
         summary.passed += 1;

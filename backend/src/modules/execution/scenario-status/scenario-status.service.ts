@@ -20,9 +20,11 @@ import { HISTORY_CAP, IScenarioState, ScenarioState, ScenarioStatus } from './sc
  *  - resync and restart recovery replay `updateFromResults`; `resultAt` keeps
  *    an older run's results from overwriting a newer run's.
  *
- * Not built: the live log parser for in-flight state. Until it is, a run
- * selected by tag or named suite marks nothing at schedule or execute (which
- * scenarios it holds is only known from its results).
+ * `applyLiveResults` — while the run executes, each result as the runner
+ *    writes it (`live-results.ts`). Never final: it marks what finished and
+ *    nothing else, and leaves "what did this run not reach" to
+ *    `updateFromResults`. A run selected by tag or named suite marks nothing
+ *    at schedule (which scenarios it holds is unknown until they report).
  */
 
 type Group = { project: string; platform: string; variant: string };
@@ -78,10 +80,21 @@ function resultStatus(tc: TestCaseOutcome): ScenarioStatus {
 }
 
 export async function updateFromResults(run: IExecutionRun): Promise<number> {
+  const written = await writeResults(run, run.testSummary?.testCases ?? [], run.endedAt ?? new Date());
+  // A part-read summary says nothing about the tests it did not read: what
+  // this run still holds goes back to ready, not to failed.
+  await releaseRunScenarios(run, run.testSummary?.truncated ? 'ready' : 'failed');
+  return written;
+}
+
+/** Results seen while the run is still going. Marks only these; releases nothing. */
+export async function applyLiveResults(run: IExecutionRun, cases: TestCaseOutcome[]): Promise<number> {
+  return writeResults(run, cases, new Date());
+}
+
+async function writeResults(run: IExecutionRun, cases: TestCaseOutcome[], at: Date): Promise<number> {
   const group = groupOf(run);
-  const cases = run.testSummary?.testCases ?? [];
-  if (!group) return 0;
-  const at = run.endedAt ?? new Date();
+  if (!group || cases.length === 0) return 0;
 
   const existing = new Map(
     (await ScenarioState.find({ ...group, testId: { $in: cases.map((c) => c.id) } })).map((d) => [d.testId, d]),
@@ -101,18 +114,21 @@ export async function updateFromResults(run: IExecutionRun): Promise<number> {
         },
       });
     } else if (isNotNewer(node, run._id, at)) {
-      // A replay of the same run (resync) rewrites its own entry, not a second one.
+      // A later write for the same run (the final result after a live one, or
+      // a resync) rewrites its own history entry rather than adding a second.
       const ownEntry = node.history.some((h) => h.runId.equals(run._id));
       writes.push({
-        updateOne: {
-          filter: { _id: node._id },
-          update: ownEntry ? { $set: fields } : { $set: fields, $push: { history } },
-        },
+        updateOne: ownEntry
+          ? {
+              filter: { _id: node._id },
+              update: { $set: { ...fields, 'history.$[own].status': status, 'history.$[own].at': at } },
+              arrayFilters: [{ 'own.runId': run._id }],
+            }
+          : { filter: { _id: node._id }, update: { $set: fields, $push: { history } } },
       });
     }
   }
   if (writes.length > 0) await ScenarioState.bulkWrite(writes);
-  await releaseRunScenarios(run, 'failed');
   return writes.length;
 }
 

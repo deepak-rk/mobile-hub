@@ -48,7 +48,7 @@ npm run agent        # the host-side device agent (see below); AGENT_DISCOVERY=s
 npm run build         # tsc
 npm run lint           # eslint src --ext .ts
 npm run typecheck      # tsc --noEmit
-npm test                # vitest run — 554 tests (2026-11-23), no database required
+npm test                # vitest run — 565 tests (2026-11-24), no database required
 MONGO_TEST_URI=mongodb://localhost:27017/mobilehub_test npm test   # also runs the tests that need real MongoDB (status board writers); uses and drops that database
 ```
 

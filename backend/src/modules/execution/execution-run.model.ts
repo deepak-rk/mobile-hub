@@ -190,6 +190,8 @@ const testSummarySchema = new Schema<ITestSummary>(
     skipped: { type: Number, required: true },
     unknown: { type: Number, required: true },
     passRate: { type: Number, default: null },
+    // Set only when the results were read in part (too many files).
+    truncated: { type: Boolean, default: undefined },
     // Bounded and denormalised on purpose: written once when the run ends and
     // only ever read back with the run, so a separate collection would buy
     // nothing but a join.

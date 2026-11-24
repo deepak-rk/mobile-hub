@@ -192,6 +192,13 @@ describe('summarizeAllureResults', () => {
     expect(summarizeAllureResults(dir)).toMatchObject({ total: 2, passed: 2 });
   });
 
+  it('says when it read only part of the results, and only then', () => {
+    writeResult('a', { status: 'passed', historyId: 'h1' });
+    expect(summarizeAllureResults(dir)?.truncated).toBeUndefined();
+    for (let i = 0; i < 5000; i++) fs.writeFileSync(path.join(dir, `x${i}-result.json`), '{}');
+    expect(summarizeAllureResults(dir)?.truncated).toBe(true);
+  });
+
   it('returns null for a missing directory, not an empty summary', () => {
     // "No Allure output" and "ran zero tests" are different facts. A project
     // not using Allure must not start reporting 0/0 as though its suite were

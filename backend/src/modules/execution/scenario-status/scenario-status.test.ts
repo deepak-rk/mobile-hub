@@ -5,6 +5,7 @@ import { ExecutionRun } from '../execution-run.model';
 import type { TestCaseOutcome } from '../allure-summary';
 import { ScenarioState } from './scenario-state.model';
 import {
+  applyLiveResults,
   bubbleUp,
   clearStuckScenarios,
   getStatusTree,
@@ -126,6 +127,30 @@ describe.runIf(Boolean(uri))('status board writers (MongoDB)', () => {
     const s1 = await ScenarioState.findOne({ testId: 's1' }).lean();
     expect(s1?.status).toBe('completed');
     expect(s1?.history.map((h) => h.status)).toEqual(['failed', 'completed']);
+  });
+
+  it('live results mark what finished; the final result rewrites the same history entry', async () => {
+    await settleRunScenarios(fakeRun({ cases: [tc('s1', 'failed'), tc('s2', 'failed')], endedAt: new Date(1000) }));
+    const run = fakeRun({
+      rerun: { of: new Types.ObjectId(), scope: 'failed', tests: ['s1', 's2'], comment: null },
+      endedAt: new Date(3000),
+      cases: [tc('s1', 'passed'), tc('s2', 'passed')],
+    });
+    await markRunScenarios(run, 'executing');
+    await applyLiveResults(run, [tc('s1', 'failed')]); // first attempt; a retry follows
+    expect(await states()).toEqual({ s1: 'failed', s2: 'executing' });
+    await settleRunScenarios(run);
+    expect(await states()).toEqual({ s1: 'completed', s2: 'completed' });
+    const s1 = await ScenarioState.findOne({ testId: 's1' }).lean();
+    expect(s1?.history.map((h) => h.status)).toEqual(['failed', 'completed']);
+  });
+
+  it('a part-read final summary puts what it did not read back to ready, not failed', async () => {
+    await settleRunScenarios(fakeRun({ cases: [tc('s1', 'failed'), tc('s2', 'failed')], endedAt: new Date(1000) }));
+    const run = fakeRun({ rerun: { of: new Types.ObjectId(), scope: 'failed', tests: ['s1', 's2'], comment: null } });
+    await markRunScenarios(run, 'executing');
+    await settleRunScenarios({ ...run, testSummary: { testCases: [tc('s1', 'passed')], truncated: true } } as never);
+    expect(await states()).toEqual({ s1: 'completed', s2: 'ready' });
   });
 
   it('builds the tree with bubbled-up statuses', async () => {
