@@ -47,7 +47,7 @@ Global policy lives in `~/.claude/CLAUDE.md` + `~/.claude/COST_OPTIMIZATION.md` 
 
 Mobile Hub adapts to each organisation's conventions rather than forcing its own. Key principle: **the platform is configurable, not prescriptive.**
 
-- `mobilehub.org.yaml` (org-wide defaults) + `mobilehub.project.yaml` (per-project overrides) are the human-editable surface. The platform merges and validates them at runtime via `ConfigService`.
+- `mobilehub.org.yaml` (platform concerns: features, devices, Appium) + `mobilehub.project.yaml` (the apps under test: `projects:`, their build source, automation) are the human-editable surface. Per-host wiring is env, not YAML (`HUB_APPIUM_HOST`). The platform merges and validates them at runtime via `ConfigService`.
 - Feature modules (builds, execution, analytics, streaming) can be toggled per org — some orgs bring their own build pipeline and disable the built-in one.
 - Build sources (Nexus, S3, direct URL, custom webhook) are adapters behind a `BuildProvider` interface — adding a new provider doesn't touch the rest of the system.
 - Automation repo structure (framework, config file path, env file, test dir) is declared in config — the platform doesn't assume a fixed layout.

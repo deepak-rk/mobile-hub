@@ -1,5 +1,8 @@
-# Per-project overrides. Copy to mobilehub.project.yaml and edit — only
-# declare what this project needs to differ from mobilehub.org.yaml.
+# The app file. Copy to mobilehub.project.yaml and edit. It declares the
+# applications under test (`projects:`), where their builds come from
+# (`build:`), and anything the automation needs to differ from the org
+# defaults in mobilehub.org.yaml. Platform concerns (features, devices,
+# Appium) stay in the org file.
 
 build:
   provider: s3
@@ -9,3 +12,45 @@ build:
 
 automation:
   testDir: e2e
+
+# Applications under test, keyed by the same id that lands on an
+# ExecutionRun and a Build — so config and history line up without a mapping
+# table. Declaring one is what puts it in the trigger form's Project dropdown.
+#
+# Every field is optional and inherits from the `automation` block above, so
+# `my-app: {}` is enough to make a project selectable. Declare only what
+# genuinely differs.
+#
+# A project is the APPLICATION under test — the thing whose builds get
+# installed on devices. The automation repo that tests it is NOT a project of
+# its own; it is this project's `automation.repoUrl`. Listing an automation
+# repo here would make the test suite look like an app you could install.
+#
+# Because `runner` and `configPath` are declared, the platform builds the
+# install and run commands itself — an operator picks a project and a suite,
+# not a shell command. Declare `automation.install` / `automation.run` only to
+# override that (a runner the platform doesn't know, or a one-off shape).
+projects:
+  demo-app:
+    displayName: Demo App
+    # The platforms this app ships on. A run's platform is its device's, and
+    # the trigger form only offers devices on these. Omit to allow any.
+    platforms: [android, ios]
+    # Optional run dimension: one build, several targets (brand, market,
+    # config). When declared, every run picks one and the runner gets it as
+    # VARIANT. Omit it and runs have no variant.
+    # variants: [brand-a, brand-b]
+    automation:
+      # This project has its own repo; everything else (runner, framework,
+      # configPath, testDir) is inherited from the org defaults above.
+      repoUrl: https://github.com/example/demo-app-automation.git
+
+  # Most deployments declare one app, and the trigger form then skips the
+  # project picker. A second app is optional.
+  checkout:
+    displayName: Checkout
+    platforms: [ios]
+    automation:
+      repoUrl: https://github.com/example/checkout-automation.git
+      testDir: e2e
+      configPath: wdio.ios.conf.js

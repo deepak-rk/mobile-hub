@@ -159,3 +159,67 @@ describe('example config files', () => {
   });
 });
 
+
+describe('config split (org file = platform, project file = the app)', () => {
+  const load = (org: string, project: string, hubAppiumHost?: string) => {
+    const warnings: string[] = [];
+    return loadEffectiveConfig(writeTmpYaml(org), writeTmpYaml(project), {
+      hubAppiumHost,
+      warn: (m) => warnings.push(m),
+    }).then((config) => ({ config, warnings }));
+  };
+
+  it('loads projects from the project file without a warning', async () => {
+    const { config, warnings } = await load('features: { builds: true }\n', 'projects:\n  app-a: {}\n');
+    expect(Object.keys(config.projects)).toEqual(['app-a']);
+    expect(warnings).toEqual([]);
+  });
+
+  it('still loads projects from the org file, with a deprecation warning', async () => {
+    const { config, warnings } = await load('projects:\n  app-a: {}\n', 'automation: { testDir: e2e }\n');
+    expect(Object.keys(config.projects)).toEqual(['app-a']);
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toMatch(/'projects:' in .* is deprecated: move it to/);
+  });
+
+  it('lets the project file declare its own build source over the org one', async () => {
+    const { config, warnings } = await load(
+      'build:\n  provider: nexus\n  nexus: { baseUrl: https://nexus.example.com, repository: r }\n',
+      'build:\n  provider: s3\n  s3: { bucket: app-builds, region: eu-west-1 }\n',
+    );
+    expect(config.build.provider).toBe('s3');
+    expect(warnings).toEqual([]);
+  });
+
+  it('takes the Appium host from HUB_APPIUM_HOST, and warns about a YAML one it ignores', async () => {
+    const plain = await load('appium: { enabled: true }\n', '', '10.0.0.5');
+    expect(plain.config.appium.host).toBe('10.0.0.5');
+    expect(plain.warnings).toEqual([]);
+    const both = await load('appium: { host: 192.168.1.9 }\n', '', '10.0.0.5');
+    expect(both.config.appium.host).toBe('10.0.0.5');
+    expect(both.warnings[0]).toMatch(/ignored because HUB_APPIUM_HOST is set/);
+  });
+
+  it('still applies a YAML Appium host without the env var, with a deprecation warning', async () => {
+    const { config, warnings } = await load('', 'appium: { host: 192.168.1.9 }\n');
+    expect(config.appium.host).toBe('192.168.1.9');
+    expect(warnings[0]).toMatch(/deprecated: set HUB_APPIUM_HOST/);
+  });
+
+  it('defaults the Appium host to loopback when neither is set', async () => {
+    const { config, warnings } = await load('', '');
+    expect(config.appium.host).toBe('127.0.0.1');
+    expect(warnings).toEqual([]);
+  });
+
+  it('the shipped example files load with no warnings', async () => {
+    const repoRoot = path.resolve(__dirname, '../../..');
+    const warnings: string[] = [];
+    await loadEffectiveConfig(
+      path.join(repoRoot, 'mobilehub.org.yaml.example'),
+      path.join(repoRoot, 'mobilehub.project.yaml.example'),
+      { warn: (m) => warnings.push(m) },
+    );
+    expect(warnings).toEqual([]);
+  });
+});

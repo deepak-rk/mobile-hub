@@ -35,7 +35,10 @@ import type * as MongooseIndexGuard from 'mongoose-index-guard';
 async function start(): Promise<void> {
   let config;
   try {
-    config = await loadEffectiveConfig(env.ORG_CONFIG_PATH, env.PROJECT_CONFIG_PATH);
+    config = await loadEffectiveConfig(env.ORG_CONFIG_PATH, env.PROJECT_CONFIG_PATH, {
+      hubAppiumHost: env.HUB_APPIUM_HOST,
+      warn: (message) => console.warn(`⚠️ Config: ${message}`),
+    });
   } catch (err) {
     console.error(`❌ Invalid config: ${err instanceof Error ? err.message : String(err)}`);
     process.exit(1);

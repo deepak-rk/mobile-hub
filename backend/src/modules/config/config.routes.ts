@@ -42,7 +42,10 @@ export const configRoutes: FastifyPluginAsync = async (app) => {
   app.post('/reload', { preHandler: app.requireRole('admin') }, async (_request, reply) => {
     let next;
     try {
-      next = await loadEffectiveConfig(env.ORG_CONFIG_PATH, env.PROJECT_CONFIG_PATH);
+      next = await loadEffectiveConfig(env.ORG_CONFIG_PATH, env.PROJECT_CONFIG_PATH, {
+        hubAppiumHost: env.HUB_APPIUM_HOST,
+        warn: (message) => app.log.warn(`Config: ${message}`),
+      });
     } catch (err) {
       // Returned to the operator rather than only logged: the message names
       // the offending key, which is the entire value of the request. Same

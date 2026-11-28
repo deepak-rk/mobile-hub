@@ -59,6 +59,10 @@ const envSchema = z.object({
   // Who executes runs on this hub, recorded on every run as executor.machineId.
   // Defaults to the hostname, the same default an agent uses for itself.
   HUB_MACHINE_ID: z.string().min(1).default(os.hostname()),
+  // Where the hub's own Appium servers listen (default 127.0.0.1). Per-host
+  // wiring is deployment config, not app config, so it moved out of the YAML;
+  // `appium.host` there still applies for one release, with a warning.
+  HUB_APPIUM_HOST: z.string().min(1).optional(),
   ORG_CONFIG_PATH: z.string().default(path.join(process.cwd(), '..', 'mobilehub.org.yaml')),
   PROJECT_CONFIG_PATH: z.string().default(path.join(process.cwd(), '..', 'mobilehub.project.yaml')),
 });
