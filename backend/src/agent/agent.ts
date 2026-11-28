@@ -2,7 +2,8 @@ import { DeviceDiscovery, DiscoveredDevice } from './device-discovery';
 import { HubClient, HostCapabilities, PendingInstall, PendingUninstall, PendingAppiumRequest } from './hub-client';
 import { runInstall } from './installer';
 import { runUninstall } from './uninstaller';
-import { collectDiagnostics } from './diagnostics';
+import { collectDiagnostics, createCpuSampler } from './diagnostics';
+import { AGENT_PROTOCOL_VERSION } from '../common/agent-protocol';
 import { ensureLocalAppiumServer, assertDriverInstalled, shutdownLocalAppiumServers } from './appium-runner';
 import { StreamRelay } from './stream-runner';
 import { runDeviceAction } from './device-actions';
@@ -73,21 +74,35 @@ export class DeviceAgent {
     (this.opts.log ?? ((l, m) => console[l === 'info' ? 'log' : l](m)))(level, msg);
   }
 
+  private readonly sampleCpu = createCpuSampler();
+  private warnedProtocol: number | null = null;
+
+  /** Logged once per hub version seen, not on every heartbeat. */
+  private warnOnProtocolMismatch(hubProtocolVersion: number | undefined): void {
+    if (hubProtocolVersion === undefined || hubProtocolVersion === AGENT_PROTOCOL_VERSION) return;
+    if (this.warnedProtocol === hubProtocolVersion) return;
+    this.warnedProtocol = hubProtocolVersion;
+    const which = hubProtocolVersion > AGENT_PROTOCOL_VERSION ? 'this agent is older; update it' : 'the hub is older; update the hub';
+    console.warn(`⚠️ Protocol mismatch: hub speaks ${hubProtocolVersion}, this agent ${AGENT_PROTOCOL_VERSION} (${which}).`);
+  }
+
   /** One discover-and-report cycle. Exposed so it can be driven directly in tests. */
   async tick(): Promise<TickResult> {
     const devices = await this.opts.discovery.discover();
 
     // Heartbeat first: a host with zero devices must still show as online,
     // otherwise an empty lab looks like a dead agent.
-    const { pendingInstalls, pendingUninstalls, pendingAppiumRequests, desiredStreamCaptures } =
+    const { pendingInstalls, pendingUninstalls, pendingAppiumRequests, desiredStreamCaptures, hubProtocolVersion } =
       await this.opts.hub.heartbeat({
         machineId: this.opts.machineId,
         hostname: this.opts.hostname,
         os: this.opts.os,
         agentVersion: this.opts.agentVersion,
         capabilities: this.opts.capabilities,
-        diagnostics: await collectDiagnostics(),
+        diagnostics: await collectDiagnostics(this.sampleCpu),
+        protocolVersion: AGENT_PROTOCOL_VERSION,
       });
+    this.warnOnProtocolMismatch(hubProtocolVersion);
     this.startPendingInstalls(pendingInstalls);
     this.startPendingUninstalls(pendingUninstalls);
     this.startPendingAppiumRequests(pendingAppiumRequests);

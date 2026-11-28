@@ -14,6 +14,11 @@ export interface HostDiagnostics {
   diskFreeBytes: number | null;
   diskTotalBytes: number | null;
   nodeVersion: string | null;
+  /** Busy % since the previous heartbeat; null on the first one (see `createCpuSampler`). */
+  cpuPercent: number | null;
+  cpuCount: number | null;
+  memTotalBytes: number | null;
+  memFreeBytes: number | null;
 }
 
 export interface PendingInstall {
@@ -176,7 +181,10 @@ export class HubClient {
     agentVersion: string;
     capabilities: HostCapabilities;
     diagnostics?: HostDiagnostics;
+    protocolVersion: number;
   }): Promise<{
+    /** Absent from a hub that predates it. */
+    hubProtocolVersion?: number;
     pendingInstalls: PendingInstall[];
     pendingUninstalls: PendingUninstall[];
     pendingAppiumRequests: PendingAppiumRequest[];
@@ -187,6 +195,7 @@ export class HubClient {
     // desiredStreamCaptures) off it is additive, not a breaking change to
     // this call's contract.
     return this.post<{
+      hubProtocolVersion?: number;
       pendingInstalls: PendingInstall[];
       pendingUninstalls: PendingUninstall[];
       pendingAppiumRequests: PendingAppiumRequest[];

@@ -20,7 +20,16 @@ export interface Host {
     diskFreeBytes: number | null;
     diskTotalBytes: number | null;
     nodeVersion: string | null;
+    /** Busy % over the last heartbeat interval; null until two samples exist. Absent on older hubs. */
+    cpuPercent?: number | null;
+    cpuCount?: number | null;
+    memTotalBytes?: number | null;
+    memFreeBytes?: number | null;
   } | null;
+  /** The agent's hub <-> agent contract version; null for an agent that predates it. Absent on older hubs. */
+  protocolVersion?: number | null;
+  /** The hub's own contract version, sent with the list. Absent on older hubs. */
+  hubProtocolVersion?: number;
   /** Live counts on this host, composed by the hub at request time — not stored on the host document. */
   activity: {
     runs: number;

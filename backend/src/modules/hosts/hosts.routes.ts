@@ -11,6 +11,7 @@ import {
   upsertHeartbeat,
   reachableAgentHost,
 } from './hosts.service';
+import { AGENT_PROTOCOL_VERSION } from '../../common/agent-protocol';
 import { requireAgentToken, AGENT_TRAFFIC_LOG_LEVEL } from '../agent-auth/agent-auth';
 import { getPendingInstallsForMachine, getActiveInstallCountForMachine } from '../device-installs/install-runs.service';
 import { getPendingUninstallsForMachine, getActiveUninstallCountForMachine } from '../device-installs/uninstall-runs.service';
@@ -56,8 +57,14 @@ const heartbeatBody = z.object({
       diskFreeBytes: z.number().nonnegative().nullable(),
       diskTotalBytes: z.number().nonnegative().nullable(),
       nodeVersion: z.string().nullable(),
+      // Optional so an agent that predates them still validates.
+      cpuPercent: z.number().min(0).max(100).nullable().optional(),
+      cpuCount: z.number().int().positive().nullable().optional(),
+      memTotalBytes: z.number().nonnegative().nullable().optional(),
+      memFreeBytes: z.number().nonnegative().nullable().optional(),
     })
     .optional(),
+  protocolVersion: z.number().int().positive().optional(),
 });
 
 /** Live counts for a host's diagnostics panel — four independent collections, so fetched in parallel. */
@@ -77,7 +84,8 @@ export const hostsRoutes: FastifyPluginAsync = async (app) => {
     return Promise.all(
       hosts.map(async (host) => {
         const activity = await getActivityForMachine(host.machineId);
-        return { ...(host.toObject() as Record<string, unknown>), activity };
+        // The hub's own protocol version rides along so the Hosts page can flag an agent that differs.
+        return { ...(host.toObject() as Record<string, unknown>), activity, hubProtocolVersion: AGENT_PROTOCOL_VERSION };
       }),
     );
   });
@@ -111,7 +119,14 @@ export const hostsRoutes: FastifyPluginAsync = async (app) => {
       // Same as above, for streaming.remoteEnabled — see streaming.service.ts.
       getDesiredStreamCapturesForMachine(body.data.machineId),
     ]);
-    return { ...host.toObject(), pendingInstalls, pendingUninstalls, pendingAppiumRequests, desiredStreamCaptures };
+    return {
+      ...host.toObject(),
+      hubProtocolVersion: AGENT_PROTOCOL_VERSION,
+      pendingInstalls,
+      pendingUninstalls,
+      pendingAppiumRequests,
+      desiredStreamCaptures,
+    };
   });
 
   // Agent-reported result for a pendingAppiumRequests entry above — the other

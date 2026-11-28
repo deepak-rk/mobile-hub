@@ -4,6 +4,10 @@ export interface IHostDiagnostics {
   diskFreeBytes: number | null;
   diskTotalBytes: number | null;
   nodeVersion: string | null;
+  cpuPercent: number | null;
+  cpuCount: number | null;
+  memTotalBytes: number | null;
+  memFreeBytes: number | null;
 }
 
 export interface IHost extends Document {
@@ -11,6 +15,8 @@ export interface IHost extends Document {
   hostname: string;
   os: 'darwin' | 'linux' | 'win32';
   agentVersion: string;
+  /** The hub <-> agent contract version the agent reported (`common/agent-protocol.ts`); null for an agent that predates it. */
+  protocolVersion: number | null;
   status: 'online' | 'offline' | 'degraded';
   capabilities: {
     maxDevices: number;
@@ -52,6 +58,7 @@ const hostSchema = new Schema<IHost>(
     hostname: { type: String, required: true },
     os: { type: String, enum: ['darwin', 'linux', 'win32'], required: true },
     agentVersion: { type: String, required: true },
+    protocolVersion: { type: Number, default: null },
     status: { type: String, enum: ['online', 'offline', 'degraded'], default: 'online' },
     capabilities: {
       maxDevices: { type: Number, default: 0 },
@@ -72,6 +79,10 @@ const hostSchema = new Schema<IHost>(
         diskFreeBytes: { type: Number, default: null },
         diskTotalBytes: { type: Number, default: null },
         nodeVersion: { type: String, default: null },
+        cpuPercent: { type: Number, default: null },
+        cpuCount: { type: Number, default: null },
+        memTotalBytes: { type: Number, default: null },
+        memFreeBytes: { type: Number, default: null },
       },
       default: null,
     },

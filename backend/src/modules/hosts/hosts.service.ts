@@ -15,11 +15,22 @@ export async function upsertHeartbeat(data: {
   agentVersion: string;
   capabilities: IHost['capabilities'];
   /** Absent for an agent that predates this field — left untouched on that host's existing record rather than overwritten with nulls. */
-  diagnostics?: IHost['diagnostics'];
+  diagnostics?: Partial<NonNullable<IHost['diagnostics']>> & Pick<NonNullable<IHost['diagnostics']>, 'diskFreeBytes' | 'diskTotalBytes' | 'nodeVersion'>;
   /** Absent for an agent that does not send one; the stored value is then left as it is. */
   fingerprint?: string;
+  protocolVersion?: number;
 }): Promise<IHost> {
-  const { diagnostics, fingerprint, ...rest } = data;
+  const { diagnostics: reported, fingerprint, protocolVersion, ...rest } = data;
+  // Fields an older agent does not send are stored as null (unknown), never as 0.
+  const diagnostics = reported
+    ? {
+        cpuPercent: null,
+        cpuCount: null,
+        memTotalBytes: null,
+        memFreeBytes: null,
+        ...reported,
+      }
+    : undefined;
   const now = new Date();
   const host = await Host.findOneAndUpdate(
     { machineId: data.machineId },
@@ -27,6 +38,7 @@ export async function upsertHeartbeat(data: {
       ...rest,
       ...(diagnostics !== undefined ? { diagnostics } : {}),
       ...(fingerprint ? { fingerprint } : {}),
+      protocolVersion: protocolVersion ?? null,
       status: 'online',
       lastHeartbeatAt: now,
     },

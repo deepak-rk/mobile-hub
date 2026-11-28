@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { DeviceAgent } from './agent';
+import { AGENT_PROTOCOL_VERSION } from '../common/agent-protocol';
 import { SyntheticDeviceDiscovery } from './sources/synthetic-discovery';
 import type { HubClient } from './hub-client';
 import type { DeviceDiscovery } from './device-discovery';
@@ -73,8 +74,60 @@ describe('DeviceAgent.tick', () => {
         diskFreeBytes: expect.any(Number) as number,
         diskTotalBytes: expect.any(Number) as number,
         nodeVersion: process.version,
+        // First heartbeat: no previous sample, so unknown rather than a since-boot average.
+        cpuPercent: null,
+        cpuCount: expect.any(Number) as number,
+        memTotalBytes: expect.any(Number) as number,
+        memFreeBytes: expect.any(Number) as number,
       },
+      protocolVersion: AGENT_PROTOCOL_VERSION,
     });
+  });
+
+  it('reports a measured CPU figure from the second heartbeat on', async () => {
+    const hub = fakeHub();
+    const agent = makeAgent(new SyntheticDeviceDiscovery(), hub);
+    await agent.tick();
+    await agent.tick();
+    const second = (hub.heartbeat.mock.calls[1] as [{ diagnostics: { cpuPercent: number | null } }])[0];
+    expect(second.diagnostics.cpuPercent === null || (second.diagnostics.cpuPercent >= 0 && second.diagnostics.cpuPercent <= 100)).toBe(true);
+  });
+
+  it('warns once when the hub speaks a different protocol version', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const hub = fakeHub({
+      heartbeat: vi.fn().mockResolvedValue({
+        hubProtocolVersion: AGENT_PROTOCOL_VERSION + 1,
+        pendingInstalls: [],
+        pendingUninstalls: [],
+        pendingAppiumRequests: [],
+        desiredStreamCaptures: [],
+      }) as never,
+    });
+    const agent = makeAgent(new SyntheticDeviceDiscovery([]), hub);
+    await agent.tick();
+    await agent.tick();
+    const mismatch = warn.mock.calls.filter(([m]) => String(m).includes('Protocol mismatch'));
+    expect(mismatch).toHaveLength(1);
+    expect(String(mismatch[0][0])).toContain('this agent is older');
+    warn.mockRestore();
+  });
+
+  it('does not warn when the protocol matches or the hub does not say', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    await makeAgent(new SyntheticDeviceDiscovery([]), fakeHub()).tick();
+    const hub = fakeHub({
+      heartbeat: vi.fn().mockResolvedValue({
+        hubProtocolVersion: AGENT_PROTOCOL_VERSION,
+        pendingInstalls: [],
+        pendingUninstalls: [],
+        pendingAppiumRequests: [],
+        desiredStreamCaptures: [],
+      }) as never,
+    });
+    await makeAgent(new SyntheticDeviceDiscovery([]), hub).tick();
+    expect(warn.mock.calls.filter(([m]) => String(m).includes('Protocol mismatch'))).toHaveLength(0);
+    warn.mockRestore();
   });
 
   it('surfaces a hub failure to the caller rather than swallowing it', async () => {

@@ -20,6 +20,8 @@ import { useHosts, useHostCredentials } from '../api/hosts.api';
 import { credentialFor } from '../lib/credentialFor';
 import { HostBlockControl } from '../components/HostBlockControl';
 import { IdConflictNotice } from '../components/IdConflictNotice';
+import { ProtocolNotice } from '../components/ProtocolNotice';
+import { memoryUse } from '../lib/hostMetrics';
 import type { Host, HostAgentCredential } from '../types';
 import styles from './HostsPage.module.css';
 
@@ -60,6 +62,8 @@ function DiagnosticsPanel({ diagnostics }: { diagnostics: Host['diagnostics'] })
     diskFreeBytes !== null && diskTotalBytes !== null && diskTotalBytes > 0
       ? ((diskTotalBytes - diskFreeBytes) / diskTotalBytes) * 100
       : null;
+  const { usedPercent: memUsedPercent, label: memLabel } = memoryUse(diagnostics);
+  const cpuPercent = diagnostics.cpuPercent ?? null;
 
   return (
     <div className={styles.diagnostics}>
@@ -68,10 +72,17 @@ function DiagnosticsPanel({ diagnostics }: { diagnostics: Host['diagnostics'] })
           <span>Node {nodeVersion}</span>
         </Meta>
       ) : null}
+      {cpuPercent !== null ? (
+        <ProgressBar
+          value={cpuPercent}
+          label={`CPU ${cpuPercent.toFixed(0)}%${diagnostics.cpuCount ? ` of ${diagnostics.cpuCount} cores` : ''}`}
+        />
+      ) : null}
+      {memUsedPercent !== null ? <ProgressBar value={memUsedPercent} label={memLabel} /> : null}
       {diskUsedPercent !== null ? (
         <ProgressBar
           value={diskUsedPercent}
-          label={`${formatBytes(diskFreeBytes)} free of ${formatBytes(diskTotalBytes)}`}
+          label={`Disk ${formatBytes(diskFreeBytes)} free of ${formatBytes(diskTotalBytes)}`}
         />
       ) : null}
     </div>
@@ -158,6 +169,7 @@ export function HostsPage() {
                 </div>
 
                 <IdConflictNotice conflict={host.idConflict ?? null} />
+                <ProtocolNotice agent={host.protocolVersion} hub={host.hubProtocolVersion} />
                 <ActivityChips activity={host.activity} />
                 <DiagnosticsPanel diagnostics={host.diagnostics} />
 

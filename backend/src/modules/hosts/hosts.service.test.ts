@@ -59,7 +59,10 @@ describe('upsertHeartbeat', () => {
 
     expect(findOneAndUpdate).toHaveBeenCalledWith(
       { machineId: 'host-1' },
-      expect.objectContaining({ diagnostics }),
+      // Fields an older agent does not send are stored as unknown (null), not left out or 0.
+      expect.objectContaining({
+        diagnostics: { ...diagnostics, cpuPercent: null, cpuCount: null, memTotalBytes: null, memFreeBytes: null },
+      }),
       expect.anything(),
     );
   });
