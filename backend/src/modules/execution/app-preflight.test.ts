@@ -45,6 +45,7 @@ const input = {
   machineId: 'host-a',
   udid: 'emulator-5554',
   triggeredBy: 'u1',
+  runId: 'run-1',
   log: () => {},
   isCancelled: () => false,
   pollMs: 1000,

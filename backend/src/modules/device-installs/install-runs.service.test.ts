@@ -1,7 +1,8 @@
-import { describe, it, expect, vi, afterEach } from 'vitest';
+import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import { InstallRun } from './install-run.model';
 import { UninstallRun } from './uninstall-run.model';
 import { Build } from '../builds/build.model';
+import { Device } from '../devices/device.model';
 import * as buildsService from '../builds/builds.service';
 import * as devicesService from '../devices/devices.service';
 import {
@@ -76,12 +77,12 @@ describe('triggerInstallRun', () => {
     expect(create).not.toHaveBeenCalled();
   });
 
-  it('creates one queued target per device, with no lock acquired', async () => {
+  it('creates one queued target per device, locking each free device for the install', async () => {
     vi.spyOn(buildsService, 'getBuild').mockResolvedValue(readyBuild as never);
     vi.spyOn(devicesService, 'resolveDevice').mockImplementation(
-      async (udid) => ({ udid, machineId: 'host-1', platform: 'android' }) as never,
+      async (udid) => ({ udid, machineId: 'host-1', platform: 'android', lock: null }) as never,
     );
-    const acquireLock = vi.spyOn(devicesService, 'acquireLock');
+    const lock = vi.spyOn(Device, 'findOneAndUpdate').mockResolvedValue({} as never);
     const create = vi.spyOn(InstallRun, 'create').mockResolvedValue({ targets: [] } as never);
 
     await triggerInstallRun({ buildId: 'build-1', devices: [{ udid: 'd1' }, { udid: 'd2' }], triggeredBy: 'user-1' });
@@ -89,9 +90,11 @@ describe('triggerInstallRun', () => {
     const passedTargets = (create.mock.calls[0][0] as { targets: { deviceUdid: string; status: string }[] }).targets;
     expect(passedTargets).toHaveLength(2);
     expect(passedTargets.every((t) => t.status === 'queued')).toBe(true);
-    // The deliberate no-locking decision (install-run.model.ts) — never call
-    // acquireLock, unlike execution's triggerExecutionRun.
-    expect(acquireLock).not.toHaveBeenCalled();
+    // Locked with the install run's own id, only when free (lock: null in the filter).
+    expect(lock).toHaveBeenCalledTimes(2);
+    const [filter, update] = lock.mock.calls[0] as [Record<string, unknown>, { lock: { sessionId: string } }];
+    expect(filter).toMatchObject({ udid: 'd1', machineId: 'host-1', lock: null });
+    expect(update.lock.sessionId).toMatch(/^install:[0-9a-f]{24}$/);
   });
 });
 
@@ -202,6 +205,10 @@ describe('getActiveInstallCountForMachine', () => {
 });
 
 describe('reportTargetProgress', () => {
+  beforeEach(() => {
+    vi.spyOn(Device, 'updateOne').mockResolvedValue({} as never);
+  });
+
   function fakeRun() {
     const doc = {
       id: 'run-1',

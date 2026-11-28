@@ -159,7 +159,7 @@ Rule: a fix is verified against the **failure it addresses, reproduced**, not ag
 Items that apply here but were in neither this plan nor the code. Ordered by risk.
 
 **Correctness / safety**
-1. Installs skip the device lock, so an install can land on a device mid-run (farm Lesson 41, "never install over a busy device"). **Recorded earlier as a deliberate decision** (`install-run.model.ts:86`); the farm's data argues for revisiting it. Awaiting a decision.
+1. ~~Installs skip the device lock~~ **Done 2026-11-28** (owner decided: installs take the lock). Each free target is locked for the install (`install:<runId>`), all or nothing; released on done/error, renewed by progress, swept when a target ends any other way. A device held by a test run (other than that run's own app preflight), by someone else, or by another install is refused with 409 `DEVICE_BUSY`. Uninstalls still take no lock.
 2. ~~Feature switches do not stop server timers~~ **Done `4359c4f`.** The toggles were never read at all; routes and timers now honour them; `98b48b3` hides switched-off modules in the frontend too.
 3. ~~`AGENT_APPIUM_HOST` loopback default~~ **Done `4359c4f`:** a loopback report from a remote request uses its source address.
 4. ~~CSP is disabled~~ **Done `50a2bd7`** (per-route policies); `33841d9` lets the sandboxed report fetch its own data in production.

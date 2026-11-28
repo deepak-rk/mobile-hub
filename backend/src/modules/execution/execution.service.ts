@@ -1023,6 +1023,7 @@ async function runExecution(
         machineId: run.machineId,
         udid: run.deviceUdid,
         triggeredBy: run.triggeredBy,
+        runId,
         log: (line) => {
           logStream.write(line);
           publishExecutionEvent(runId, { type: 'log', line });

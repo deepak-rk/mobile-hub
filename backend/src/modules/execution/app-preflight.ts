@@ -37,7 +37,7 @@ export interface PreflightDeps {
   buildStatus(buildId: string): Promise<string | null>;
   isInstalled(buildId: string, machineId: string, udid: string): Promise<boolean>;
   installInFlight(machineId: string, udid: string): Promise<boolean>;
-  startInstall(buildId: string, machineId: string, udid: string, triggeredBy: string): Promise<string>;
+  startInstall(buildId: string, machineId: string, udid: string, triggeredBy: string, runId: string): Promise<string>;
   installTarget(installRunId: string, machineId: string, udid: string): Promise<PreflightTarget | null>;
   sleep(ms: number): Promise<void>;
   now(): number;
@@ -54,8 +54,9 @@ export const defaultPreflightDeps: PreflightDeps = {
   async installInFlight(machineId, udid) {
     return (await getActiveInstallDeviceKeys()).has(deviceKey(machineId, udid));
   },
-  async startInstall(buildId, machineId, udid, triggeredBy) {
-    const run = await triggerInstallRun({ buildId, devices: [{ udid, machineId }], triggeredBy });
+  async startInstall(buildId, machineId, udid, triggeredBy, runId) {
+    // forRunId: this run holds the device lock, and may install on it.
+    const run = await triggerInstallRun({ buildId, devices: [{ udid, machineId }], triggeredBy, forRunId: runId });
     return String(run._id);
   },
   async installTarget(installRunId, machineId, udid) {
@@ -72,6 +73,8 @@ export interface PreflightInput {
   machineId: string;
   udid: string;
   triggeredBy: string;
+  /** The test run doing the preflight; it holds the device lock. */
+  runId: string;
   log(line: string): void;
   isCancelled(): boolean;
   /** Covers the wait for someone else's install and our own; default 10 minutes. */
@@ -116,7 +119,7 @@ export async function ensureAppOnDevice(
   }
 
   input.log(`Installing build ${buildId} on ${udid}\n`);
-  const installRunId = await deps.startInstall(buildId, machineId, udid, input.triggeredBy);
+  const installRunId = await deps.startInstall(buildId, machineId, udid, input.triggeredBy, input.runId);
   for (;;) {
     if (input.isCancelled()) return cancelled;
     const target = await deps.installTarget(installRunId, machineId, udid);

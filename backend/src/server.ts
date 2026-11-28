@@ -1,4 +1,5 @@
 import { expireDeviceJobs } from './modules/device-jobs/device-jobs.service';
+import { releaseFinishedInstallLocks } from './modules/device-installs/install-runs.service';
 import { buildApp } from './app';
 import { connectDB } from './db/connection';
 import mongoose from 'mongoose';
@@ -179,6 +180,13 @@ async function start(): Promise<void> {
       })
       .catch((err: unknown) => {
         app.log.error(err, 'Device job expiry sweep failed');
+      });
+    releaseFinishedInstallLocks()
+      .then((released) => {
+        if (released > 0) app.log.warn(`Released ${released} device lock(s) held by installs that had already ended`);
+      })
+      .catch((err: unknown) => {
+        app.log.error(err, 'Install lock sweep failed');
       });
     failWorkStrandedOnOfflineHosts()
       .then((failed) => {

@@ -83,12 +83,12 @@ const installTargetSchema = new Schema<IInstallTarget>(
 );
 
 /**
- * Deliberately holds NO device lock while a target is in flight — a direct,
- * explicit user decision (this session) overriding execution's own
- * lock-for-the-duration precedent (execution.service.ts). The accepted
- * tradeoff: an install can race a live execution run on the same device
- * (e.g. an install landing mid-test-run). Revisit if that turns out to
- * cause real pain; until then this is intentional, not an oversight.
+ * Each target holds the device lock while it is in flight (sessionId and
+ * reason `install:<runId>`), so an install can no longer land on a device in
+ * the middle of a test run, and a run cannot start on a device mid-install.
+ * Until 2026-11-28 installs deliberately took no lock; that decision was
+ * reversed by the project owner. See `triggerInstallRun` for who may install
+ * on a device that is already held.
  */
 const installRunSchema = new Schema<IInstallRun>(
   {

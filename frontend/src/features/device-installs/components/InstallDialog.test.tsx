@@ -119,6 +119,17 @@ describe('InstallDialog', () => {
     });
   });
 
+  it('says why when the hub refuses the install (device busy)', async () => {
+    get.mockImplementation(async (url: string) => (url === '/devices' ? { data: [device({ udid: 'a', name: 'Busy' })] } : { data: [] }));
+    post.mockRejectedValue({ code: 'DEVICE_BUSY', message: 'Device a is in use by a test run; install when it is free.' });
+    const user = userEvent.setup();
+    render(<InstallDialog build={build} onClose={() => {}} />, { wrapper });
+
+    await user.click(await screen.findByRole('checkbox', { name: /Busy/ }));
+    await user.click(screen.getByRole('button', { name: 'Install to 1 device' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('Device a is in use by a test run');
+  });
+
   it('shows a done target that carries a note as success-with-warning, with the note as text', async () => {
     const note = 'Installed, but could not verify com.example on a: adb timed out';
     get.mockImplementation(async (url: string) => {

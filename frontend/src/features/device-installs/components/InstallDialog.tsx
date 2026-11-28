@@ -163,6 +163,13 @@ export function InstallDialog({ build, onClose }: { build: Build | null; onClose
               </span>
             ) : null}
           </p>
+          {/* A refused request (a device held by a test run or someone else,
+              a build not ready) used to leave the dialog silently unchanged. */}
+          {trigger.error ? (
+            <p className={styles.error} role="alert">
+              {(trigger.error as { message?: string }).message ?? 'Could not start the install.'}
+            </p>
+          ) : null}
           <ul className={styles.deviceList}>
             {(devices ?? []).map((d) => (
               <li key={key(d.machineId, d.udid)}>

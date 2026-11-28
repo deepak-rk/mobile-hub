@@ -1,6 +1,8 @@
 import { getBuild } from '../builds/builds.service';
 import { Build } from '../builds/build.model';
 import { getDevicesByUdids, resolveDevice, findReportedTarget, type DeviceRef } from '../devices/devices.service';
+import { Types } from 'mongoose';
+import { Device } from '../devices/device.model';
 import { InstallRun, IInstallRun, InstallTargetStatus } from './install-run.model';
 import { UninstallRun } from './uninstall-run.model';
 import { publishInstallEvent } from './install-runs.events';
@@ -58,6 +60,36 @@ export interface TriggerInstallRunInput {
   buildId: string;
   devices: DeviceRef[];
   triggeredBy: string;
+  /** Set by a test run's own app preflight: that run holds the device, and may install on it. */
+  forRunId?: string;
+}
+
+/** The device is held by a test run, another person, or another install. */
+export class DeviceBusyError extends ConflictError {
+  constructor(udid: string, why: string) {
+    super(`Device ${udid} is ${why}; install when it is free.`, 'DEVICE_BUSY');
+  }
+}
+
+const installLockId = (runId: string) => `install:${runId}`;
+
+/**
+ * Whether this install may go ahead on a device that already has a lock, and
+ * why not if it may not. Allowed: the test run that holds the device
+ * installing its own app (preflight), and a person installing on a device
+ * they hold themselves. Refused: anyone else's lock, a test run's lock when
+ * the install is not that run's own, and another install in flight.
+ */
+function heldLockVerdict(
+  lock: { heldBy: string; reason?: string },
+  input: TriggerInstallRunInput,
+): { ok: true } | { ok: false; why: string } {
+  const reason = lock.reason ?? '';
+  if (reason.startsWith('execution:')) {
+    return input.forRunId && reason === `execution:${input.forRunId}` ? { ok: true } : { ok: false, why: 'in use by a test run' };
+  }
+  if (reason.startsWith('install:')) return { ok: false, why: 'being installed on already' };
+  return lock.heldBy === input.triggeredBy ? { ok: true } : { ok: false, why: 'held by someone else' };
 }
 
 /**
@@ -66,18 +98,21 @@ export interface TriggerInstallRunInput {
  * here. The agent discovers queued targets for its own machineId on its
  * next heartbeat poll (see hosts.routes.ts's heartbeat response) and drives
  * the download/install itself; the hub only stores state and relays
- * progress. Deliberately does NOT call acquireLock — see install-run.model.ts's
- * doc comment for why.
+ * progress. Each free target device is locked for the install (see
+ * install-run.model.ts); a held one is refused unless the holder is this
+ * install's own test run or the requester.
  */
 export async function triggerInstallRun(input: TriggerInstallRunInput): Promise<IInstallRun> {
   const build = await getBuild(input.buildId);
   if (!build) throw new NotFoundError(`Build not found: ${input.buildId}`, 'BUILD_NOT_FOUND');
   if (build.status !== 'ready') throw new BuildNotReadyError(build.status);
 
+  const resolved = new Map<string, Awaited<ReturnType<typeof resolveDevice>>>();
   const targets = await Promise.all(
     input.devices.map(async ({ udid, machineId }) => {
       const device = await resolveDevice(udid, machineId);
       if (!device) throw new UnknownDeviceError(udid);
+      resolved.set(deviceKey(device.machineId, udid), device);
       if (device.platform !== build.platform) {
         throw new IncompatibleDeviceError(udid, device.platform, build.platform);
       }
@@ -94,13 +129,73 @@ export async function triggerInstallRun(input: TriggerInstallRunInput): Promise<
     }),
   );
 
-  return InstallRun.create({
-    buildId: build._id,
-    project: build.project,
-    platform: build.platform,
-    targets,
-    triggeredBy: input.triggeredBy,
-  });
+  // Take the lock on every free target before creating the run, all or
+  // nothing: a refusal part-way releases the locks already taken.
+  const runId = new Types.ObjectId();
+  const lockId = installLockId(runId.toString());
+  const taken: Array<{ udid: string; machineId: string }> = [];
+  const releaseTaken = () =>
+    Promise.all(taken.map((t) => releaseInstallLock(lockId, t.machineId, t.udid)));
+  try {
+    for (const t of targets) {
+      const device = resolved.get(deviceKey(t.machineId, t.deviceUdid));
+      if (device?.lock) {
+        const verdict = heldLockVerdict(device.lock, input);
+        if (!verdict.ok) throw new DeviceBusyError(t.deviceUdid, verdict.why);
+        continue;
+      }
+      const locked = await Device.findOneAndUpdate(
+        { udid: t.deviceUdid, machineId: t.machineId, lock: null },
+        {
+          lock: { heldBy: input.triggeredBy, sessionId: lockId, acquiredAt: new Date(), reason: lockId },
+          status: 'in-use',
+        },
+        { new: true },
+      );
+      // Taken by someone else between the read above and now.
+      if (!locked) throw new DeviceBusyError(t.deviceUdid, 'held by someone else');
+      taken.push({ udid: t.deviceUdid, machineId: t.machineId });
+    }
+    return await InstallRun.create({
+      _id: runId,
+      buildId: build._id,
+      project: build.project,
+      platform: build.platform,
+      targets,
+      triggeredBy: input.triggeredBy,
+    });
+  } catch (err) {
+    await releaseTaken();
+    throw err;
+  }
+}
+
+/** Releases a device lock only if this install holds it. */
+async function releaseInstallLock(lockId: string, machineId: string, udid: string): Promise<void> {
+  await Device.updateOne({ udid, machineId, 'lock.sessionId': lockId }, { lock: null, status: 'idle' });
+}
+
+/**
+ * Releases install locks whose target is no longer in flight. A target
+ * normally releases its own lock when it reports done or error; this sweep
+ * covers every other way a target ends (agent lost, host removed, stranded,
+ * a report that never arrives). Run on the server's 10 s interval.
+ */
+export async function releaseFinishedInstallLocks(): Promise<number> {
+  const held = await Device.find({ 'lock.sessionId': /^install:/ }).select('udid machineId lock');
+  let released = 0;
+  for (const device of held) {
+    const lockId = device.lock?.sessionId ?? '';
+    const runId = lockId.slice('install:'.length);
+    const run = Types.ObjectId.isValid(runId) ? await InstallRun.findById(runId).select('targets') : null;
+    const inFlight = run?.targets.some(
+      (t) => t.machineId === device.machineId && t.deviceUdid === device.udid && IN_FLIGHT_TARGET_STATUSES.includes(t.status),
+    );
+    if (inFlight) continue;
+    await releaseInstallLock(lockId, device.machineId, device.udid);
+    released++;
+  }
+  return released;
 }
 
 export async function listInstallRuns(filters: { project?: string; deviceUdid?: string }): Promise<IInstallRun[]> {
@@ -437,6 +532,16 @@ export async function reportTargetProgress(
   if (update.packageName !== undefined) target.packageName = update.packageName;
 
   await run.save();
+  const lockId = installLockId(String(run._id));
+  if (target.status === 'done' || target.status === 'error') {
+    await releaseInstallLock(lockId, target.machineId, target.deviceUdid);
+  } else {
+    // Progress renews the lock, so a long download is not taken by the lock-TTL sweep.
+    await Device.updateOne(
+      { udid: target.deviceUdid, machineId: target.machineId, 'lock.sessionId': lockId },
+      { 'lock.acquiredAt': new Date() },
+    );
+  }
   publishInstallEvent(installRunId, {
     type: 'target',
     deviceUdid,
