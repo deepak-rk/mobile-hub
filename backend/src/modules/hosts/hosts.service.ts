@@ -1,7 +1,7 @@
 import { Host, IHost } from './host.model';
 import { Device } from '../devices/device.model';
 import { DeviceJob } from '../device-jobs/device-job.model';
-import { ForbiddenError, NotFoundError } from '../../common/errors/app-error';
+import { ConflictError, ForbiddenError, NotFoundError } from '../../common/errors/app-error';
 import { failAbandonedInstallTargets, failStrandedQueuedInstallTargets } from '../device-installs/install-runs.service';
 import { failAbandonedUninstallTargets, failStrandedQueuedUninstallTargets } from '../device-installs/uninstall-runs.service';
 
@@ -16,19 +16,69 @@ export async function upsertHeartbeat(data: {
   capabilities: IHost['capabilities'];
   /** Absent for an agent that predates this field — left untouched on that host's existing record rather than overwritten with nulls. */
   diagnostics?: IHost['diagnostics'];
+  /** Absent for an agent that does not send one; the stored value is then left as it is. */
+  fingerprint?: string;
 }): Promise<IHost> {
-  const { diagnostics, ...rest } = data;
+  const { diagnostics, fingerprint, ...rest } = data;
+  const now = new Date();
   const host = await Host.findOneAndUpdate(
     { machineId: data.machineId },
     {
       ...rest,
       ...(diagnostics !== undefined ? { diagnostics } : {}),
+      ...(fingerprint ? { fingerprint } : {}),
       status: 'online',
-      lastHeartbeatAt: new Date(),
+      lastHeartbeatAt: now,
     },
     { upsert: true, new: true, setDefaultsOnInsert: true },
   );
+  if (host.idConflict && now.getTime() - host.idConflict.at.getTime() > ID_CONFLICT_SHOWN_MS) {
+    await Host.updateOne({ _id: host._id }, { idConflict: null });
+    host.idConflict = null;
+  }
   return host;
+}
+
+const ID_CONFLICT_SHOWN_MS = 5 * 60_000;
+
+/** A second machine calling in under a machine id that another live machine is using. 409 with a message the agent prints. */
+export class MachineIdConflictError extends ConflictError {
+  constructor(machineId: string, otherHostname: string) {
+    super(
+      `Machine id '${machineId}' is already in use by another machine ('${otherHostname}') that is online. ` +
+        'Give this agent its own MACHINE_ID, or stop the agent on the other machine.',
+      'MACHINE_ID_CONFLICT',
+    );
+  }
+}
+
+/**
+ * Refuses agent traffic from a machine whose fingerprint differs from the
+ * one heartbeating under this id, while that one is still online. Once the
+ * other machine has gone quiet (offline after 30 s), the next heartbeat takes
+ * the id over: a reinstalled or replaced machine is not locked out forever.
+ * No fingerprint (an older agent, or one that cannot read the OS id): not checked.
+ */
+export async function assertNoMachineIdConflict(
+  machineId: string,
+  fingerprint: string | undefined,
+  hostname: string | null = null,
+): Promise<void> {
+  if (!fingerprint) return;
+  const host = await Host.findOne({ machineId }).select('fingerprint hostname status lastHeartbeatAt');
+  if (!host?.fingerprint || host.fingerprint === fingerprint) return;
+  const live = host.status === 'online' && Date.now() - host.lastHeartbeatAt.getTime() < OFFLINE_AFTER_MS;
+  if (!live) return;
+  if (hostname !== null) await Host.updateOne({ _id: host._id }, { idConflict: { at: new Date(), hostname } });
+  throw new MachineIdConflictError(machineId, host.hostname);
+}
+
+const FINGERPRINT = /^[0-9a-f]{32}$/;
+
+/** The `x-agent-fingerprint` header, when well-formed. A malformed one is ignored, the same as an agent that sends none. */
+export function fingerprintFrom(headers: Record<string, string | string[] | undefined>): string | undefined {
+  const v = headers['x-agent-fingerprint'];
+  return typeof v === 'string' && FINGERPRINT.test(v) ? v : undefined;
 }
 
 /** A blocked host's agent calling in. 403 with a message the agent prints as-is. */

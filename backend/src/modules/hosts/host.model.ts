@@ -32,6 +32,15 @@ export interface IHost extends Document {
    * until an admin unblocks it.
    */
   blocked: { at: Date; by: string; reason: string | null } | null;
+  /**
+   * Hash of the OS machine id of the machine heartbeating under this id, or
+   * null for an agent that does not send one. Lets the hub refuse a second
+   * machine given the same MACHINE_ID instead of letting the two overwrite
+   * each other's device lists.
+   */
+  fingerprint: string | null;
+  /** The last time another machine was refused this id, kept for the Hosts page; cleared after 5 minutes without one. */
+  idConflict: { at: Date; hostname: string | null } | null;
   lastHeartbeatAt: Date;
   createdAt: Date;
   updatedAt: Date;
@@ -51,6 +60,11 @@ const hostSchema = new Schema<IHost>(
     },
     blocked: {
       type: new Schema({ at: Date, by: String, reason: { type: String, default: null } }, { _id: false }),
+      default: null,
+    },
+    fingerprint: { type: String, default: null },
+    idConflict: {
+      type: new Schema({ at: Date, hostname: { type: String, default: null } }, { _id: false }),
       default: null,
     },
     diagnostics: {

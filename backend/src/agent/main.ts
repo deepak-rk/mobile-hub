@@ -4,6 +4,7 @@ import * as dotenv from 'dotenv';
 import { DeviceAgent } from './agent';
 import { HubClient } from './hub-client';
 import { getDeviceDiscovery } from './sources/get-discovery';
+import { machineFingerprint, readOsMachineId, resolveMachineId } from './machine-identity';
 import { acquireInstanceLock, type InstanceLock } from './instance-lock';
 
 dotenv.config();
@@ -17,7 +18,8 @@ const envSchema = z.object({
   HUB_URL: z.string().url().default('http://localhost:3000'),
   // Stable per host: it is the key every device, run and stream is filed
   // under, so a machine that changes it orphans all of its own records.
-  MACHINE_ID: z.string().min(1).default(os.hostname()),
+  // Unset: the id persisted on first start (see machine-identity.ts).
+  MACHINE_ID: z.string().min(1).optional(),
   AGENT_POLL_INTERVAL_MS: z.coerce.number().int().positive().default(10_000),
   AGENT_MAX_DEVICES: z.coerce.number().int().nonnegative().default(8),
   AGENT_DISCOVERY: z.string().optional(),
@@ -59,9 +61,16 @@ function hostOs(): 'darwin' | 'linux' | 'win32' {
 async function main(): Promise<void> {
   // Before anything reaches the hub: a second agent with this identity must
   // not heartbeat or claim work even once.
+  const identity = resolveMachineId(env.MACHINE_ID);
+  const machineId = identity.id;
+  if (identity.source === 'new') console.log(`Machine id '${machineId}' saved for this machine; set MACHINE_ID to use another.`);
+  if (identity.source === 'unsaved') console.warn(`⚠️ Could not save machine id '${machineId}'; a later hostname change will make this a new host.`);
+  const fingerprint = machineFingerprint(readOsMachineId());
+  if (!fingerprint) console.warn('⚠️ Could not read the OS machine id; the hub cannot tell this machine apart from another given the same id.');
+
   let lock: InstanceLock;
   try {
-    lock = acquireInstanceLock(env.MACHINE_ID);
+    lock = acquireInstanceLock(machineId);
   } catch (err) {
     console.error(`❌ ${err instanceof Error ? err.message : String(err)}`);
     process.exit(1);
@@ -71,7 +80,7 @@ async function main(): Promise<void> {
   const discovery = getDeviceDiscovery(env.AGENT_DISCOVERY);
 
   const agent = new DeviceAgent({
-    machineId: env.MACHINE_ID,
+    machineId,
     hostname: os.hostname(),
     os: hostOs(),
     agentVersion: process.env.npm_package_version ?? '0.1.0',
@@ -84,7 +93,7 @@ async function main(): Promise<void> {
     },
     pollIntervalMs: env.AGENT_POLL_INTERVAL_MS,
     discovery,
-    hub: new HubClient(env.HUB_URL, env.AGENT_CREDENTIAL_TOKEN ?? env.AGENT_TOKEN, env.MACHINE_ID),
+    hub: new HubClient(env.HUB_URL, env.AGENT_CREDENTIAL_TOKEN ?? env.AGENT_TOKEN, machineId, fingerprint),
     appiumHost: env.AGENT_APPIUM_HOST,
     appiumBasePort: env.AGENT_APPIUM_BASE_PORT,
   });

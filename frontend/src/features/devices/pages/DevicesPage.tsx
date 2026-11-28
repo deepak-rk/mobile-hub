@@ -17,6 +17,7 @@ import { StatusBadge } from '@/components/ui/StatusBadge';
 import { icons, iconSize } from '@/lib/icons';
 import { formatRelative, shortId } from 'ts-format-utils';
 import { useDevices } from '../api/devices.api';
+import { formatApiError, isUnreachable } from '@/services/apiErrors';
 import { DeviceFilterBar } from '../components/DeviceFilterBar';
 import { FilterChips } from '../components/FilterChips';
 import { useDeviceFilters } from '../hooks/useDeviceFilters';
@@ -184,7 +185,7 @@ export function DeviceCard({
 export function DevicesPage() {
   const navigate = useNavigate();
   const { status, setStatus, platform, setPlatform } = useDeviceFilters();
-  const { data: devices, isPending, error, refetch } = useDevices({ status, platform });
+  const { data: devices, isPending, error, refetch, dataUpdatedAt } = useDevices({ status, platform });
   const filtered = status !== 'all' || platform !== 'all';
   // Chip counts come from the *unfiltered* inventory: counting the
   // server-filtered list made every other chip read 0 (status=idle showed
@@ -288,9 +289,20 @@ export function DevicesPage() {
         </div>
       ) : null}
 
+      {devices && error ? (
+        <p className={styles.staleNote} role="status">
+          {isUnreachable(error) ? "Can't reach the hub" : 'Could not refresh'}; showing the list from{' '}
+          {formatRelative(new Date(dataUpdatedAt).toISOString())}. Trying again every few seconds.
+        </p>
+      ) : null}
+
+      {/* A failed refresh keeps the list it already has (with the note above)
+          rather than replacing it with an error: the devices did not go away
+          because the hub stopped answering for a moment. */}
       <QueryBoundary
         isPending={isPending}
-        error={error}
+        error={devices ? null : error}
+        formatError={formatApiError}
         isEmpty={devices?.length === 0}
         onRetry={() => void refetch()}
         empty={

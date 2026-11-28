@@ -12,6 +12,8 @@ export interface Host {
   status: 'online' | 'offline';
   /** Set when an admin removed the host from the lab; its agent is refused until unblocked. Absent on older hubs. */
   blocked?: { at: string; by: string; reason: string | null } | null;
+  /** The last time the hub refused another machine using this machine id (cleared after 5 min). Absent on older hubs. */
+  idConflict?: { at: string; hostname: string | null } | null;
   lastHeartbeatAt: string;
   /** Best-effort — absent for an agent that predates this field, or any one field null if that agent's own probe failed. */
   diagnostics: {

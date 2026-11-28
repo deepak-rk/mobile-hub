@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/services/api';
+import { RETRY_WHILE_FAILING_MS } from '@/services/apiErrors';
 import type { Device } from '../types';
 
 export interface DeviceFilters {
@@ -21,7 +22,10 @@ export function useDevices(filters: DeviceFilters = {}, options: { refetchInterv
     // Off by default. Callers that must reflect state this client didn't cause
     // — a lock released when a run ends, the TTL sweep, another operator —
     // opt in, because those have no mutation here to invalidate on.
-    refetchInterval: options.refetchInterval,
+    // While failing (the hub restarting, say), keep trying so the page
+    // recovers by itself instead of waiting for someone to press Retry.
+    refetchInterval: (query) =>
+      query.state.status === 'error' ? RETRY_WHILE_FAILING_MS : (options.refetchInterval ?? false),
   });
 }
 

@@ -2,7 +2,7 @@ import { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 import { acquireLock, getDevice, listDevices, releaseLock, renewLock, syncDevices } from './devices.service';
 import { requireAgentToken, AGENT_TRAFFIC_LOG_LEVEL } from '../agent-auth/agent-auth';
-import { assertHostNotBlocked } from '../hosts/hosts.service';
+import { assertHostNotBlocked, assertNoMachineIdConflict, fingerprintFrom } from '../hosts/hosts.service';
 import { deviceKey, getActiveInstallDeviceKeys } from '../device-installs/install-runs.service';
 import { ConflictError, ForbiddenError, NotFoundError, ValidationError } from '../../common/errors/app-error';
 
@@ -54,6 +54,7 @@ export const devicesRoutes: FastifyPluginAsync = async (app) => {
     }
     // Otherwise a blocked host's next sync would bring its devices back online.
     await assertHostNotBlocked(body.data.machineId);
+    await assertNoMachineIdConflict(body.data.machineId, fingerprintFrom(req.headers));
     return syncDevices(body.data.machineId, body.data.devices);
   });
 

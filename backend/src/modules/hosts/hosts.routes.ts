@@ -2,6 +2,8 @@ import { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 import {
   assertHostNotBlocked,
+  assertNoMachineIdConflict,
+  fingerprintFrom,
   blockHost,
   listHosts,
   getHost,
@@ -92,7 +94,9 @@ export const hostsRoutes: FastifyPluginAsync = async (app) => {
       throw new ForbiddenError('This credential is scoped to a different machineId.', 'AGENT_MACHINE_MISMATCH');
     }
     await assertHostNotBlocked(body.data.machineId);
-    const host = await upsertHeartbeat(body.data);
+    const fingerprint = fingerprintFrom(req.headers);
+    await assertNoMachineIdConflict(body.data.machineId, fingerprint, body.data.hostname);
+    const host = await upsertHeartbeat({ ...body.data, fingerprint });
     // Piggybacks on the existing 10s poll cycle rather than opening a second
     // one — the agent-polls-for-pending-installs decision this session
     // deliberately avoids inventing any new hub->agent transport. Uninstalls

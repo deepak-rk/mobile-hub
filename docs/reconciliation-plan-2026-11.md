@@ -106,7 +106,7 @@ Not live-verified: Docker/Mongo was down this session. First thing once it is ba
 
 ### Phase 5 — fleet & ops
 - Agent registry with `blocked` tombstone; deregistration survives the next heartbeat. **Done 2026-11-24** (`Host.blocked`; block/unblock routes; heartbeat, device sync and job poll refused with 403 `AGENT_BLOCKED`; everything the host held released at once).
-- **Machine identity**: `MACHINE_ID` env → OS machine id → persisted file → hostname hash, same algorithm on hub and agent.
+- **Machine identity**: `MACHINE_ID` env → OS machine id → persisted file → hostname hash, same algorithm on hub and agent. **Done 2026-11-28, differently** (`agent/machine-identity.ts`): MACHINE_ID, else the id persisted on first start (the hostname). Not the OS id: ids stay readable and existing hosts keep theirs. The OS id is sent hashed as a fingerprint; a second machine using a live host's id gets 409 `MACHINE_ID_CONFLICT`. The hub's own id is unchanged.
 - **Single-instance guard keyed on identity, never on a port** (lesson 40: a port fallback defeated it and two agents at different commits fought). **Agent done 2026-11-24** (`agent/instance-lock.ts`, a lock file per MACHINE_ID holding the pid). Not covered: the hub, and two hosts given the same id.
 - Heartbeat payload with `protocolVersion`, system metrics (sample CPU twice — a single sample is a since-boot average), capabilities, and a pushed device-health snapshot (served from the snapshot, not live probes through proxies).
 - Fleet view: per-agent version vs hub, RAM/CPU/disk bars, the hub shown as a host not an agent.

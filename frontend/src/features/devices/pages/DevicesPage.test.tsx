@@ -111,3 +111,34 @@ describe('DeviceViewerPage', () => {
     expect(get).toHaveBeenCalledWith('/devices/emulator-5554', { params: { machineId: 'host-b' } });
   });
 });
+
+describe('DevicesPage when the hub does not answer', () => {
+  const unreachable = { code: 'NETWORK_ERROR', message: 'Network error' };
+
+  it('says it cannot reach the hub, not "Network error"', async () => {
+    get.mockRejectedValue(unreachable);
+    renderAt('/devices');
+    expect(await screen.findByText("Can't reach the hub")).toBeInTheDocument();
+    expect(screen.queryByText('Network error')).not.toBeInTheDocument();
+  });
+
+  it('keeps the list it has when a refresh fails, with a note', async () => {
+    get.mockResolvedValue({ data: [device({ name: 'Kept Pixel' })] });
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter initialEntries={['/devices']}>
+          <Routes>
+            <Route path="/devices" element={<DevicesPage />} />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+    expect(await screen.findAllByText('Kept Pixel')).not.toHaveLength(0);
+    get.mockRejectedValue(unreachable);
+    await client.refetchQueries();
+    expect(await screen.findByText(/Can't reach the hub; showing the list from/)).toBeInTheDocument();
+    expect(screen.getAllByText('Kept Pixel')).not.toHaveLength(0);
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+});

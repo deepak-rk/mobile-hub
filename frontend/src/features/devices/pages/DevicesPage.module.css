@@ -3,6 +3,12 @@
   font-size: var(--text-sm);
 }
 
+.staleNote {
+  margin: 0 0 var(--space-3);
+  color: var(--status-failed);
+  font-size: var(--text-sm);
+}
+
 .offlineDisclosure {
   margin-top: var(--space-5);
 }

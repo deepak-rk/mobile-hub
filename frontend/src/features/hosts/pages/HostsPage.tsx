@@ -19,6 +19,7 @@ import { formatBytes, formatRelative } from 'ts-format-utils';
 import { useHosts, useHostCredentials } from '../api/hosts.api';
 import { credentialFor } from '../lib/credentialFor';
 import { HostBlockControl } from '../components/HostBlockControl';
+import { IdConflictNotice } from '../components/IdConflictNotice';
 import type { Host, HostAgentCredential } from '../types';
 import styles from './HostsPage.module.css';
 
@@ -156,6 +157,7 @@ export function HostsPage() {
                   {host.capabilities.iosSupport ? <span className={styles.chip}>iOS</span> : null}
                 </div>
 
+                <IdConflictNotice conflict={host.idConflict ?? null} />
                 <ActivityChips activity={host.activity} />
                 <DiagnosticsPanel diagnostics={host.diagnostics} />
 

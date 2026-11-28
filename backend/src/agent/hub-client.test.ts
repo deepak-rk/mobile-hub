@@ -189,3 +189,21 @@ describe('HubClient target reports carry the host', () => {
     vi.unstubAllGlobals();
   });
 });
+
+describe('HubClient identity headers', () => {
+  it('sends the machine fingerprint on posts and polls, and nothing when there is none', async () => {
+    const fetchSpy = vi.fn().mockResolvedValue({ ok: true, status: 204, json: () => Promise.resolve({}) });
+    vi.stubGlobal('fetch', fetchSpy);
+    const fp = 'c'.repeat(32);
+    const client = new HubClient('http://hub', 'tok', 'host-1', fp);
+    await client.syncDevices('host-1', []);
+    await client.nextDeviceJob('host-1', 0);
+    await new HubClient('http://hub', 'tok', 'host-1', null).syncDevices('host-1', []);
+    const headers = (fetchSpy.mock.calls as [string, RequestInit][]).map(([, o]) => o.headers as Record<string, string>);
+    expect(headers[0]['x-agent-fingerprint']).toBe(fp);
+    expect(headers[1]['x-agent-fingerprint']).toBe(fp);
+    expect(headers[1].Authorization).toBe('Bearer tok');
+    expect(headers[2]).not.toHaveProperty('x-agent-fingerprint');
+    vi.unstubAllGlobals();
+  });
+});

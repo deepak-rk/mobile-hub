@@ -154,7 +154,16 @@ export class HubClient {
     private readonly agentToken?: string,
     /** Sent with target reports so the hub can tell this host's target from another host's same-udid one. */
     private readonly machineId?: string,
+    /** Hash of this machine's OS id (`machine-identity.ts`), so the hub can refuse a second machine given the same id. */
+    private readonly fingerprint?: string | null,
   ) {}
+
+  private identityHeaders(): Record<string, string> {
+    return {
+      ...(this.agentToken ? { Authorization: `Bearer ${this.agentToken}` } : {}),
+      ...(this.fingerprint ? { 'x-agent-fingerprint': this.fingerprint } : {}),
+    };
+  }
 
   private hostQuery(): string {
     return this.machineId ? `?machineId=${encodeURIComponent(this.machineId)}` : '';
@@ -208,7 +217,7 @@ export class HubClient {
       method: 'POST',
       headers: {
         'Content-Type': 'application/octet-stream',
-        ...(this.agentToken ? { Authorization: `Bearer ${this.agentToken}` } : {}),
+        ...this.identityHeaders(),
       },
       body: frame,
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
@@ -256,7 +265,7 @@ export class HubClient {
   ): Promise<void> {
     const path = `/api/builds/${buildId}/artifact`;
     const res = await fetch(`${this.baseUrl}${path}`, {
-      headers: this.agentToken ? { Authorization: `Bearer ${this.agentToken}` } : {},
+      headers: this.identityHeaders(),
       signal: AbortSignal.timeout(ARTIFACT_DOWNLOAD_TIMEOUT_MS),
     });
     if (!res.ok || !res.body) {
@@ -321,7 +330,7 @@ export class HubClient {
   async nextDeviceJob(machineId: string, waitMs: number): Promise<PendingDeviceJob | null> {
     const path = `/api/device-jobs/next?machineId=${encodeURIComponent(machineId)}&waitMs=${waitMs}`;
     const res = await fetch(`${this.baseUrl}${path}`, {
-      headers: this.agentToken ? { Authorization: `Bearer ${this.agentToken}` } : {},
+      headers: this.identityHeaders(),
       signal: AbortSignal.timeout(waitMs + REQUEST_TIMEOUT_MS),
     });
     if (res.status === 204) return null;
@@ -338,7 +347,7 @@ export class HubClient {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        ...(this.agentToken ? { Authorization: `Bearer ${this.agentToken}` } : {}),
+        ...this.identityHeaders(),
       },
       body: JSON.stringify(body),
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
